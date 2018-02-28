@@ -1,0 +1,1 @@
+select 'create schema $information_schema.name$;' script;

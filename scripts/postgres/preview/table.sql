@@ -1,0 +1,1 @@
+select * from $schema.name$.$table.name$ limit 100

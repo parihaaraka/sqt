@@ -1,0 +1,1 @@
+select @@version as text

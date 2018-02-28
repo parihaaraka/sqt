@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>FindAndReplacePanel</class>
+ <widget class="QWidget" name="FindAndReplacePanel">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>751</width>
+    <height>96</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Form</string>
+  </property>
+  <widget class="QWidget" name="gridLayoutWidget">
+   <property name="geometry">
+    <rect>
+     <x>20</x>
+     <y>20</y>
+     <width>681</width>
+     <height>52</height>
+    </rect>
+   </property>
+   <layout class="QGridLayout" name="gridLayout">
+    <property name="verticalSpacing">
+     <number>0</number>
+    </property>
+    <item row="1" column="1">
+     <widget class="QLineEdit" name="lineReplace"/>
+    </item>
+    <item row="0" column="1">
+     <widget class="QLineEdit" name="lineFind"/>
+    </item>
+    <item row="1" column="0">
+     <widget class="QLabel" name="label_2">
+      <property name="text">
+       <string>Replace with:</string>
+      </property>
+     </widget>
+    </item>
+    <item row="0" column="0">
+     <widget class="QLabel" name="label">
+      <property name="text">
+       <string>Find:</string>
+      </property>
+     </widget>
+    </item>
+    <item row="1" column="2">
+     <layout class="QHBoxLayout" name="horizontalLayout_2">
+      <property name="spacing">
+       <number>3</number>
+      </property>
+      <item>
+       <widget class="QToolButton" name="btnReplace">
+        <property name="text">
+         <string>Replace</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QToolButton" name="btnReplaceFindNext">
+        <property name="text">
+         <string>Replace, »</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QToolButton" name="btnReplaceAll">
+        <property name="text">
+         <string>Replace all</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <spacer name="horizontalSpacer">
+        <property name="orientation">
+         <enum>Qt::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>40</width>
+          <height>20</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+     </layout>
+    </item>
+    <item row="0" column="2">
+     <layout class="QHBoxLayout" name="horizontalLayout">
+      <property name="spacing">
+       <number>3</number>
+      </property>
+      <item>
+       <widget class="QToolButton" name="btnPrevious">
+        <property name="text">
+         <string>«</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QToolButton" name="btnNext">
+        <property name="text">
+         <string>»</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <spacer name="horizontalSpacer_2">
+        <property name="orientation">
+         <enum>Qt::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>40</width>
+          <height>20</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="cbCaseSensitive">
+        <property name="toolTip">
+         <string>Case sensitive</string>
+        </property>
+        <property name="text">
+         <string>Aa</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="cbWholeWord">
+        <property name="toolTip">
+         <string>Whole word</string>
+        </property>
+        <property name="text">
+         <string>‹›</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="cbRegexp">
+        <property name="toolTip">
+         <string>Regular expression</string>
+        </property>
+        <property name="text">
+         <string>.*</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="cbRegexpS">
+        <property name="enabled">
+         <bool>false</bool>
+        </property>
+        <property name="toolTip">
+         <string>Dot matches everything</string>
+        </property>
+        <property name="text">
+         <string>/s</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="cbRegexpM">
+        <property name="enabled">
+         <bool>false</bool>
+        </property>
+        <property name="toolTip">
+         <string>Multiline</string>
+        </property>
+        <property name="text">
+         <string>/m</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="cbRegexpU">
+        <property name="enabled">
+         <bool>false</bool>
+        </property>
+        <property name="toolTip">
+         <string>Use unicode properties</string>
+        </property>
+        <property name="text">
+         <string>/u</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </item>
+   </layout>
+  </widget>
+  <action name="actionFind_previous">
+   <property name="text">
+    <string>Find previous</string>
+   </property>
+  </action>
+  <action name="actionFind_next">
+   <property name="text">
+    <string>Find next</string>
+   </property>
+  </action>
+  <action name="actionReplace_and_find_next">
+   <property name="text">
+    <string>Replace and find next</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+=</string>
+   </property>
+  </action>
+ </widget>
+ <tabstops>
+  <tabstop>lineFind</tabstop>
+  <tabstop>lineReplace</tabstop>
+  <tabstop>btnNext</tabstop>
+  <tabstop>btnPrevious</tabstop>
+  <tabstop>btnReplace</tabstop>
+  <tabstop>btnReplaceFindNext</tabstop>
+  <tabstop>btnReplaceAll</tabstop>
+  <tabstop>cbCaseSensitive</tabstop>
+  <tabstop>cbWholeWord</tabstop>
+  <tabstop>cbRegexp</tabstop>
+ </tabstops>
+ <resources/>
+ <connections/>
+</ui>

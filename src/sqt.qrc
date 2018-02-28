@@ -1,0 +1,13 @@
+<RCC>
+    <qresource prefix="/">
+        <file>img/database-sql.png</file>
+        <file>img/arrow-circle-double-135.png</file>
+        <file>img/server--plus.png</file>
+        <file>img/server.png</file>
+        <file>img/shovel.png</file>
+        <file>img/sql.png</file>
+        <file>img/control.png</file>
+        <file>img/control-stop.png</file>
+        <file>sqt.ico</file>
+    </qresource>
+</RCC>

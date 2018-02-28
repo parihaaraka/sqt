@@ -1,0 +1,1 @@
+select 'create schema $schema.name$;' script;
