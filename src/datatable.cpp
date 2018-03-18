@@ -37,14 +37,13 @@ int DataTable::columnCount() const
 
 int DataTable::rowCount() const
 {
-    QMutexLocker locker(&mutex);
     return _rows.size();
 }
 
 QVariant DataTable::value(int row, int column) const
 {
     if (column >= 0 && column < _columns.size() &&
-            row >= 0 && row < rowCount())
+            row >= 0 && row < _rows.size())
         return (*_rows[row])[column];
     return QVariant();
 }
@@ -80,7 +79,7 @@ void DataTable::addColumn(DataColumn *column)
 
 void DataTable::addRow(DataRow *row)
 {
-    QMutexLocker locker(&mutex);
+    // mutex lock is removed in favoir of outermost usage
     row->_table = this;
     _rows.append(row);
 }
@@ -96,9 +95,6 @@ DataTable* DataTable::takeRows(DataTable *source)
             _columns.append(new DataColumn(*c));
     }
 
-    // deadlock conditions are improbable in this application
-    QMutexLocker src_locker(&source->mutex);
-    QMutexLocker dst_locker(&mutex);
     _rows.append(source->_rows);
     source->_rows.clear();
     return this;

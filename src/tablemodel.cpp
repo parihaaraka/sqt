@@ -91,7 +91,7 @@ QVariant TableModel::headerData(int section, Qt::Orientation orientation, int ro
 
 void TableModel::take(DataTable *srcTable)
 {
-    // columns are not altered in another thread - no need to use mutex
+    // the columns do not alter in parallel - no need to use mutex
     if (srcTable->columnCount() != columnCount())
     {
         clear();
@@ -100,9 +100,11 @@ void TableModel::take(DataTable *srcTable)
             _table->addColumn(new DataColumn(srcTable->getColumn(c)));
         endInsertColumns();
     }
+    QMutexLocker srcLocker(&srcTable->mutex);
     int rows = srcTable->rowCount();
     if (rows)
     {
+        QMutexLocker dstLocker(&_table->mutex);
         int rowcount = _table->rowCount();
         beginInsertRows(QModelIndex(), rowcount, rowcount + rows - 1);
         _table->takeRows(srcTable);

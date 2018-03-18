@@ -355,8 +355,12 @@ void QueryWidget::fetched(DataTable *table)
 {
     if (widget(1)->height() == 0)
         setSizes(QList<int>() << 400 << 100);
+
+    // second widget within splitter is a tabwidget with persistent log tab
+    // and optional (leading) resultsets tab
     QTabWidget *res_tw = qobject_cast<QTabWidget*>(widget(1));
-    if (res_tw->count() == 1)
+    Q_ASSERT(res_tw != nullptr);
+    if (res_tw->count() == 1) // only log tab exists
     {
         res_tw->insertTab(0, _resSplitter, tr("resultsets"));
         res_tw->setCurrentIndex(0);
@@ -383,6 +387,8 @@ void QueryWidget::fetched(DataTable *table)
         tv->setModel(m);
         _resSplitter->addWidget(tv);
         m->take(table);
+        // prevent autoresize overhead when big resultset is fetched at once
+        tv->horizontalHeader()->setResizeContentsPrecision(20);
         tv->resizeColumnsToContents();
     }
     else
@@ -390,7 +396,7 @@ void QueryWidget::fetched(DataTable *table)
         m = qobject_cast<TableModel*>(tv->model());
         m->take(table);
     }
-    QCoreApplication::processEvents();
+    //QCoreApplication::processEvents();
 }
 
 void QueryWidget::clearResult()
@@ -406,11 +412,12 @@ void QueryWidget::clearResult()
         QTabWidget *res_tw = qobject_cast<QTabWidget*>(widget(1));
         if (res_tw && res_tw->count() > 1)
         {
+            // remove resultsets tab, _resSplitter stays alive
             res_tw->removeTab(0);
+            // delete QTableView widgets (current shown resultsets)
+            // (it looks like simple delete works ok instead of setParent(nullptr) and deleteLater())
             for (int i = _resSplitter->count() - 1; i >= 0; --i)
-            {
                 delete _resSplitter->widget(i);
-            }
         }
     }
     qDeleteAll(_tables);
@@ -460,9 +467,13 @@ void QueryWidget::onActionCopyTriggered()
     {
         //QMetaType::Type t = (QMetaType::Type)m->data(cur).type();
         QString val = m->data(cur).toString();
-        if (!prev.isValid()) ;
-        else if (cur.row() != prev.row()) result.append(isHTML ? QString("</tr><tr>") : QString(QChar::CarriageReturn));
-        else if (!isHTML) result.append(',');
+        if (prev.isValid())
+        {
+            if (cur.row() != prev.row())
+                result.append(isHTML ? QString("</tr><tr>") : QString(QChar::CarriageReturn));
+            else if (!isHTML)
+                result.append(',');
+        }
 
         if (isHTML)
             result.append("<td>" + val.toHtmlEscaped() + "</td>");

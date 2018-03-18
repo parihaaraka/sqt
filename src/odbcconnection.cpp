@@ -458,9 +458,11 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
                         if (retcode == SQL_ERROR)
                             return false;
                     }
-                    lk.relock();
+
+                    QMutexLocker lk(&table->mutex);
                     table->addRow(row.release());
                     lk.unlock();
+
                     ++rowcount;
                     if (rowcount % FETCH_COUNT_NOTIFY == 0)
                         emit fetched(table);

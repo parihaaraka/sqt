@@ -816,9 +816,11 @@ int PgConnection::appendRawDataToTable(DataTable &dst, PGresult *src) noexcept
                     (*row)[i] = QString::fromStdString(val);
                 }  // end of switch
             }
-            QMutexLocker lk(&_resultsetsGuard);
+
+            QMutexLocker lk(&dst.mutex);
             dst.addRow(row.release());
             lk.unlock();
+
             ++_temp_result_rowcount;
             if (_temp_result_rowcount % FETCH_COUNT_NOTIFY == 0)
                 emit fetched(&dst);
