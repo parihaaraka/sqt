@@ -84,7 +84,6 @@ public:
 
 public slots: // to use from QJSEngine
     virtual DataTable* execute(const QString &query, const QVariantList &params);
-    void appendResultset(DataTable* table);
     void clearResultsets();
 
 signals:

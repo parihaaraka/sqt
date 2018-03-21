@@ -188,7 +188,17 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
     int insertPosition = parentNode->childCount();
     try
     {
-        DataTable *table = nodeChildren(parent);
+        std::shared_ptr<DbConnection> con = dbConnection(parent);
+        if (!con->open())
+            throw QString("");
+
+        auto c = Scripting::execute(con.get(), Scripting::Context::Tree, type,
+                                    [this, &parent](QString macro) -> QVariant
+            {
+                return parentNodeProperty(parent, macro);
+            });
+        DataTable *table = (c->_resultsets.isEmpty() ? nullptr : c->_resultsets.back());
+
         // remove current node in case of error during scripting
         if (!table)
         {
@@ -378,100 +388,4 @@ void DbObjectsModel::saveConnectionSettings()
         settings.setValue("user", _rootItem->child(i)->data(DbObject::NameRole).toString());
     }
     settings.endArray();
-}
-
-DataTable *DbObjectsModel::nodeChildren(const QModelIndex &obj)
-{
-    _curIndex = obj;
-    DbObject *parentItem = static_cast<DbObject*>(obj.internalPointer());
-    QString type = parentItem->data(DbObject::TypeRole).toString();
-
-    DataTable *table = nullptr;
-    std::shared_ptr<DbConnection> con = dbConnection(obj);
-    try
-    {
-        con->clearResultsets();
-        if (!con->open())
-            throw QString("");
-        Scripting::Script *s = Scripting::getScript(con.get(), Scripting::Context::Tree, type);
-        if (!s)
-            throw tr("script to make %1 content not found").arg(type);
-
-        QString query = s->body;
-        if (s->type == Scripting::Script::Type::SQL)
-        {
-            QRegularExpression expr("\\$(\\w+\\.\\w+)\\$");
-            QRegularExpressionMatchIterator i = expr.globalMatch(query);
-            QStringList macros;
-            // search for parameters within query text
-            while (i.hasNext())
-            {
-                QRegularExpressionMatch match = i.next();
-                if (!macros.contains(match.captured(1)))
-                    macros << match.captured(1);
-            }
-            // replace parameters with values
-            foreach (QString macro, macros)
-            {
-                QString value = parentNodeProperty(obj, macro).toString();
-                query = query.replace("$" + macro + "$", value.isEmpty() ? "NULL" : value);
-            }
-
-            con->execute(query);
-        }
-        else if (s->type == Scripting::Script::Type::QS)
-        {
-
-            QJSEngine e;
-            qmlRegisterType<DataTable>();
-            QQmlEngine::setObjectOwnership(con.get(), QQmlEngine::CppOwnership);
-            QJSValue cn = e.newQObject(con.get());
-            e.globalObject().setProperty("__connection", cn);
-
-            QQmlEngine::setObjectOwnership(this, QQmlEngine::CppOwnership);
-            QJSValue objModel = e.newQObject(this);
-            e.globalObject().setProperty("__model", objModel);
-
-            e.installExtensions(QJSEngine::ConsoleExtension);
-
-            QJSValue exec_fn = e.evaluate(R"(
-                        function(query) {
-                            return __connection.execute(query, Array.prototype.slice.call(arguments, 1));
-                        })");
-            e.globalObject().setProperty("exec", exec_fn);
-
-            QJSValue return_fn = e.evaluate(R"(
-                                            function(resultset) {
-                                                __connection.appendResultset(resultset);
-                                            })");
-            e.globalObject().setProperty("return", return_fn);
-
-            QJSValue env_fn = e.evaluate(R"(
-                                         function(objectType) {
-                                            return __model.parentDbObject(objectType);
-                                         })");
-            e.globalObject().setProperty("env", env_fn);
-
-            QJSValue execRes = e.evaluate(query);
-            if (execRes.isError())
-                throw tr("error at line %1: %2").arg(execRes.property("lineNumber").toInt()).arg(execRes.toString());
-        }
-
-        // connection object owns resultsets
-        if (!con->_resultsets.empty())
-            table = con->_resultsets.last();
-
-    }
-    catch (const QString &)
-    {
-        // TODO romove try/catch or implement catch
-        //setData(parent, parentItem->childCount() > 0, DbObject::ParentRole);
-        throw;
-    }
-    return table;
-}
-
-QVariant DbObjectsModel::parentNodeProperty(QString type)
-{
-    return parentNodeProperty(_curIndex, type);
 }

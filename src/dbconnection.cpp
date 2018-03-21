@@ -1,7 +1,6 @@
 #include "dbconnection.h"
 #include <QVector>
 #include <QVariant>
-#include <QQmlEngine>
 
 DbConnection::DbConnection() :
     QObject(nullptr)
@@ -49,13 +48,6 @@ DataTable* DbConnection::execute(const QString &query, const QVariantList &param
         return _resultsets.takeLast();
     }
     return nullptr;
-}
-
-void DbConnection::appendResultset(DataTable *table)
-{
-    clearResultsets();
-    _resultsets.append(table);
-    QQmlEngine::setObjectOwnership(table, QQmlEngine::CppOwnership);
 }
 
 void DbConnection::setQueryState(QueryState state)

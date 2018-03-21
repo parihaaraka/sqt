@@ -1,5 +1,4 @@
 #include "scripting.h"
-#include "dbconnection.h"
 #include <QHash>
 #include <QDir>
 #include <QFileInfo>
@@ -8,6 +7,10 @@
 #include <QRegularExpression>
 #include "dbconnection.h"
 #include "odbcconnection.h"
+#include "datatable.h"
+#include <QJSEngine>
+#include <QJSValueList>
+#include <QQmlEngine>
 
 namespace Scripting
 {
@@ -76,7 +79,7 @@ QString dbmsScriptPath(DbConnection *con, Context context)
         startPath += endPath;
 
     if (!QFile::exists(startPath + contextFolder))
-        throw QObject::tr("directory %1 not available").arg(startPath + contextFolder);
+        throw QObject::tr("directory %1 is not available").arg(startPath + contextFolder);
     _dbms_paths.insert(dbmsID, startPath);
     return startPath + contextFolder;
 }
@@ -186,12 +189,142 @@ Script* getScript(DbConnection *connection, Context context, const QString &obje
     return (it == bunch.end() ? nullptr : &it.value());
 }
 
-bool execute(DbConnection *connection, Context context, const QString &objectType)
+std::unique_ptr<CppConductor> execute(
+        DbConnection *connection,
+        Context context,
+        const QString &objectType,
+        std::function<QVariant(QString)> envCallback)
 {
-    auto script = Scripting::getScript(connection, context, objectType);
-    if (!script)
-        return false;
-    return true;
+    std::unique_ptr<CppConductor> env { new CppConductor(envCallback) };
+    auto s = Scripting::getScript(connection, context, objectType);
+    if (!s)
+        return env;
+
+    QString query = s->body;
+
+    // replace macroses with corresponding values in both sql and qs scripts
+    QRegularExpression expr("\\$(\\w+\\.\\w+)\\$");
+    QRegularExpressionMatchIterator i = expr.globalMatch(query);
+    QStringList macros;
+    // search for macroses within query text
+    while (i.hasNext())
+    {
+        QRegularExpressionMatch match = i.next();
+        if (!macros.contains(match.captured(1)))
+            macros << match.captured(1);
+    }
+    // replace macroses with values
+    foreach (QString macro, macros)
+    {
+        QString value = envCallback(macro).toString();
+        query = query.replace("$" + macro + "$", value.isEmpty() ? "NULL" : value);
+    }
+
+    if (s->type == Scripting::Script::Type::SQL)
+    {
+        connection->execute(query);
+        if (!connection->_resultsets.isEmpty())
+        {
+            DataTable *t = connection->_resultsets.back();
+            connection->_resultsets.pop_back();
+            if (t->rowCount() == 1 && t->columnCount() == 1)
+            {
+                QString cn = t->getColumn(0).name();
+                if (cn == "script")
+                    env->appendScript(t->value(0, 0).toString());
+                else if (cn == "html")
+                    env->appendHtml(t->value(0, 0).toString());
+                else
+                {
+                    env->appendTable(t);
+                    t = nullptr;
+                }
+            }
+            else
+            {
+                env->appendTable(t);
+                t = nullptr;
+            }
+
+            if (t)
+                delete t;
+        }
+    }
+    else if (s->type == Scripting::Script::Type::QS)
+    {
+        QJSEngine e;
+        qmlRegisterType<DataTable>();
+        QQmlEngine::setObjectOwnership(connection, QQmlEngine::CppOwnership);
+        QJSValue cn = e.newQObject(connection);
+        e.globalObject().setProperty("__connection", cn);
+
+        // environment access in a functional style
+        QQmlEngine::setObjectOwnership(env.get(), QQmlEngine::CppOwnership);
+        QJSValue cppEnv = e.newQObject(env.get());
+        e.globalObject().setProperty("__env", cppEnv);
+        QJSValue env_fn = e.evaluate(R"(
+                                     function(objectType) {
+                                        return __env.value(objectType);
+                                     })");
+        e.globalObject().setProperty("env", env_fn);
+
+        QJSValue execFn = e.evaluate(R"(
+                                     function(query) {
+                                        return __connection.execute(query, Array.prototype.slice.call(arguments, 1));
+                                     })");
+        e.globalObject().setProperty("exec", execFn);
+
+        QJSValue returnTableFn = e.evaluate(R"(
+                                        function(resultset) {
+                                            __env.appendTable(resultset);
+                                        })");
+        e.globalObject().setProperty("returnTable", returnTableFn);
+        QJSValue returnScriptFn = e.evaluate(R"(
+                                        function(script) {
+                                            __env.appendScript(script);
+                                        })");
+        e.globalObject().setProperty("returnScript", returnScriptFn);
+
+        QJSValue execRes = e.evaluate(query);
+        if (execRes.isError())
+            throw QObject::tr("error at line %1: %2").arg(execRes.property("lineNumber").toInt()).arg(execRes.toString());
+    }
+
+    return env;
+}
+
+CppConductor::~CppConductor()
+{
+    clear();
+}
+
+QVariant CppConductor::value(QString type)
+{
+    return cb(type);
+}
+
+void CppConductor::appendTable(DataTable *table)
+{
+    _resultsets.append(table);
+    QQmlEngine::setObjectOwnership(table, QQmlEngine::CppOwnership);
+}
+
+void CppConductor::appendScript(QString script)
+{
+    _scripts.append(script);
+}
+
+void CppConductor::appendHtml(QString html)
+{
+    _html.append(html);
+}
+
+void CppConductor::clear()
+{
+    qDeleteAll(_resultsets);
+    _resultsets.clear();
+    _scripts.clear();
+    _html.clear();
 }
 
 

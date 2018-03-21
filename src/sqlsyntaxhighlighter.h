@@ -5,12 +5,12 @@
 
 class SqlSyntaxHighlighter : public QSyntaxHighlighter
 {
-	Q_OBJECT
+    Q_OBJECT
 public:
     explicit SqlSyntaxHighlighter(const QJsonObject &settings, QObject *parent = 0);
-	
+
 protected:
-	virtual void highlightBlock(const QString &text);
+    virtual void highlightBlock(const QString &text);
 
 private:
     enum class LastWordOption { Yes, No, MayBe };

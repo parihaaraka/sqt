@@ -50,15 +50,12 @@ public:
 
 private:
     DbObject *_rootItem;
-    QModelIndex _curIndex;
-    DataTable* nodeChildren(const QModelIndex &obj);
 
 signals:
     void error(QString err);
     void message(QString msg);
 
 public slots:
-    QVariant parentNodeProperty(QString type);
     void saveConnectionSettings();
 };
 

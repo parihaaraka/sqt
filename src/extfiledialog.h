@@ -16,10 +16,6 @@ public:
 private:
     QComboBox *_encodingCombo;
 
-signals:
-    
-public slots:
-    
 };
 
 #endif // EXTFILEDIALOG_H

@@ -106,6 +106,8 @@ SqlSyntaxHighlighter::SqlSyntaxHighlighter(const QJsonObject &settings, QObject 
     }
 }
 
+
+
 void SqlSyntaxHighlighter::highlightBlock(const QString &text)
 {
     int firstWordStartPos = -1;
@@ -114,6 +116,17 @@ void SqlSyntaxHighlighter::highlightBlock(const QString &text)
     QChar prevChar;
     int mode = (previousBlockState() == -1 ? 0xFF : previousBlockState());
     int len = 1, pos = 1;
+
+    auto markAscii = [&i, &mode]()
+    {
+        // set flags to detect encodings mix within single word
+        const ushort &uc = (*i).unicode();
+        if ((uc >= 'a' && uc <= 'z') || (uc >= 'A' && uc <= 'Z'))
+            mode |= 0x00010000;
+        else if (uc > 127)
+            mode |= 0x00020000;
+    };
+
     do
     {
         switch (mode & 0xFF)
@@ -146,7 +159,10 @@ void SqlSyntaxHighlighter::highlightBlock(const QString &text)
                          // tsql-like vars, temp tables and so on
                          ((*i == '@' || *i == '$' || *i == '#') && !delimiters.contains(*i))
                         )
+                {
                     mode = 9;
+                    markAscii();
+                }
             }
 
             if (mode != 0xFF)
@@ -292,14 +308,8 @@ void SqlSyntaxHighlighter::highlightBlock(const QString &text)
                 mode = 0xFF;
             }
             else
-            {
-                // set flags to detect encodings mix within single word
-                const ushort &uc = (*i).unicode();
-                if ((uc >= 'a' && uc <= 'z') || (uc >= 'A' && uc <= 'Z'))
-                    mode |= 0x00010000;
-                else if (uc > 127)
-                    mode |= 0x00020000;
-            }
+                markAscii();
+
             break;
         }
         default:

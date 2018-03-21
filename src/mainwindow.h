@@ -58,6 +58,7 @@ private slots:
 private:
     QLabel _contextLabel, _positionLabel;
     ExtFileDialog _fileDialog;
+    QStringList _mruDirs; // QFileDialog::history() keeps unused directories :(
 	Ui::MainWindow *ui;
     DbObjectsModel *_objectsModel;
     TableModel *_tableModel;
@@ -70,15 +71,11 @@ private:
     QTimer *_hideTimer;
     void log(const QString &msg);
     bool script(const QModelIndex &index, const QString &children = "");
+    void adjustMruDirs();
 
 public slots:
     QVariant current(const QString &nodeType, const QString &field);
     QVariantList selected(const QString &nodeType, const QString &field);
-    void pushTable(DataTable* table, const QString &name = QString())
-    {
-        int test = 1;
-        test = 2;
-    }
 
     void refreshActions();
     void refreshContextInfo();

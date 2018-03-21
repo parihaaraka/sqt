@@ -33,12 +33,11 @@ value of that node. `$schema.name$` will be replaced with that node's `name` val
 
 Actually, user is free to place any kind of data in columns `name` and `id`. This is just what you get in script by means of the corresponding macro.
 
-**There are two hardcoded node types: `connection` and `database`. `connection` is used internally to represent database connection, so the first script to be executed is `connection.sql` or `connection.qs`. `database` nodes are usually children of `connection` node, and their `name` property has a special meaning: every database node generates separate database connection with connection string built with parent connection string appended with `;Database={<name>}` for odbc data source and `dbname='<name>'` for postgresql data source.**
+>There are two hardcoded node types: `connection` and `database`. `connection` is used internally to represent database connection, so the first script to be executed is `connection.sql` or `connection.qs`. `database` nodes are usually children of `connection` node, and their `name` property has a special meaning: every database node generates separate database connection with connection string built with parent connection string appended with `;Database={<name>}` for odbc data source and `dbname='<name>'` for postgresql data source.
 
 ## `/content` scripts
 Script must return one of the following resultset:
 - 1 row 1 column named `script`;
-- 1 row 1 column named `text`;
 - 1 row 1 column named `html`;
 - any other resultset.
 

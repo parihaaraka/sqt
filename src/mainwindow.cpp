@@ -110,6 +110,10 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->splitterH->restoreState(settings.value("mainWindowHSplitter").toByteArray());
     ui->contentSplitter->restoreState(settings.value("mainWindowScriptSplitter").toByteArray());
     _fileDialog.restoreState(settings.value("fileDialog").toByteArray());
+    _mruDirs = settings.value("mruDirs").toStringList();
+    // make previously used directory to be current
+    if (!_mruDirs.isEmpty())
+        _fileDialog.setDirectory(_mruDirs.last());
 }
 
 MainWindow::~MainWindow()
@@ -136,6 +140,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     settings.setValue("mainWindowHSplitter", ui->splitterH->saveState());
     settings.setValue("mainWindowScriptSplitter", ui->contentSplitter->saveState());
     settings.setValue("fileDialog", _fileDialog.saveState());
+    settings.setValue("mruDirs", _mruDirs);
 }
 
 void MainWindow::changeEvent(QEvent *e)
@@ -470,6 +475,8 @@ void MainWindow::on_actionNew_triggered()
         connect(cn, &DbConnection::queryStateChanged, this, &MainWindow::refreshActions);
     }
     // create editor without query execution ability
+    // (broken by previous opened connection check)
+    // * do i need it?
     else
     {
         w = new QueryWidget(ui->tabWidget);
@@ -482,6 +489,7 @@ void MainWindow::on_actionNew_triggered()
         w->setPlainText(_objectsModel->data(srcIndex, DbObject::ContentRole).toString());
     else
         w->setPlainText("");
+
     w->highlight();
     connect(w, &QueryWidget::sqlChanged, this, &MainWindow::sqlChanged);
     w->setReadOnly(false);
@@ -521,9 +529,11 @@ void MainWindow::on_actionOpen_triggered()
     _fileDialog.setFileMode(QFileDialog::ExistingFile);
     _fileDialog.setWindowTitle(tr("Open script"));
     _fileDialog.setNameFilters(QStringList() << tr("Script files (*.sql)") << tr("All files (*.*)"));
+    _fileDialog.setHistory(_mruDirs);
     if (!_fileDialog.exec())
         return;
     QString fn = _fileDialog.selectedFiles().at(0);
+    adjustMruDirs();
 
     int tabs_count = ui->tabWidget->count();
     ui->actionNew->activate(QAction::Trigger);
@@ -586,10 +596,12 @@ bool MainWindow::ensureSaved(int index, bool ask_name, bool forceWarning)
                 _fileDialog.setWindowTitle(tr("Save script"));
                 _fileDialog.setNameFilters(QStringList() << tr("Script files (*.sql)") << tr("All files (*.*)"));
                 _fileDialog.setEncoding(w->encoding());
+                _fileDialog.setHistory(_mruDirs);
                 if (!_fileDialog.exec())
                     return false;
                 encoding = _fileDialog.encoding();
                 fn = _fileDialog.selectedFiles().at(0);
+                adjustMruDirs();
             }
         }
         if (!w->saveFile(fn, encoding))
@@ -633,7 +645,7 @@ QVariantList MainWindow::selected(const QString &nodeType, const QString &field)
             continue;
         if (field.compare("name", Qt::CaseInsensitive))
             res.append(i.data(DbObject::NameRole));
-        if (field.compare("id", Qt::CaseInsensitive))
+        else if (field.compare("id", Qt::CaseInsensitive))
             res.append(i.data(DbObject::IdRole));
     }
     return res;
@@ -703,6 +715,7 @@ bool MainWindow::script(const QModelIndex &index, const QString &children)
         foreach (QString macro, macros)
         {
             QString value;
+            // TODO children.names ?
             if (macro == "children.ids")
                 value = children.isEmpty() ? "-1" : children;
             else
@@ -725,6 +738,18 @@ bool MainWindow::script(const QModelIndex &index, const QString &children)
         onError(err);
     }
     return false;
+}
+
+void MainWindow::adjustMruDirs()
+{
+    // erase current dir if exists
+    _mruDirs.removeAll(_fileDialog.directory().absolutePath());
+    // put current dir on top
+    _mruDirs.append(_fileDialog.directory().absolutePath());
+    // keep last 10 mru paths
+    while (_mruDirs.size() > 10) // TODO move to settings
+        _mruDirs.removeAt(0);
+    _fileDialog.setHistory(_mruDirs);
 }
 
 void MainWindow::scriptSelectedObjects(bool currentOnly)

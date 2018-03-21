@@ -74,3 +74,6 @@ win32-msvc*:contains(QMAKE_HOST.arch, x86_64):{
     RC_FILE = sqt.rc
 }
 
+# TODO
+#QMAKE_EXTRA_TARGETS
+#ln -s $$_PRO_FILE_PWD_/../decor $$OUT_PWD && ln -s $$_PRO_FILE_PWD_/../scripts $$OUT_PWD

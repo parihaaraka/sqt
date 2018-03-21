@@ -8,7 +8,7 @@ ExtFileDialog::ExtFileDialog(QWidget *parent) :
 {
     setOption(QFileDialog::DontUseNativeDialog);
     setDefaultSuffix("sql");
-    QGridLayout* mainLayout = dynamic_cast<QGridLayout*>(layout());
+    QGridLayout* mainLayout = qobject_cast<QGridLayout*>(layout());
 
     if (!mainLayout)
         return;
@@ -17,12 +17,12 @@ ExtFileDialog::ExtFileDialog(QWidget *parent) :
         QHBoxLayout *hbl = new QHBoxLayout();
         _encodingCombo = new QComboBox(this);
         _encodingCombo->addItems(tr("UTF-8,Windows-1251,UTF-16LE,cp866").split(','));
-        if (_encodingCombo->count()) _encodingCombo->setCurrentIndex(0);
+        _encodingCombo->setCurrentIndex(0);
         hbl->addStretch();
         hbl->addWidget(new QLabel(tr("Encoding")));
         hbl->addWidget(_encodingCombo);
         int numRows = mainLayout->rowCount();
-        mainLayout->addLayout( hbl, numRows,0,1,-1);
+        mainLayout->addLayout(hbl, numRows,0,1,-1);
     }
 }
 
