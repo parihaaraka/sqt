@@ -4,33 +4,49 @@ select
       datname ui_name,
       oid::text id,
       'database-medium.png' icon,
-      '0' || datname sort1
+      '00' || datname sort1
 from pg_database 
 where not datistemplate
 union all
 select
       'roles',
       null,
-      '<i><u>Roles</u></i>',
-      'fake_id',
+      '<i>Roles</i>',
+      null,
       'fingerprint.png',
-      '2'
+      '01'
+union all
+select
+      'cluster_state',
+      null,
+      '<i>Cluster state</i>',
+      null,
+      'information-white.png',
+      '02'
+union all
+select
+      'pg_settings',
+      null,
+      '<i>Settings</i>',
+      null,
+      'equalizer.png',
+      '04'
 union all
 select
       'tablespaces',
       null,
-      '<i><u>Tablespaces</u></i>',
+      '<i>Tablespaces</i>',
       null,
       null,
-      '3'
+      '05'
 union all
 select
       'sessions',
       null,
-      '<i><u>Current sessions</u></i>',
+      '<i>Current sessions</i>',
       null,
       null,
-      '4'
+      '06'
 union all
 select
       'test_html',
@@ -38,5 +54,4 @@ select
       '<i><u>Test HTML result</u></i>',
       null,
       null,
-      '5'
-order by 1, 3
+      '10'
