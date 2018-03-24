@@ -316,7 +316,7 @@ void CppConductor::appendScript(QString script)
 
 void CppConductor::appendHtml(QString html)
 {
-    html.append(html);
+    this->html.append(html);
 }
 
 void CppConductor::clear()

@@ -741,29 +741,35 @@ void MainWindow::scriptSelectedObjects()
         else // single selection - process selected node
         {
             // check if script is not fetched yet
+            std::unique_ptr<Scripting::CppConductor> c;
             if (!parent.data(DbObject::ContentRole).isValid())
             {
-                auto c = Scripting::execute(con, Scripting::Context::Content, type, env);
+                c = Scripting::execute(con, Scripting::Context::Content, type, env);
                 showContent(srcIndex, c.get());
             }
             else
                 showContent(srcIndex, nullptr);
 
-            // show preview if corresponding script exists
-            auto c = Scripting::execute(con, Scripting::Context::Preview, type,
-                                        [this, &srcIndex](QString macro) -> QVariant
-                {
-                    return _objectsModel->parentNodeProperty(srcIndex, macro);
-                });
-            DataTable *table = (c && !c->resultsets.isEmpty() ? c->resultsets.back() : nullptr);
-            if (table)
+            // we can show preview if there is no resultset returned from previous script already
+            if (!c || c->resultsets.empty())
             {
-                _tableModel->take(table);
-                ui->tableView->show();
-                ui->tableView->resizeColumnsToContents();
+                // show preview if corresponding script exists
+                auto c = Scripting::execute(con, Scripting::Context::Preview, type,
+                                            [this, &srcIndex](QString macro) -> QVariant
+                    {
+                        return _objectsModel->parentNodeProperty(srcIndex, macro);
+                    });
+
+                DataTable *table = (c && !c->resultsets.isEmpty() ? c->resultsets.back() : nullptr);
+                if (table)
+                {
+                    _tableModel->take(table);
+                    ui->tableView->show();
+                    ui->tableView->resizeColumnsToContents();
+                }
+                else
+                    ui->tableView->hide();
             }
-            else
-                ui->tableView->hide();
         }
     }
     catch (const QString &err)
@@ -799,7 +805,7 @@ void MainWindow::showContent(QModelIndex &index, const Scripting::CppConductor *
         }
         else if (!content->html.isEmpty())
         {
-            value = content->scripts.back();
+            value = content->html.back();
             type = "html";
         }
 

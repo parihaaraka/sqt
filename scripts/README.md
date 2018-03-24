@@ -49,4 +49,4 @@ Sql script for PostgreSQL may contain [plpgsql anonymous code block](https://git
 Besides described macroses the script may contain `$children.ids$` to be replaced by ids of selected nodes (comma separated) and `$children.names$` to be replaced by names of selected nodes (comma separated, enclosed in single quotes if not yet). This kind of macro is actual in case of multiple nodes selection and works within parent node content script. When there is no multiple selected children of the node being scripted, the first macro is replaced by -1, the second one - by `''` (empty quoted string).
 
 ## `/preview` scripts
-Every node type may have corresponding script to display additional single resultset. Use it, for example, to display table/view content preview.
+Every node type may have corresponding script to display additional single resultset. Use it, for example, to display table/view content preview. Current implementation displays preview resultset only if content script didn't return resultset already.
