@@ -3,6 +3,7 @@ select
     c.relname ui_name,
     c.oid id,
     quote_ident(c.relname) "name",
+    true allow_multiselect,
     'table.png' icon,
     c.relname sort1
 from pg_namespace nc

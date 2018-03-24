@@ -190,15 +190,15 @@ Script* getScript(DbConnection *connection, Context context, const QString &obje
 }
 
 std::unique_ptr<CppConductor> execute(
-        DbConnection *connection,
+        std::shared_ptr<DbConnection> connection,
         Context context,
         const QString &objectType,
         std::function<QVariant(QString)> envCallback)
 {
-    std::unique_ptr<CppConductor> env { new CppConductor(envCallback) };
-    auto s = Scripting::getScript(connection, context, objectType);
+    std::unique_ptr<CppConductor> env { new CppConductor(connection, envCallback) };
+    auto s = Scripting::getScript(connection.get(), context, objectType);
     if (!s)
-        return env;
+        return nullptr;
 
     QString query = s->body;
 
@@ -223,10 +223,10 @@ std::unique_ptr<CppConductor> execute(
     if (s->type == Scripting::Script::Type::SQL)
     {
         connection->execute(query);
-        if (!connection->_resultsets.isEmpty())
+        for (int i = connection->_resultsets.size() - 1; i >= 0; --i)
         {
-            DataTable *t = connection->_resultsets.back();
-            connection->_resultsets.pop_back();
+            DataTable *t = connection->_resultsets.at(i);
+            connection->_resultsets.removeAt(i);
             if (t->rowCount() == 1 && t->columnCount() == 1)
             {
                 QString cn = t->getColumn(0).name();
@@ -254,8 +254,8 @@ std::unique_ptr<CppConductor> execute(
     {
         QJSEngine e;
         qmlRegisterType<DataTable>();
-        QQmlEngine::setObjectOwnership(connection, QQmlEngine::CppOwnership);
-        QJSValue cn = e.newQObject(connection);
+        QQmlEngine::setObjectOwnership(connection.get(), QQmlEngine::CppOwnership);
+        QJSValue cn = e.newQObject(connection.get());
         e.globalObject().setProperty("__connection", cn);
 
         // environment access in a functional style
@@ -300,31 +300,31 @@ CppConductor::~CppConductor()
 
 QVariant CppConductor::value(QString type)
 {
-    return cb(type);
+    return _cb(type);
 }
 
 void CppConductor::appendTable(DataTable *table)
 {
-    _resultsets.append(table);
+    resultsets.append(table);
     QQmlEngine::setObjectOwnership(table, QQmlEngine::CppOwnership);
 }
 
 void CppConductor::appendScript(QString script)
 {
-    _scripts.append(script);
+    scripts.append(script);
 }
 
 void CppConductor::appendHtml(QString html)
 {
-    _html.append(html);
+    html.append(html);
 }
 
 void CppConductor::clear()
 {
-    qDeleteAll(_resultsets);
-    _resultsets.clear();
-    _scripts.clear();
-    _html.clear();
+    qDeleteAll(resultsets);
+    resultsets.clear();
+    scripts.clear();
+    html.clear();
 }
 
 

@@ -11,6 +11,10 @@ namespace Ui {
 class MainWindow;
 }
 
+namespace Scripting {
+class CppConductor;
+}
+
 class SqlSyntaxHighlighter;
 class QueryWidget;
 class TableModel;
@@ -48,9 +52,9 @@ private slots:
     void on_actionOpen_triggered();
     void on_actionSave_triggered();
     void on_actionSave_as_triggered();
-    void scriptSelectedObjects(bool currentOnly = false);
-    void fillContent(QModelIndex &index, std::shared_ptr<DbConnection> con);
-    void fillContent(QVariant &value, QVariant &type, std::shared_ptr<DbConnection> con);
+    void scriptSelectedObjects();
+    void showContent(QModelIndex &index, const Scripting::CppConductor *content);
+    void showTextualContent(const QVariant &value, const QVariant &type, std::shared_ptr<DbConnection> con);
     void objectsViewAdjustColumnWidth(const QModelIndex &);
     void on_actionFind_triggered();
     void on_tabWidget_currentChanged(int index);
@@ -70,7 +74,6 @@ private:
     FindAndReplacePanel *_frPanel;
     QTimer *_hideTimer;
     void log(const QString &msg);
-    bool script(const QModelIndex &index, const QString &children = "");
     void adjustMruDirs();
 
 public slots:

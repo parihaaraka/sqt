@@ -9,4 +9,3 @@ select
 from sys.objects o
         inner join sys.schemas s on o.schema_id = s.schema_id
 where o.type = 'V'
-order by o.name, s.name

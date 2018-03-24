@@ -50,7 +50,7 @@ signals:
 
 public slots:
     void onMessage(const QString &text);
-    void onError(const QString &err);
+    void onError(const QString &text);
     void fetched(DataTable *table);
     void clearResult();
     void onCustomGridContextMenuRequested(const QPoint & pos);
@@ -74,6 +74,7 @@ private:
     QList<QTextEdit::ExtraSelection> matchBracket(const QTextCursor &selectedBracket, int darkerFactor = 100);
     bool isEnveloped(const QTextCursor &c);
     void setExtraSelections(const QList<QTextEdit::ExtraSelection> &selections);
+    void log(const QString &text, QColor color);
 };
 
 #endif // QUERYWIDGET_H

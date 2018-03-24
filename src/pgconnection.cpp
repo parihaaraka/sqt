@@ -506,7 +506,19 @@ bool PgConnection::isIdle() const noexcept
 void PgConnection::noticeReceiver(void *arg, const PGresult *res)
 {
     PgConnection *cn = static_cast<PgConnection*>(arg);
-    cn->message(PQresultErrorMessage(res));
+    QString hint = PQresultErrorField(res, PG_DIAG_MESSAGE_HINT);
+    // Postgresql doesn't support procedures, but anonimous code blocks may raise
+    // textual notice. This is the way to return plain text result like
+    // script or html content from within plpgsql code blocks instead of js.
+    if (hint == "script" || hint == "html")
+    {
+        DataTable *t = new DataTable();
+        t->addColumn(hint, QMetaType::QString, TEXTOID, -1, -1, 1, Qt::AlignLeft);
+        t->addRow()[0] = QString(PQresultErrorField(res, PG_DIAG_MESSAGE_PRIMARY));
+        cn->_resultsets.push_back(t);
+    }
+    else
+        cn->message(PQresultErrorMessage(res));
 }
 
 void PgConnection::fetchNotifications()
@@ -515,7 +527,7 @@ void PgConnection::fetchNotifications()
     while ((notify = PQnotifies(_conn)) != nullptr)
     {
         std::unique_ptr<PGnotify, void(*)(void*)> n_guard(notify, PQfreemem);
-        emit message(tr("notification received\nserver process id: %1\nchannel: %2\npayload: %3").
+        emit message(tr("* notification received:\n  server process id: %1\n  channel: %2\n  payload: %3").
                      arg(n_guard->be_pid).arg(n_guard->relname).arg(n_guard->extra));
     }
 }

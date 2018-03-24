@@ -337,18 +337,25 @@ void QueryWidget::setHtml(const QString &html)
     //editor->document()->setModified(false);
 }
 
-void QueryWidget::onMessage(const QString &text)
+void QueryWidget::log(const QString &text, QColor color)
 {
-    _messages->appendPlainText(text);
+    QTextCharFormat fmt = _messages->currentCharFormat();
+    fmt.setForeground(QBrush(color));
+    _messages->mergeCurrentCharFormat(fmt);
+
+    _messages->appendPlainText(text.trimmed());
     if (!text.isEmpty() && widget(1)->height() == 0)
         setSizes(QList<int>() << 400 << 100);
 }
 
-void QueryWidget::onError(const QString &err)
+void QueryWidget::onMessage(const QString &text)
 {
-    _messages->appendHtml(QString("<font color='red'>%1</font>").arg(err.toHtmlEscaped()));
-    if (!err.isEmpty() && widget(1)->height() == 0)
-        setSizes(QList<int>() << 400 << 100);
+    log(text, Qt::black);
+}
+
+void QueryWidget::onError(const QString &text)
+{
+    log(text, Qt::red);
 }
 
 void QueryWidget::fetched(DataTable *table)

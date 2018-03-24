@@ -87,6 +87,12 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->objectsView->installEventFilter(this);
     refreshActions();
 
+    _tableModel = new TableModel(this);
+    ui->tableView->setModel(_tableModel);
+    ui->tableView->verticalHeader()->setDefaultSectionSize(ui->tableView->verticalHeader()->minimumSectionSize());
+    ui->tableView->hide();
+    //ui->tableView->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+
     QActionGroup *viewMode = new QActionGroup(this);
     viewMode->addAction(ui->actionObject_content);
     viewMode->addAction(ui->actionQuery_editor);
@@ -97,12 +103,6 @@ MainWindow::MainWindow(QWidget *parent) :
 
     // refresh root content (connection nodes from settings)
     _objectsModel->fillChildren();
-
-    _tableModel = new TableModel(this);
-    ui->tableView->setModel(_tableModel);
-    ui->tableView->verticalHeader()->setDefaultSectionSize(ui->tableView->verticalHeader()->minimumSectionSize());
-    ui->tableView->hide();
-    //ui->tableView->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
 
     QSettings settings;
     restoreGeometry(settings.value("mainWindowGeometry").toByteArray());
@@ -202,13 +202,7 @@ void MainWindow::on_objectsView_activated(const QModelIndex &index)
         connect(con.get(), &DbConnection::error, this, &MainWindow::onError);
         connect(con.get(), &DbConnection::message, this, &MainWindow::onMessage);
         if (!con->open())
-        {
             con->disconnect();
-            // show connection error in place of node content
-            //_objectsModel->setData(currentNodeIndex, messages, DbObject::ContentRole);
-            //_objectsModel->setData(currentNodeIndex, "text", DbObject::ContentTypeRole);
-            //fillContent(currentNodeIndex, con);
-        }
         else
         {
             if (user != newUser && !newUser.isEmpty())
@@ -217,11 +211,14 @@ void MainWindow::on_objectsView_activated(const QModelIndex &index)
                 _objectsModel->saveConnectionSettings();
             }
             //con->disconnect(errConnection);
+            QString dbmsInfo = con->dbmsInfo();
             _objectsModel->setData(currentNodeIndex, true, DbObject::ParentRole);
-            _objectsModel->setData(currentNodeIndex, con->dbmsInfo(), DbObject::ContentRole);
+            _objectsModel->setData(currentNodeIndex, dbmsInfo, DbObject::ContentRole);
             _objectsModel->setData(currentNodeIndex, "text", DbObject::ContentTypeRole);
-            fillContent(currentNodeIndex, con);
-            scriptSelectedObjects(true);
+            showTextualContent(dbmsInfo, "text", con);
+            // TODO
+            // deside what to use: dbmsInfo() or connection.<sql|qs>
+            //scriptSelectedObjects(true);
         }
     }
 }
@@ -308,23 +305,16 @@ void MainWindow::on_actionRefresh_triggered()
     Scripting::refresh(cn, Scripting::Context::Content);
     Scripting::refresh(cn, Scripting::Context::Preview);
 
+    Scripting::refresh(cn, Scripting::Context::Tree);
+
     // clear all child nodes
     _objectsModel->removeRows(0, item->childCount(), nodeToRefresh);
 
-    // if parrent still contains current node
-    if (_objectsModel->fillChildren(nodeToRefresh))
-    {
-        // clear current node's script
-        item->setData(QVariant(), DbObject::ContentRole);
-        // refresh current node's script
-        scriptSelectedObjects(true);
-    }
-    else
-    {
-        // TODO ensure this is needed
-        DboSortFilterProxyModel *proxyModel = qobject_cast<DboSortFilterProxyModel*>(ui->objectsView->model());
-        proxyModel->invalidate();
-    }
+    _objectsModel->fillChildren(nodeToRefresh);
+    // clear current node's preserved data
+    item->setData(QVariant(), DbObject::ContentRole);
+    // refresh
+    scriptSelectedObjects();
 }
 
 void MainWindow::on_actionChange_sort_mode_triggered()
@@ -346,21 +336,26 @@ void MainWindow::selectionChanged(const QItemSelection &selected, const QItemSel
     QItemSelectionModel *selectionModel = qobject_cast<QItemSelectionModel*>(sender());
     QModelIndexList si = selectionModel->selectedIndexes();
     QModelIndex cur = selectionModel->currentIndex();
-    if (!cur.isValid())
-        return;
-    if (si.count() > 1 || deselected.indexes().count() > 1)
+
+    // We have to allow *single* parent for all selected nodes,
+    // so the current node's parent is indicative one.
+
+    bool allowMultiselect = (cur.parent().isValid() && cur.parent().data(DbObject::MultiselectRole).toBool());
+    foreach(QModelIndex i, si)
     {
-        bool multiselect = (cur.parent().isValid() && cur.parent().data(DbObject::MultiselectRole).toBool());
-        QString children;
-        foreach(QModelIndex i, si)
-        {
-            if (i.parent() != cur.parent() || (i != cur && !multiselect) || !i.data(DbObject::IdRole).isValid())
-                selectionModel->select(i, QItemSelectionModel::Deselect);
-            else if (multiselect && i.data(DbObject::IdRole).isValid())
-                children += (children.length() > 0 ? "," : "") + i.data(DbObject::IdRole).toString();
-        }
-        scriptSelectedObjects(si.count() == 1);
+        if (
+                // deselect nodes with different parent
+                i.parent() != cur.parent() ||
+                // deselect nodes if multiple selection is not allowed
+                (i != cur && !allowMultiselect) ||
+                // Deselect sibling selected "folders".
+                // E.g. table may have the following children: column1, column2,.., Indexes, Triggers and so on.
+                // Here "Indexes" and "Triggers" folders are not allowed to be selected along with columns.
+                !i.data(DbObject::IdRole).isValid()
+           )
+            selectionModel->select(i, QItemSelectionModel::Deselect);
     }
+    scriptSelectedObjects();
 }
 
 void MainWindow::currentChanged(const QModelIndex &current, const QModelIndex &previous)
@@ -371,10 +366,6 @@ void MainWindow::currentChanged(const QModelIndex &current, const QModelIndex &p
     ui->actionRefresh->setEnabled(current.isValid());
     ui->actionChange_sort_mode->setEnabled(current.isValid());
     refreshContextInfo();
-
-    QItemSelectionModel *selectionModel = qobject_cast<QItemSelectionModel*>(sender());
-    if (selectionModel->selectedIndexes().count() == 1)
-        scriptSelectedObjects();
 }
 
 void MainWindow::viewModeActionTriggered(QAction *action)
@@ -476,7 +467,7 @@ void MainWindow::on_actionNew_triggered()
     }
     // create editor without query execution ability
     // (broken by previous opened connection check)
-    // * do i need it?
+    // * do we need it?
     else
     {
         w = new QueryWidget(ui->tabWidget);
@@ -682,64 +673,6 @@ void MainWindow::refreshActions()
     _frPanel->setEditor(qw);
 }
 
-bool MainWindow::script(const QModelIndex &index, const QString &children)
-{
-    //QString result;
-    if (!index.isValid())
-        return false;
-
-    DbObject *parentItem = static_cast<DbObject*>(index.internalPointer());
-    QString type = parentItem->data(DbObject::TypeRole).toString();
-
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    ScopeGuard<void(*)()> cursorGuard(QApplication::restoreOverrideCursor);
-
-    std::shared_ptr<DbConnection> con = _objectsModel->dbConnection(index);
-    try
-    {
-        if (!con->open())
-            return false;
-        Scripting::Script *s = Scripting::getScript(con.get(), Scripting::Context::Content, type);
-        if (!s)
-            throw tr("script to make %1 content not found").arg(type);
-
-        QString query = s->body;
-        QRegularExpression expr("\\$(\\w+\\.\\w+)\\$");
-        QRegularExpressionMatchIterator i = expr.globalMatch(query);
-        QStringList macros;
-        while (i.hasNext())
-        {
-            QRegularExpressionMatch match = i.next();
-            if (!macros.contains(match.captured(1))) macros << match.captured(1);
-        }
-        foreach (QString macro, macros)
-        {
-            QString value;
-            // TODO children.names ?
-            if (macro == "children.ids")
-                value = children.isEmpty() ? "-1" : children;
-            else
-                value = _objectsModel->parentNodeProperty(index, macro).toString();
-            query = query.replace("$" + macro + "$", value);
-        }
-
-        if (s->type == Scripting::Script::Type::SQL)
-        {
-            con->execute(query);
-        }
-        else if (s->type == Scripting::Script::Type::QS)
-        {
-
-        }
-        return true;
-    }
-    catch (const QString &err)
-    {
-        onError(err);
-    }
-    return false;
-}
-
 void MainWindow::adjustMruDirs()
 {
     // erase current dir if exists
@@ -752,10 +685,10 @@ void MainWindow::adjustMruDirs()
     _fileDialog.setHistory(_mruDirs);
 }
 
-void MainWindow::scriptSelectedObjects(bool currentOnly)
+void MainWindow::scriptSelectedObjects()
 {
-    if (!_objectScript->isVisible() && !ui->tableView->isVisible())
-        return;
+    //if (!_objectScript->isVisible() && !ui->tableView->isVisible())
+    //    return;
     _tableModel->clear();
     QModelIndex srcIndex = static_cast<QSortFilterProxyModel*>(ui->objectsView->model())->mapToSource(ui->objectsView->currentIndex());
     if (!srcIndex.isValid())
@@ -776,47 +709,60 @@ void MainWindow::scriptSelectedObjects(bool currentOnly)
 
     try
     {
-        con->open();
-        if (si.count() > 1 && !currentOnly)
-        {
-            // the only reason to allow multiple selection is to script all selected objects
-            // within parent script (e.g. select/insert table scripts with selected columns only)
-            QString children;
-            foreach(QModelIndex i, si)
-            {
-                if (i.data(DbObject::IdRole).isValid())
-                    children += (children.length() > 0 ? "," : "") + i.data(DbObject::IdRole).toString();
-            }
-            script(srcIndex.parent(), children);
-            QModelIndex tmp_index;
-            fillContent(tmp_index, con);
-        }
-        else
-        {
-            QString typeRole = _objectsModel->data(srcIndex, DbObject::TypeRole).toString();
-            QVariant scriptText = srcIndex.data(DbObject::ContentRole);
-            if (!scriptText.isValid() && Scripting::getScript(con.get(), Scripting::Context::Content, typeRole) != nullptr)
-            {
-                script(srcIndex);
-            }
-            fillContent(srcIndex, con);
+        // process parent node in case of multiple selection, else process selected node
+        QModelIndex parent = (si.count() > 1 ? srcIndex.parent() : srcIndex);
+        QString type = parent.data(DbObject::TypeRole).toString();
 
-            Scripting::Script *s = Scripting::getScript(con.get(), Scripting::Context::Preview, typeRole);
-            if (s != nullptr)
+        // callback to provide values for macroses
+        auto env = [this, &parent, &si](QString macro) -> QVariant
+        {
+            // TODO children.names ?
+            if (macro == "children.ids")
             {
-                // TODO
-                //script(srcIndex);
-
-                QString objName = _objectsModel->data(srcIndex, DbObject::NameRole).toString();
-                con->execute("select * from " + objName, nullptr, 100);
-                if (!con->_resultsets.isEmpty())
+                QString children;
+                foreach(QModelIndex i, si)
                 {
-                    _tableModel->take(con->_resultsets.front());
-                    ui->tableView->show();
-                    ui->tableView->resizeColumnsToContents();
+                    if (i.data(DbObject::IdRole).isValid())
+                        children += (children.length() > 0 ? "," : "") + i.data(DbObject::IdRole).toString();
                 }
+                return children.isEmpty() || si.count() == 1 ? "-1" : children;
             }
-            else if (con->_resultsets.isEmpty())
+            return _objectsModel->parentNodeProperty(parent, macro);
+        };
+
+        if (si.count() > 1) // multiple selection - process parent node
+        {
+            // always refresh content in case of multiple selection
+            auto c = Scripting::execute(con, Scripting::Context::Content, type, env);
+
+            QModelIndex tmp_index;
+            showContent(tmp_index, c.get());
+        }
+        else // single selection - process selected node
+        {
+            // check if script is not fetched yet
+            if (!parent.data(DbObject::ContentRole).isValid())
+            {
+                auto c = Scripting::execute(con, Scripting::Context::Content, type, env);
+                showContent(srcIndex, c.get());
+            }
+            else
+                showContent(srcIndex, nullptr);
+
+            // show preview if corresponding script exists
+            auto c = Scripting::execute(con, Scripting::Context::Preview, type,
+                                        [this, &srcIndex](QString macro) -> QVariant
+                {
+                    return _objectsModel->parentNodeProperty(srcIndex, macro);
+                });
+            DataTable *table = (c && !c->resultsets.isEmpty() ? c->resultsets.back() : nullptr);
+            if (table)
+            {
+                _tableModel->take(table);
+                ui->tableView->show();
+                ui->tableView->resizeColumnsToContents();
+            }
+            else
                 ui->tableView->hide();
         }
     }
@@ -830,65 +776,72 @@ void MainWindow::scriptSelectedObjects(bool currentOnly)
     }
 }
 
-void MainWindow::fillContent(QModelIndex &index, std::shared_ptr<DbConnection> con)
+void MainWindow::showContent(QModelIndex &index, const Scripting::CppConductor *content)
 {
+    /*
+     * Current implementation displays only single item returned by script providing node's content.
+     * We use first non-empty thing in the following order:
+     * sql script -> html -> last resultset
+     */
+
     _objectScript->clear();
     _tableModel->clear();
 
-    ui->tableView->hide();
-    _objectScript->show();
-
     QVariant value;
     QVariant type;
-    if (index.isValid())
+    // use new result data if available
+    if (content)
     {
-        value = _objectsModel->data(index, DbObject::ContentRole);
-        type = _objectsModel->data(index, DbObject::ContentTypeRole);
-        if (value.isValid())
+        if (!content->scripts.isEmpty())
         {
-            fillContent(value, type, con);
-            return;
+            value = content->scripts.back();
+            type = "script";
         }
-    }
-    DataTable *table = con->_resultsets.isEmpty() ? nullptr : con->_resultsets.front();
-    if (table)
-    {
-        if (table->columnCount() > 1 || table->rowCount() > 1)
+        else if (!content->html.isEmpty())
         {
-            ui->tableView->show();
-            _objectScript->hide();
-            _tableModel->take(table);
-            ui->tableView->resizeColumnsToContents();
-            if (index.isValid())
-                _objectsModel->setData(index, "table", DbObject::ContentTypeRole);
-            return;
+            value = content->scripts.back();
+            type = "html";
         }
-        else
-        {
-            if (table->columnCount() == 1)
-            {
-                value = table->getRow(0)[0].toString();
-                type = table->getColumn(0).name();
-            }
-        }
-    }
-    /*else if (!con->lastError().isEmpty())
-    {
-        value = con->lastError();
-        type = "text";
-    }*/
-    if (value.isValid())
-    {
+
         if (index.isValid())
         {
             _objectsModel->setData(index, value, DbObject::ContentRole);
             _objectsModel->setData(index, type, DbObject::ContentTypeRole);
         }
-        fillContent(value, type, con);
     }
+    // use preserved content data
+    else if (index.isValid())
+    {
+        value = index.data(DbObject::ContentRole);
+        type = index.data(DbObject::ContentTypeRole);
+    }
+
+    // if textual data exists - show it and stop processing
+    if (value.isValid())
+    {
+        ui->tableView->hide();
+        _objectScript->show();
+        showTextualContent(value, type, content ? content->connection() : nullptr);
+        return;
+    }
+    _objectScript->hide();
+
+    // stop if no table to display
+    if (!content || content->resultsets.isEmpty())
+    {
+        ui->tableView->hide();
+        return;
+    }
+
+    ui->tableView->show();
+    DataTable *table = content->resultsets.back();
+    _tableModel->take(table);
+    ui->tableView->resizeColumnsToContents();
+    if (index.isValid())
+        _objectsModel->setData(index, "table", DbObject::ContentTypeRole);
 }
 
-void MainWindow::fillContent(QVariant &value, QVariant &type, std::shared_ptr<DbConnection> con)
+void MainWindow::showTextualContent(const QVariant &value, const QVariant &type, std::shared_ptr<DbConnection> con)
 {
     if (!value.isValid())
         return;
@@ -931,14 +884,7 @@ void MainWindow::refreshContextInfo()
             con = _objectsModel->dbConnection(srcIndex).get();
     }
 
-    if (con)
-    {
-        _contextLabel.setText(con->context());
-    }
-    else
-    {
-        _contextLabel.clear();
-    }
+    _contextLabel.setText(con ? con->context() : "");
 }
 
 void MainWindow::refreshCursorInfo()
@@ -986,7 +932,7 @@ void MainWindow::log(const QString &msg)
 {
     ui->log->appendPlainText(QString("%1: %2")
             .arg(QTime::currentTime().toString(Qt::ISODateWithMs))
-            .arg(msg));
+            .arg(msg.trimmed()));
 
     int blockCount = ui->log->document()->blockCount();
     if (blockCount > 100)

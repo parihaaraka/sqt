@@ -192,13 +192,16 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
         if (!con->open())
             throw QString("");
 
-        auto c = Scripting::execute(con.get(), Scripting::Context::Tree, type,
+        auto c = Scripting::execute(con, Scripting::Context::Tree, type,
                                     [this, &parent](QString macro) -> QVariant
             {
                 return parentNodeProperty(parent, macro);
             });
-        DataTable *table = (c->_resultsets.isEmpty() ? nullptr : c->_resultsets.back());
+        DataTable *table = (c && !c->resultsets.isEmpty() ? c->resultsets.back() : nullptr);
 
+        if (!table)
+            return true;
+        /*
         // remove current node in case of error during scripting
         if (!table)
         {
@@ -206,6 +209,7 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
                 removeRow(parent.row(), parent.parent());
             return false;
         }
+        */
 
         // http://msdn.microsoft.com/en-us/library/ms403629(v=sql.105).aspx
         int typeInd = table->getColumnOrd("node_type");
@@ -240,7 +244,7 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
             if (sort2Ind >= 0 && !r[sort2Ind].isNull())
                 newItem->setData(r[sort2Ind], DbObject::Sort2Role);
             if (multiselectInd >= 0 && !r[multiselectInd].isNull())
-                newItem->setData(r[sort2Ind].toBool(), DbObject::MultiselectRole);
+                newItem->setData(r[multiselectInd].toBool(), DbObject::MultiselectRole);
             if (typeInd >= 0)
             {
                 QString value = r[typeInd].toString();
