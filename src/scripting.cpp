@@ -285,6 +285,12 @@ std::unique_ptr<CppConductor> execute(
                                         })");
         e.globalObject().setProperty("returnScript", returnScriptFn);
 
+        QJSValue returnTextFn = e.evaluate(R"(
+                                        function(text) {
+                                            __env.appendText(text);
+                                        })");
+        e.globalObject().setProperty("returnText", returnTextFn);
+
         QJSValue execRes = e.evaluate(query);
         if (execRes.isError())
             throw QObject::tr("error at line %1: %2").arg(execRes.property("lineNumber").toInt()).arg(execRes.toString());
@@ -316,7 +322,12 @@ void CppConductor::appendScript(QString script)
 
 void CppConductor::appendHtml(QString html)
 {
-    this->html.append(html);
+    htmls.append(html);
+}
+
+void CppConductor::appendText(QString text)
+{
+    texts.append(text);
 }
 
 void CppConductor::clear()
@@ -324,7 +335,8 @@ void CppConductor::clear()
     qDeleteAll(resultsets);
     resultsets.clear();
     scripts.clear();
-    html.clear();
+    htmls.clear();
+    texts.clear();
 }
 
 

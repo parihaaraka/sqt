@@ -38,7 +38,8 @@ private:
 public:
     QList<DataTable*> resultsets;
     QList<QString> scripts;
-    QList<QString> html;
+    QList<QString> htmls;
+    QList<QString> texts;
     std::shared_ptr<DbConnection> connection() const { return _cn; }
 
 public slots:
@@ -46,6 +47,7 @@ public slots:
     void appendTable(DataTable *table);
     void appendScript(QString script);
     void appendHtml(QString html);
+    void appendText(QString text);
     void clear();
 };
 

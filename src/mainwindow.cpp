@@ -38,6 +38,7 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->statusBar->addPermanentWidget(&_contextLabel);
     _positionLabel.setVisible(false);
     ui->statusBar->addPermanentWidget(&_positionLabel);
+    ui->statusBar->addPermanentWidget(&_durationLabel);
 
     _objectScript = new QueryWidget(this);
     _objectScript->setReadOnly(true);
@@ -59,6 +60,10 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(ui->objectsView->selectionModel(), &QItemSelectionModel::selectionChanged, this, &MainWindow::selectionChanged);
     connect(ui->objectsView->selectionModel(), &QItemSelectionModel::currentChanged, this, &MainWindow::currentChanged);
 
+    _durationRefreshTimer = new QTimer(this);
+    connect(_durationRefreshTimer, &QTimer::timeout, this, &MainWindow::refreshDuration);
+    _durationRefreshTimer->start(200);
+
     // it's about messages frame auto-hide
     _hideTimer = new QTimer(this);
     _hideTimer->setSingleShot(true);
@@ -69,6 +74,7 @@ MainWindow::MainWindow(QWidget *parent) :
         ui->splitterV->setSizes({1000, 0});
     });
 
+    // TODO move to settings
     QFont font("Consolas, monospace, Menlo, Lucida Console, Liberation Mono, DejaVu Sans Mono, Bitstream Vera Sans Mono, Courier New, serif");
     font.setStyleHint(QFont::TypeWriter);
     ui->log->setFont(font);
@@ -114,6 +120,37 @@ MainWindow::MainWindow(QWidget *parent) :
     // make previously used directory to be current
     if (!_mruDirs.isEmpty())
         _fileDialog.setDirectory(_mruDirs.last());
+
+    // switch to next tab page
+    QAction *tabWidgetAction = new QAction(tr("next page"), ui->tabWidget);
+    tabWidgetAction->setShortcut(QKeySequence::Forward);
+    connect(tabWidgetAction, &QAction::triggered, [this]()
+    {
+        if (ui->tabWidget->currentIndex() < ui->tabWidget->count() - 1)
+            ui->tabWidget->setCurrentIndex(ui->tabWidget->currentIndex() + 1);
+    });
+    ui->tabWidget->addAction(tabWidgetAction);
+
+    // switch to previous tab page
+    tabWidgetAction = new QAction(tr("previous page"), ui->tabWidget);
+    tabWidgetAction->setShortcut(QKeySequence::Back);
+    connect(tabWidgetAction, &QAction::triggered, [this]()
+    {
+        if (ui->tabWidget->currentIndex() > 0)
+            ui->tabWidget->setCurrentIndex(ui->tabWidget->currentIndex() - 1);
+    });
+    ui->tabWidget->addAction(tabWidgetAction);
+
+    // switch to previous tab page
+    tabWidgetAction = new QAction(tr("close page"), ui->tabWidget);
+    tabWidgetAction->setShortcut(QKeySequence::Close);
+    connect(tabWidgetAction, &QAction::triggered, [this]()
+    {
+        if (ui->tabWidget->currentIndex() >= 0)
+            closeTab(ui->tabWidget->currentIndex());
+    });
+    ui->tabWidget->addAction(tabWidgetAction);
+    ui->tabWidget->setContextMenuPolicy(Qt::ActionsContextMenu);
 }
 
 MainWindow::~MainWindow()
@@ -211,14 +248,8 @@ void MainWindow::on_objectsView_activated(const QModelIndex &index)
                 _objectsModel->saveConnectionSettings();
             }
             //con->disconnect(errConnection);
-            QString dbmsInfo = con->dbmsInfo();
             _objectsModel->setData(currentNodeIndex, true, DbObject::ParentRole);
-            _objectsModel->setData(currentNodeIndex, dbmsInfo, DbObject::ContentRole);
-            _objectsModel->setData(currentNodeIndex, "text", DbObject::ContentTypeRole);
-            showTextualContent(dbmsInfo, "text", con);
-            // TODO
-            // deside what to use: dbmsInfo() or connection.<sql|qs>
-            //scriptSelectedObjects(true);
+            scriptSelectedObjects();
         }
     }
 }
@@ -375,6 +406,7 @@ void MainWindow::viewModeActionTriggered(QAction *action)
     ui->tabWidget->setVisible(action == ui->actionQuery_editor);
     ui->actionObject_content->setShortcut(action == ui->actionQuery_editor ? Qt::Key_F2 : 0);
     ui->actionQuery_editor->setShortcut(action == ui->actionObject_content ? Qt::Key_F2 : 0);
+    refreshDuration();
     setUpdatesEnabled(true);
     if (ui->tabWidget->isHidden())
         scriptSelectedObjects();
@@ -679,8 +711,8 @@ void MainWindow::adjustMruDirs()
     _mruDirs.removeAll(_fileDialog.directory().absolutePath());
     // put current dir on top
     _mruDirs.append(_fileDialog.directory().absolutePath());
-    // keep last 10 mru paths
-    while (_mruDirs.size() > 10) // TODO move to settings
+    // Keep last 10 mru paths. Lets keep it const :)
+    while (_mruDirs.size() > 10)
         _mruDirs.removeAt(0);
     _fileDialog.setHistory(_mruDirs);
 }
@@ -716,17 +748,24 @@ void MainWindow::scriptSelectedObjects()
         // callback to provide values for macroses
         auto env = [this, &parent, &si](QString macro) -> QVariant
         {
-            // TODO children.names ?
-            if (macro == "children.ids")
+            // do we need children.names?!
+            if (macro == "children.ids" || macro == "children.names")
             {
+                DbObject::ObjectRole role = (macro == "children.ids" ?
+                                                 DbObject::IdRole :
+                                                 DbObject::NameRole);
                 QString children;
                 foreach(QModelIndex i, si)
                 {
-                    if (i.data(DbObject::IdRole).isValid())
-                        children += (children.length() > 0 ? "," : "") + i.data(DbObject::IdRole).toString();
+                    if (i.data(role).isValid())
+                        children += (children.length() > 0 ? "," : "") +
+                                i.data(role).toString();
                 }
-                return children.isEmpty() || si.count() == 1 ? "-1" : children;
+                return children.isEmpty() || si.count() == 1 ?
+                            (role == DbObject::IdRole ? "-1" : "NULL") :
+                            children;
             }
+
             return _objectsModel->parentNodeProperty(parent, macro);
         };
 
@@ -745,6 +784,14 @@ void MainWindow::scriptSelectedObjects()
             if (!parent.data(DbObject::ContentRole).isValid())
             {
                 c = Scripting::execute(con, Scripting::Context::Content, type, env);
+                // special processing of 'connection' node: display dbmsInfo
+                // if corresponding script is not found
+                if (!c && type == "connection")
+                {
+                    QString dbmsInfo = con->dbmsInfo();
+                    c = std::unique_ptr<Scripting::CppConductor>(new Scripting::CppConductor(con, env));
+                    c->texts.append(dbmsInfo);
+                }
                 showContent(srcIndex, c.get());
             }
             else
@@ -803,10 +850,15 @@ void MainWindow::showContent(QModelIndex &index, const Scripting::CppConductor *
             value = content->scripts.back();
             type = "script";
         }
-        else if (!content->html.isEmpty())
+        else if (!content->htmls.isEmpty())
         {
-            value = content->html.back();
+            value = content->htmls.back();
             type = "html";
+        }
+        else if (!content->texts.isEmpty())
+        {
+            value = content->texts.back();
+            type = "text";
         }
 
         if (index.isValid())
@@ -851,6 +903,9 @@ void MainWindow::showTextualContent(const QVariant &value, const QVariant &type,
 {
     if (!value.isValid())
         return;
+
+    // for standalone usage
+    _objectScript->show();
 
     if (type.toString() == "script")
     {
@@ -907,6 +962,15 @@ void MainWindow::refreshCursorInfo()
     _positionLabel.setVisible(ed);
 }
 
+void MainWindow::refreshDuration()
+{
+    QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
+    if (ui->tabWidget->isHidden() || !w || !w->dbConnection())
+        _durationLabel.clear();
+    else
+        _durationLabel.setText(w->dbConnection()->elapsed());
+}
+
 void MainWindow::objectsViewAdjustColumnWidth(const QModelIndex &)
 {
     ui->objectsView->header()->setStretchLastSection(false);
@@ -930,6 +994,7 @@ void MainWindow::on_tabWidget_currentChanged(int index)
     QueryWidget *q = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
     _frPanel->setEditor(q);
     refreshActions();
+    refreshDuration();
     refreshContextInfo();
     refreshCursorInfo();
 }

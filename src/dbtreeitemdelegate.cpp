@@ -56,7 +56,7 @@ void DbTreeItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
     lightColor = QColor::fromHsv(regularColor.hsvHue(), regularColor.hslSaturation(), l);
     doc.setDefaultStyleSheet(QString("span.light { color: %1; } span.regular { color: %2; }").
                              arg(lightColor.name(), regularColor.name()));
-    prepareDoc(option, index, doc);
+    prepareDocToDrawDbTreeNode(option, index, doc);
 
     painter->save();
     painter->translate(option.rect.topLeft() + QPoint(
@@ -70,7 +70,7 @@ QSize DbTreeItemDelegate::sizeHint(const QStyleOptionViewItem &option, const QMo
 {
     QSize sz; // = QStyledItemDelegate::sizeHint(option, index);
     QTextDocument doc;
-    prepareDoc(option, index, doc);
+    prepareDocToDrawDbTreeNode(option, index, doc);
     sz.setWidth(option.rect.x() +
                 (option.features & QStyleOptionViewItem::HasDecoration ? 24 : 4) +
                 doc.documentLayout()->documentSize().width() + 1);
@@ -78,7 +78,7 @@ QSize DbTreeItemDelegate::sizeHint(const QStyleOptionViewItem &option, const QMo
     return sz;
 }
 
-void DbTreeItemDelegate::prepareDoc(const QStyleOptionViewItem &option, const QModelIndex &index, QTextDocument &doc) const
+void DbTreeItemDelegate::prepareDocToDrawDbTreeNode(const QStyleOptionViewItem &option, const QModelIndex &index, QTextDocument &doc) const
 {
     Q_UNUSED(option);
     QFont objectsFont(QApplication::font());

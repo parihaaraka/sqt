@@ -55,13 +55,17 @@ void DbConnection::setQueryState(QueryState state)
     if (_query_state != state)
     {
         _query_state = state;
+        if (state == QueryState::Inactive)
+            _elapsed_ms = _timer.elapsed();
         emit queryStateChanged();
     }
 }
 
 QString DbConnection::elapsed()
 {
-    int elapsed_ms = _timer.elapsed();
+    int elapsed_ms = _elapsed_ms;
+    if (_query_state != QueryState::Inactive)
+        elapsed_ms = _timer.elapsed() / 100 * 100;
     return QDateTime::fromMSecsSinceEpoch(elapsed_ms).
             toString(elapsed_ms < 60000 ?
                          "s.z 'sec'" :

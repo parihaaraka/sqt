@@ -320,8 +320,7 @@ QVariant DbObjectsModel::parentNodeProperty(const QModelIndex &index, QString ty
             else
                 break;
         }
-        else
-            item = item->parent();
+        item = item->parent();
     }
     while (!envValue.isValid() && item);
     return envValue;

@@ -15,7 +15,7 @@ public:
     enum ObjectRole
     {
         IdRole = Qt::UserRole + 1,  ///< unique id
-        NameRole,                   ///< unquoted name
+        NameRole,                   ///< unquoted (typically) name
         TypeRole,                   ///< tree node type [connection | database | schema | table | function ...]
         ContentRole,                ///< content data
         ContentTypeRole,            ///< content type [script | text | html | table]

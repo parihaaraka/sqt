@@ -7,7 +7,7 @@ int main(int argc, char *argv[])
     a.setWindowIcon(QIcon(":/sqt.ico"));
     QCoreApplication::setOrganizationName("parihaaraka");
     QCoreApplication::setApplicationName("sqt");
-    QCoreApplication::setApplicationVersion("0.2.13");
+    QCoreApplication::setApplicationVersion("0.2.14");
     if (QApplication::font().pointSize() > 9)
     {
         QFont appFont(QApplication::font());
@@ -16,7 +16,7 @@ int main(int argc, char *argv[])
     }
 
     /// TODO: move to settings
-    a.setStyleSheet("QTableView, QHeaderView { font-size: 8.5pt; }\nQTabBar::tab { height: 2em; }");
+    a.setStyleSheet("QTableView, QHeaderView { font-size: 9pt; }\nQTabBar::tab { height: 2em; }");
 
     MainWindow w;
 	w.show();

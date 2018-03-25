@@ -15,7 +15,7 @@ public:
     explicit DbTreeItemDelegate(QObject *parent = 0);
     virtual void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const;
     virtual QSize sizeHint(const QStyleOptionViewItem & option, const QModelIndex & index) const;
-    void prepareDoc(const QStyleOptionViewItem & option, const QModelIndex & index, QTextDocument &doc) const;
+    void prepareDocToDrawDbTreeNode(const QStyleOptionViewItem & option, const QModelIndex & index, QTextDocument &doc) const;
 
 };
 

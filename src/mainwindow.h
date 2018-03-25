@@ -60,7 +60,7 @@ private slots:
     void on_tabWidget_currentChanged(int index);
 
 private:
-    QLabel _contextLabel, _positionLabel;
+    QLabel _contextLabel, _positionLabel, _durationLabel;
     ExtFileDialog _fileDialog;
     QStringList _mruDirs; // QFileDialog::history() keeps unused directories :(
 	Ui::MainWindow *ui;
@@ -73,6 +73,7 @@ private:
     bool ensureSaved(int index, bool ask_name = false, bool forceWarning = false);
     FindAndReplacePanel *_frPanel;
     QTimer *_hideTimer;
+    QTimer *_durationRefreshTimer;
     void log(const QString &msg);
     void adjustMruDirs();
 
@@ -83,6 +84,7 @@ public slots:
     void refreshActions();
     void refreshContextInfo();
     void refreshCursorInfo();
+    void refreshDuration();
     void onMessage(const QString &msg);
     void onError(const QString &err);
 };

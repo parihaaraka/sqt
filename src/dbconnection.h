@@ -80,6 +80,7 @@ public:
     void setConnectionString(const QString &connectionString);
     QString connectionString() const;
     QueryState queryState() const;
+    QString elapsed();
     QList<DataTable*> _resultsets;
 
 public slots: // to use from QJSEngine
@@ -99,7 +100,8 @@ protected:
     QTime _timer;
     QMutex _resultsetsGuard; // TODO needs refactoring
     void setQueryState(QueryState queryState);
-    QString elapsed();
+private:
+    int _elapsed_ms = 0;
 };
 
 #endif // DBCONNECTION_H

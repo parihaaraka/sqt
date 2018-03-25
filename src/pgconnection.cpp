@@ -414,8 +414,7 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
 bool PgConnection::execute(const QString &query, const QVector<QVariant> *params, int limit)
 {
     // limit works in preview query
-    // TODO move to preview script
-    QString finalQuery = (limit != -1 ? query + QString(" limit %1").arg(limit) : query);
+    Q_UNUSED(limit)
 
     // save transaction status to avoid reconnects within transaction
     PGTransactionStatusType initial_state = PQtransactionStatus(_conn);
@@ -448,14 +447,14 @@ bool PgConnection::execute(const QString &query, const QVector<QVariant> *params
         {
             raw_tmp_res = _params_tmp.count() ?
                         PQexecParams(_conn,
-                                     finalQuery.toStdString().c_str(),
+                                     query.toStdString().c_str(),
                                      static_cast<int>(_params_tmp.count()),
                                      nullptr,
                                      _params_tmp.values(),
                                      _params_tmp.lengths(),
                                      nullptr,
                                      0) :
-                        PQexec(_conn, finalQuery.toStdString().c_str());
+                        PQexec(_conn, query.toStdString().c_str());
             //_last_action_moment = chrono::system_clock::now();
         }
         std::unique_ptr<PGresult,decltype(&PQclear)> tmp_res(raw_tmp_res, PQclear);
