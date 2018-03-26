@@ -132,7 +132,8 @@ bool DbObjectsModel::hasChildren(const QModelIndex &parent) const
 {
     if (!parent.isValid())
         return true;
-    return static_cast<DbObject*>(parent.internalPointer())->data(DbObject::ParentRole).toBool();
+    DbObject *item = static_cast<DbObject*>(parent.internalPointer());
+    return item->data(DbObject::ParentRole).toBool();
 }
 
 bool DbObjectsModel::canFetchMore(const QModelIndex &parent) const
@@ -149,7 +150,7 @@ void DbObjectsModel::fetchMore(const QModelIndex &parent)
         return;
     fillChildren(parent);
     DbObject *item = static_cast<DbObject*>(parent.internalPointer());
-    item->setData(item->childCount() ? true : false, DbObject::ParentRole);
+    setData(parent, item->childCount() ? true : false, DbObject::ParentRole);
 }
 
 bool DbObjectsModel::fillChildren(const QModelIndex &parent)

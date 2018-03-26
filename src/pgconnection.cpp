@@ -8,7 +8,7 @@
 #include <QThread>
 
 PgConnection::PgConnection() :
-    DbConnection(), _readNotifier(nullptr), _writeNotifier(nullptr), _temp_result(nullptr)
+    DbConnection(), _readNotifier(nullptr), _writeNotifier(nullptr), _temp_result(nullptr), _temp_result_rowcount(0)
 {
 
 }
@@ -479,13 +479,18 @@ bool PgConnection::execute(const QString &query, const QVector<QVariant> *params
             emit error(PQresultErrorMessage(raw_tmp_res));
             return false;
         }
-        DataTable *table = new DataTable();
-        QMutexLocker lk(&_resultsetsGuard);
-        _resultsets.append(table);
-        lk.unlock();
-        int rows_fetched = appendRawDataToTable(*table, raw_tmp_res);
-        if (!rows_fetched || rows_fetched % FETCH_COUNT_NOTIFY != 0)
-            emit fetched(table);
+
+        // resultset fetched
+        if (status == PGRES_TUPLES_OK)
+        {
+            DataTable *table = new DataTable();
+            QMutexLocker lk(&_resultsetsGuard);
+            _resultsets.append(table);
+            lk.unlock();
+            int rows_fetched = appendRawDataToTable(*table, raw_tmp_res);
+            if (!rows_fetched || rows_fetched % FETCH_COUNT_NOTIFY != 0)
+                emit fetched(table);
+        }
 
         // restore watching socket to receive notifications
         watchSocket(SocketWatchMode::Read);
@@ -514,6 +519,7 @@ void PgConnection::noticeReceiver(void *arg, const PGresult *res)
         DataTable *t = new DataTable();
         t->addColumn(hint, QMetaType::QString, TEXTOID, -1, -1, 1, Qt::AlignLeft);
         t->addRow()[0] = QString(PQresultErrorField(res, PG_DIAG_MESSAGE_PRIMARY));
+        // synchronous usage only - no need to use _resultsetsGuard
         cn->_resultsets.push_back(t);
     }
     else
@@ -571,8 +577,15 @@ void PgConnection::fetch() noexcept
             continue;
         }
 
+        if (status == PGRES_EMPTY_QUERY)
+        {
+            emit message(tr("empty query"));
+            continue;
+        }
+
         // in case of error the result contains its details,
         // so we want to save it too
+
         if (!_temp_result)
         {
             // initialize new resultset
@@ -588,7 +601,6 @@ void PgConnection::fetch() noexcept
             // append rows to resultset
             appendRawDataToTable(*_temp_result, tmp_res.get());
         }
-        //else error while fetching rows
 
         // resultset completely fetched
         if (status == PGRES_FATAL_ERROR || status == PGRES_TUPLES_OK)
@@ -815,13 +827,19 @@ int PgConnection::appendRawDataToTable(DataTable &dst, PGresult *src) noexcept
                 case DATEOID:
                     (*row)[i] = QDate::fromString(val, Qt::ISODate);
                     break;
+
+                // QTime/QDateTime aren't support microseconds, so qt object as a storage will loose
+                // precision. As far as sqt does not interpret values returned from data source,
+                // we would prefer to keep their original textual representation.
+
+                /*
                 case TIMEOID:
                     (*row)[i] = QTime::fromString(val, Qt::ISODateWithMs);
                     break;
                 case TIMESTAMPOID:
                     (*row)[i] = QDateTime::fromString(val, Qt::ISODateWithMs);
                     break;
-                // TODO:
+                */
                 // TIMESTAMPTZOID, TIMETZOID goes here untill timezone printing out implemented
                 default:
                     (*row)[i] = QString::fromStdString(val);

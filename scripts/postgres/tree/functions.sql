@@ -2,7 +2,7 @@ select
 	case when p.proisagg then 'agg_function' else 'function' end node_type,
 	p.oid id,
 	format(
-		'%I<span class="light">(%s)</span> <i>%s</i>', --<br/>&nbsp;-> %s</span>',
+		'%I <span class="light">(%s)</span> <i>%s</i>', --<br/>&nbsp;-> %s</span>',
 		p.proname, 
 		--pg_get_function_identity_arguments(p.oid),
 		oidvectortypes(p.proargtypes),

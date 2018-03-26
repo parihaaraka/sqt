@@ -87,6 +87,11 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->actionSave_as->setShortcuts(QKeySequence::SaveAs);
     ui->actionFind->setShortcuts(QKeySequence::Find);
 
+    QAction *editAction = new QAction(ui->objectsView);
+    editAction->setShortcut({"Ctrl+E"});
+    connect(editAction, &QAction::triggered, this, &MainWindow::on_actionNew_triggered);
+    ui->objectsView->addAction(editAction);
+
     _frPanel = new FindAndReplacePanel();
     ui->menuEdit->addActions(_frPanel->actions());
 
@@ -148,6 +153,9 @@ MainWindow::MainWindow(QWidget *parent) :
     {
         if (ui->tabWidget->currentIndex() >= 0)
             closeTab(ui->tabWidget->currentIndex());
+        QWidget *w = ui->tabWidget->currentWidget();
+        if (w)
+            w->setFocus();
     });
     ui->tabWidget->addAction(tabWidgetAction);
     ui->tabWidget->setContextMenuPolicy(Qt::ActionsContextMenu);
@@ -364,6 +372,7 @@ void MainWindow::on_actionChange_sort_mode_triggered()
 void MainWindow::selectionChanged(const QItemSelection &selected, const QItemSelection &deselected)
 {
     Q_UNUSED(selected)
+    Q_UNUSED(deselected)
     QItemSelectionModel *selectionModel = qobject_cast<QItemSelectionModel*>(sender());
     QModelIndexList si = selectionModel->selectedIndexes();
     QModelIndex cur = selectionModel->currentIndex();
@@ -410,6 +419,8 @@ void MainWindow::viewModeActionTriggered(QAction *action)
     setUpdatesEnabled(true);
     if (ui->tabWidget->isHidden())
         scriptSelectedObjects();
+    else if (ui->tabWidget->currentWidget())
+        ui->tabWidget->currentWidget()->setFocus();
 }
 
 void MainWindow::on_actionExecute_query_triggered()
@@ -508,7 +519,7 @@ void MainWindow::on_actionNew_triggered()
     int ind = ui->tabWidget->addTab(w, QString());
     ui->tabWidget->setCurrentIndex(ind);
 
-    if (_objectsModel->data(srcIndex, DbObject::ContentTypeRole).toString() == "script")
+    if (sender() != ui->actionNew && _objectsModel->data(srcIndex, DbObject::ContentTypeRole).toString() == "script")
         w->setPlainText(_objectsModel->data(srcIndex, DbObject::ContentRole).toString());
     else
         w->setPlainText("");

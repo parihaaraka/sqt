@@ -60,12 +60,16 @@ QVariant TableModel::data(const QModelIndex &index, int role) const
         {
             return qvariant_cast<QTime>(res).toString("hh:mm:ss.zzz");
         }
+        else if ((QMetaType::Type)res.type() == QMetaType::QDate)
+        {
+            return qvariant_cast<QDate>(res).toString("yyyy-MM-dd");
+        }
         else if ((QMetaType::Type)res.type() == QMetaType::QDateTime)
         {
             QDateTime dt = qvariant_cast<QDateTime>(res);
             if (dt.time().msecsTo(QTime(0, 0)) == 0)
-                return qvariant_cast<QDateTime>(res).toString("yyyy-MM-dd");
-            return qvariant_cast<QDateTime>(res).toString("yyyy-MM-dd hh:mm:ss.zzz");
+                return dt.toString("yyyy-MM-dd");
+            return dt.toString("yyyy-MM-dd hh:mm:ss.zzz");
         }
         return _table->getRow(index.row())[index.column()];
     }
