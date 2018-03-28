@@ -13,6 +13,11 @@ DbConnection::~DbConnection()
     clearResultsets();
 }
 
+QString DbConnection::transactionStatus() const noexcept
+{
+    return "";
+}
+
 void DbConnection::setDatabase(const QString &database)
 {
     if (_database != database)

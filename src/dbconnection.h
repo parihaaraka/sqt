@@ -55,6 +55,7 @@ public:
     virtual QString dbmsInfo() const noexcept = 0;
     virtual QString dbmsName() const noexcept = 0;
     virtual QString dbmsVersion() const noexcept = 0;
+    virtual QString transactionStatus() const noexcept;
     virtual int dbmsComparableVersion() = 0;
     /*!
      * \brief determine if a value of sqlType must be quoted

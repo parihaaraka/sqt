@@ -36,6 +36,7 @@ MainWindow::MainWindow(QWidget *parent) :
     setCentralWidget(ui->splitterV);
     _contextLabel.setFrameStyle(QFrame::StyledPanel);
     ui->statusBar->addPermanentWidget(&_contextLabel);
+    _positionLabel.setFrameStyle(QFrame::StyledPanel);
     _positionLabel.setVisible(false);
     ui->statusBar->addPermanentWidget(&_positionLabel);
     ui->statusBar->addPermanentWidget(&_durationLabel);
@@ -61,7 +62,7 @@ MainWindow::MainWindow(QWidget *parent) :
     connect(ui->objectsView->selectionModel(), &QItemSelectionModel::currentChanged, this, &MainWindow::currentChanged);
 
     _durationRefreshTimer = new QTimer(this);
-    connect(_durationRefreshTimer, &QTimer::timeout, this, &MainWindow::refreshDuration);
+    connect(_durationRefreshTimer, &QTimer::timeout, this, &MainWindow::refreshConnectionState);
     _durationRefreshTimer->start(200);
 
     // it's about messages frame auto-hide
@@ -415,7 +416,7 @@ void MainWindow::viewModeActionTriggered(QAction *action)
     ui->tabWidget->setVisible(action == ui->actionQuery_editor);
     ui->actionObject_content->setShortcut(action == ui->actionQuery_editor ? Qt::Key_F2 : 0);
     ui->actionQuery_editor->setShortcut(action == ui->actionObject_content ? Qt::Key_F2 : 0);
-    refreshDuration();
+    refreshConnectionState();
     setUpdatesEnabled(true);
     if (ui->tabWidget->isHidden())
         scriptSelectedObjects();
@@ -973,13 +974,20 @@ void MainWindow::refreshCursorInfo()
     _positionLabel.setVisible(ed);
 }
 
-void MainWindow::refreshDuration()
+void MainWindow::refreshConnectionState()
 {
     QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
-    if (ui->tabWidget->isHidden() || !w || !w->dbConnection())
+    DbConnection *con = (w ? w->dbConnection() : nullptr);
+    if (ui->tabWidget->isHidden() || !con)
         _durationLabel.clear();
     else
-        _durationLabel.setText(w->dbConnection()->elapsed());
+    {
+        QString cn_status = con->transactionStatus();
+        _durationLabel.setText(con->elapsed() +
+                               (cn_status.isEmpty() ?
+                                    "" :
+                                    " <font color='red'>" + cn_status + "</font>"));
+    }
 }
 
 void MainWindow::objectsViewAdjustColumnWidth(const QModelIndex &)
@@ -1005,7 +1013,7 @@ void MainWindow::on_tabWidget_currentChanged(int index)
     QueryWidget *q = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
     _frPanel->setEditor(q);
     refreshActions();
-    refreshDuration();
+    refreshConnectionState();
     refreshContextInfo();
     refreshCursorInfo();
 }

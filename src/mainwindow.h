@@ -84,7 +84,7 @@ public slots:
     void refreshActions();
     void refreshContextInfo();
     void refreshCursorInfo();
-    void refreshDuration();
+    void refreshConnectionState();
     void onMessage(const QString &msg);
     void onError(const QString &err);
 };

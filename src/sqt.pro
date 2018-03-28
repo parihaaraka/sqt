@@ -23,7 +23,8 @@ SOURCES += main.cpp\
     pgconnection.cpp \
     pgparams.cpp \
     sqlsyntaxhighlighter.cpp \
-    scripting.cpp
+    scripting.cpp \
+    appeventhandler.cpp
 
 HEADERS  += mainwindow.h \
     dbobjectsmodel.h \
@@ -44,7 +45,8 @@ HEADERS  += mainwindow.h \
     pgtypes.h \
     pgparams.h \
     sqlsyntaxhighlighter.h \
-    scripting.h
+    scripting.h \
+    appeventhandler.h
 
 FORMS    += mainwindow.ui \
     logindialog.ui \

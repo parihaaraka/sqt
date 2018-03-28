@@ -195,6 +195,20 @@ QString PgConnection::dbmsVersion() const noexcept
     return (val ? val : res);
 }
 
+QString PgConnection::transactionStatus() const noexcept
+{
+    switch (PQtransactionStatus(_conn))
+    {
+    case PQTRANS_ACTIVE:
+        return "active";
+    case PQTRANS_INTRANS:
+        return "intrans";
+    case PQTRANS_INERROR:
+        return "inerror";
+    }
+    return "";
+}
+
 int PgConnection::dbmsComparableVersion()
 {
     int res = PQserverVersion(_conn);
@@ -402,6 +416,10 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
         // disconnect queryStateChanged handler
         disconnect(*state_handler_connection);
 
+        // autorollback
+        if (PQtransactionStatus(_conn) == PQTRANS_INERROR)
+            PQclear(PQexec(_conn, "rollback"));
+
         thread->deleteLater();
         moveToThread(QApplication::instance()->thread());
         emit message(tr("done in %1").arg(elapsed()));
@@ -558,6 +576,7 @@ void PgConnection::fetch() noexcept
 
         if (!tmp_res)   // query processing finished
         {
+
             _async_stage = async_stage::none;
             // restore watching socket to receive notifications
             watchSocket(SocketWatchMode::Read);
@@ -824,9 +843,13 @@ int PgConnection::appendRawDataToTable(DataTable &dst, PGresult *src) noexcept
                 case CHAROID:
                     (*row)[i] = val[0];
                     break;
+
+                // QDate is lack of special values support, lack of precision to keep huge dates
+                /*
                 case DATEOID:
                     (*row)[i] = QDate::fromString(val, Qt::ISODate);
                     break;
+                */
 
                 // QTime/QDateTime aren't support microseconds, so qt object as a storage will loose
                 // precision. As far as sqt does not interpret values returned from data source,

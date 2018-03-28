@@ -25,6 +25,7 @@ public:
     virtual QString dbmsInfo() const noexcept override;
     virtual QString dbmsName() const noexcept override;
     virtual QString dbmsVersion() const noexcept override;
+    virtual QString transactionStatus() const noexcept override;
     virtual int dbmsComparableVersion() override;
     virtual bool isUnquotedType(int sqlType) const noexcept override;
     virtual bool isNumericType(int sqlType) const noexcept override;

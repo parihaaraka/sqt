@@ -7,7 +7,11 @@ select
 		--pg_get_function_identity_arguments(p.oid),
 		oidvectortypes(p.proargtypes),
 		--pg_get_function_result(p.oid)
-		case when p.proisagg then '&#931;' else '' end
+		case 
+			when p.proisagg then '&#931;'
+			when exists (select 1 from pg_trigger where tgfoid = p.oid) then ' tr'
+			else '' 
+		end
 		) ui_name,
 	quote_ident(p.proname) "name",
 	--'function.png' icon,

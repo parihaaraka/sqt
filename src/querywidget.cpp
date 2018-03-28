@@ -34,11 +34,11 @@ QueryWidget::QueryWidget(DbConnection *connection, QWidget *parent) :
     _messages = nullptr;
     _highlighter = nullptr;
 
-    _resultMenu = new QMenu(this);
-    _actionCopy = new QAction(tr("Copy CSV"), this);
-    _actionCopy->setShortcuts(QKeySequence::Copy);
-    _resultMenu->addAction(_actionCopy);
-    connect(_actionCopy, &QAction::triggered, this, &QueryWidget::onActionCopyTriggered);
+    //_resultMenu = new QMenu(this);
+    //_actionCopy = new QAction(tr("Copy CSV"), this);
+    //_actionCopy->setShortcuts(QKeySequence::Copy);
+    //_resultMenu->addAction(_actionCopy);
+    //connect(_actionCopy, &QAction::triggered, this, &QueryWidget::onActionCopyTriggered);
 
     /*_actionCopyHTML = new QAction(tr("Copy html"), this);
     _resultMenu->addAction(_actionCopyHTML);
@@ -386,10 +386,11 @@ void QueryWidget::fetched(DataTable *table)
         tv = new QTableView(_resSplitter);
         tv->setObjectName(tname);
         tv->verticalHeader()->setDefaultSectionSize(tv->verticalHeader()->minimumSectionSize());
-        tv->setContextMenuPolicy(Qt::CustomContextMenu);
-        connect(tv, &QTableView::customContextMenuRequested, this, &QueryWidget::onCustomGridContextMenuRequested);
-        tv->setSelectionMode(QAbstractItemView::ContiguousSelection);
-        tv->addAction(_actionCopy);
+
+        //tv->setContextMenuPolicy(Qt::CustomContextMenu);
+        //connect(tv, &QTableView::customContextMenuRequested, this, &QueryWidget::onCustomGridContextMenuRequested);
+        //tv->setSelectionMode(QAbstractItemView::ContiguousSelection);
+        //tv->addAction(_actionCopy);
 
         m = new TableModel(_resSplitter);
         _tables.append(m);
@@ -433,6 +434,7 @@ void QueryWidget::clearResult()
     _tables.clear();
 }
 
+/*
 void QueryWidget::onCustomGridContextMenuRequested(const QPoint &pos)
 {
     QTableView *tv = qobject_cast<QTableView*>(sender());
@@ -441,6 +443,7 @@ void QueryWidget::onCustomGridContextMenuRequested(const QPoint &pos)
 
     _resultMenu->exec(tv->mapToGlobal(pos));
 }
+*/
 
 /*
 void QueryWidget::on_customEditorContextMenuRequested(const QPoint &pos)
@@ -457,6 +460,7 @@ void QueryWidget::on_customEditorContextMenuRequested(const QPoint &pos)
 }
 */
 
+/*
 void QueryWidget::onActionCopyTriggered()
 {
     QTableView *tv = qobject_cast<QTableView*>(QApplication::focusWidget());
@@ -505,6 +509,7 @@ void QueryWidget::onActionCopyTriggered()
         QApplication::clipboard()->setText(result);
     }
 }
+*/
 
 void QueryWidget::onCursorPositionChanged()
 {

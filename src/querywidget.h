@@ -53,9 +53,9 @@ public slots:
     void onError(const QString &text);
     void fetched(DataTable *table);
     void clearResult();
-    void onCustomGridContextMenuRequested(const QPoint & pos);
+    //void onCustomGridContextMenuRequested(const QPoint & pos);
     //void on_customEditorContextMenuRequested(const QPoint & pos);
-    void onActionCopyTriggered();
+    //void onActionCopyTriggered();
     void onCursorPositionChanged();
 
 private:

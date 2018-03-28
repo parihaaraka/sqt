@@ -55,6 +55,7 @@ QVariant TableModel::data(const QModelIndex &index, int role) const
             return QBrush(QColor(0, 0, 0, 15));
         return QVariant();
     case Qt::DisplayRole:
+    {
         QVariant &res = _table->getRow(index.row())[index.column()];
         if ((QMetaType::Type)res.type() == QMetaType::QTime)
         {
@@ -71,6 +72,9 @@ QVariant TableModel::data(const QModelIndex &index, int role) const
                 return dt.toString("yyyy-MM-dd");
             return dt.toString("yyyy-MM-dd hh:mm:ss.zzz");
         }
+    }
+    //[[clang::fallthrough]];
+    case Qt::EditRole:
         return _table->getRow(index.row())[index.column()];
     }
     return QVariant();
