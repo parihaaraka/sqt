@@ -11,7 +11,7 @@ where nspname !~ ('pg_toast.*|pg_temp.*')
 union all
 select
     'extensions' node_type,
-    '<i><u>Extensions</u></i>' ui_name,
+    '<i>Extensions</i>' ui_name,
     null "name",
     null id,
     'sd-memory-card.png' icon,

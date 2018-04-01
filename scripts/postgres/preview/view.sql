@@ -1,1 +1,0 @@
-select * from $schema.name$.$view.name$ limit 100

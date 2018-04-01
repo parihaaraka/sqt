@@ -26,12 +26,40 @@
 
 #include <QDebug>
 
+struct RecentFile
+{
+    QString fileName;
+    QString encoding;
+};
+
+Q_DECLARE_METATYPE(QList<RecentFile>)
+
+QDataStream& operator<<(QDataStream& out, const QList<RecentFile> &fList)
+{
+    for (auto const &f: fList)
+        out << f.fileName << f.encoding;
+    return out;
+}
+
+QDataStream& operator>>(QDataStream& in, QList<RecentFile> &fList)
+{
+    while (!in.atEnd())
+    {
+        RecentFile f;
+        in >> f.fileName >> f.encoding;
+        if (!f.fileName.isEmpty())
+            fList.push_back(f);
+    }
+    return in;
+}
+
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
     qRegisterMetaType<QueryState>();
+    qRegisterMetaTypeStreamOperators<QList<RecentFile>>("RecentFile");
 
     setCentralWidget(ui->splitterV);
     _contextLabel.setFrameStyle(QFrame::StyledPanel);
@@ -75,11 +103,6 @@ MainWindow::MainWindow(QWidget *parent) :
         ui->splitterV->setSizes({1000, 0});
     });
 
-    // TODO move to settings
-    QFont font("Consolas, monospace, Menlo, Lucida Console, Liberation Mono, DejaVu Sans Mono, Bitstream Vera Sans Mono, Courier New, serif");
-    font.setStyleHint(QFont::TypeWriter);
-    ui->log->setFont(font);
-
     ui->actionRefresh->setShortcuts(QKeySequence::Refresh);
     ui->actionQuit->setShortcuts(QKeySequence::Quit);
     ui->actionNew->setShortcuts(QKeySequence::New);
@@ -119,6 +142,14 @@ MainWindow::MainWindow(QWidget *parent) :
     QSettings settings;
     restoreGeometry(settings.value("mainWindowGeometry").toByteArray());
     restoreState(settings.value("mainWindowState").toByteArray());
+    QList<RecentFile> fList = settings.value("recentFiles").value<QList<RecentFile>>();
+    for (const auto &f: fList)
+    {
+        QAction *a = ui->menuOpen_recent->addAction(f.fileName);
+        a->setData(f.encoding);
+        connect(a, &QAction::triggered, this, &MainWindow::onActionOpenFile);
+    }
+
     ui->splitterH->restoreState(settings.value("mainWindowHSplitter").toByteArray());
     ui->contentSplitter->restoreState(settings.value("mainWindowScriptSplitter").toByteArray());
     _fileDialog.restoreState(settings.value("fileDialog").toByteArray());
@@ -568,19 +599,8 @@ void MainWindow::on_actionOpen_triggered()
     if (!_fileDialog.exec())
         return;
     QString fn = _fileDialog.selectedFiles().at(0);
-    adjustMruDirs();
-
-    int tabs_count = ui->tabWidget->count();
-    ui->actionNew->activate(QAction::Trigger);
-    if (ui->tabWidget->count() != tabs_count)
-    {
-        QueryWidget *w = currentQueryWidget();
-        QApplication::setOverrideCursor(Qt::WaitCursor);
-        ScopeGuard<void(*)()> cursorGuard(QApplication::restoreOverrideCursor);
-        w->openFile(fn, _fileDialog.encoding());
-        ui->tabWidget->setTabText(ui->tabWidget->currentIndex(), QFileInfo(fn).fileName());
-        ui->tabWidget->setTabToolTip(ui->tabWidget->currentIndex(), fn);
-    }
+    adjustMru();
+    openFile(fn, _fileDialog.encoding());
 }
 
 QueryWidget *MainWindow::currentQueryWidget()
@@ -636,7 +656,7 @@ bool MainWindow::ensureSaved(int index, bool ask_name, bool forceWarning)
                     return false;
                 encoding = _fileDialog.encoding();
                 fn = _fileDialog.selectedFiles().at(0);
-                adjustMruDirs();
+                adjustMru();
             }
         }
         if (!w->saveFile(fn, encoding))
@@ -717,7 +737,7 @@ void MainWindow::refreshActions()
     _frPanel->setEditor(qw);
 }
 
-void MainWindow::adjustMruDirs()
+void MainWindow::adjustMru()
 {
     // erase current dir if exists
     _mruDirs.removeAll(_fileDialog.directory().absolutePath());
@@ -727,6 +747,36 @@ void MainWindow::adjustMruDirs()
     while (_mruDirs.size() > 10)
         _mruDirs.removeAt(0);
     _fileDialog.setHistory(_mruDirs);
+    addMruFile();
+}
+
+void MainWindow::addMruFile()
+{
+    QString file = _fileDialog.selectedFiles().at(0);
+    QString encoding = _fileDialog.encoding();
+    auto actions = ui->menuOpen_recent->actions();
+
+    QList<RecentFile> itemsToSave {{file, encoding}};
+    QAction *a = new QAction(file, ui->menuOpen_recent);
+    a->setData(encoding);
+    connect(a, &QAction::triggered, this, &MainWindow::onActionOpenFile);
+    ui->menuOpen_recent->insertAction(actions.isEmpty() ? nullptr : actions.first(), a);
+
+    for (int i = 1; i < ui->menuOpen_recent->actions().size(); ++i)
+    {
+        QAction *a = ui->menuOpen_recent->actions()[i];
+        if (!a->text().compare(file) || itemsToSave.size() == 15)
+        {
+            ui->menuOpen_recent->removeAction(a);
+            delete a;
+            --i;
+            continue;
+        }
+        itemsToSave.append({a->text(), a->data().toString()});
+    }
+
+    QSettings settings;
+    settings.setValue("recentFiles", QVariant::fromValue(itemsToSave));
 }
 
 void MainWindow::scriptSelectedObjects()
@@ -1016,6 +1066,45 @@ void MainWindow::on_tabWidget_currentChanged(int index)
     refreshConnectionState();
     refreshContextInfo();
     refreshCursorInfo();
+}
+
+void MainWindow::onActionOpenFile()
+{
+    QAction *a = qobject_cast<QAction*>(sender());
+    QString fileName = a->text();
+    if (!QFile(fileName).exists())
+    {
+        onError(tr("file %1 not found").arg(fileName));
+        ui->menuOpen_recent->removeAction(a);
+        delete a;
+
+        QList<RecentFile> itemsToSave;
+        for (QAction *a: ui->menuOpen_recent->actions())
+            itemsToSave.append({a->text(), a->data().toString()});
+
+        QSettings settings;
+        settings.setValue("recentFiles", QVariant::fromValue(itemsToSave));
+        return;
+    }
+    openFile(fileName, a->data().toString());
+}
+
+void MainWindow::openFile(const QString &fileName, const QString &encoding)
+{
+    int tabs_count = ui->tabWidget->count();
+    ui->actionNew->activate(QAction::Trigger);
+    if (ui->tabWidget->count() != tabs_count)
+    {
+        QueryWidget *w = currentQueryWidget();
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        ScopeGuard<void(*)()> cursorGuard(QApplication::restoreOverrideCursor);
+        w->openFile(fileName, encoding);
+        ui->tabWidget->setTabText(ui->tabWidget->currentIndex(), QFileInfo(fileName).fileName());
+        ui->tabWidget->setTabToolTip(ui->tabWidget->currentIndex(), fileName);
+        _fileDialog.selectFile(fileName);
+        _fileDialog.setEncoding(encoding);
+        addMruFile();
+    }
 }
 
 void MainWindow::log(const QString &msg)

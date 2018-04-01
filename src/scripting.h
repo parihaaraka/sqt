@@ -69,6 +69,11 @@ std::unique_ptr<CppConductor> execute(
         Context context,
         const QString &objectType,
         std::function<QVariant(QString)> envCallback);
+std::unique_ptr<CppConductor> execute(
+        DbConnection *connection,
+        Context context,
+        const QString &objectType,
+        std::function<QVariant(QString)> envCallback);
 }
 
 #endif // SCRIPTS_H

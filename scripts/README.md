@@ -19,19 +19,20 @@ Script to build tree must return resultset with the following columns:
 
 |name|type|description|
 |--|--|--|
-|ui_name|varchar|*Mandatory* label within objects tree. E.g.:<br/>`<span class="light">light-colored text</span>`<br/>`<i>italic text</i>`<br/>and so on|
+|ui_name|varchar|*Mandatory* label to be displayed. E.g.:<br/>`<span class="light">light-colored text</span>`<br/>`<i>italic text</i>`<br/>and so on|
 |node_type|varchar|*Mandatory* type of node.<br/>(= file name of dependent script inside sibling folders)|
 |name|varchar|`name` field to referrence to from another script. Usually it's a full or schemaless quoted or unquoted db object's name depending on the way you use the value within the script.|
 |id|varchar|As a rule it's an internal id of database object to be referenced from dependent scripts (or any other convinient value).|
+|tag|varchar|Any data to be used within dependent scripts.|
 |icon|varchar|Icon file name.|
-|allow_multiselect|bool|Whether the object may have multiple children selected.|
+|allow_multiselect|bool|Whether the object may have multiple selected children.|
 |sort1|varchar/int|Value to sort on.|
 |sort2|varchar/int|Value for alternative sorting.|
 
-Script may contain macro `$<node_type>.<name|id>$` E.g. if current object (being processed by current script) has parent node of type `schema`, then `$schema.id$` within script will be replaced with `id`
-value of that node. `$schema.name$` will be replaced with that node's `name` value. If current node has no parent of specified type, or that parent does not have corresponding field, the macro is replaced by `NULL`.
+Script may contain macro `$<node_type>.<name|id|tag>$` E.g. if current object (being processed by current script) has parent node of type `schema`, then `$schema.id$` within script will be replaced with `id`
+value of that node. `$schema.name$` and `$schema.tag$` will be replaced with that node's `name` or `tag` value accordingly. If current node has no parent of specified type, or that parent does not have corresponding field, the macro is replaced by `NULL`.
 
-Actually, user is free to place any kind of data in columns `name` and `id`. This is just what you get in script by means of the corresponding macro.
+Actually, user is free to place any kind of data in columns `name`, `id` and `tag`. This is just what you get in script by means of the corresponding macro.
 
 >There are two hardcoded node types: `connection` and `database`. `connection` is used internally to represent database connection, so the first script to be executed is `connection.sql` or `connection.qs`. `database` nodes are usually children of `connection` node, and their `name` property has a special meaning: every database node generates separate database connection with connection string built with parent connection string appended with `;Database={<name>}` for odbc data source and `dbname='<name>'` for postgresql data source.
 

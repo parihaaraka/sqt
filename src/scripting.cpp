@@ -189,17 +189,11 @@ Script* getScript(DbConnection *connection, Context context, const QString &obje
     return (it == bunch.end() ? nullptr : &it.value());
 }
 
-std::unique_ptr<CppConductor> execute(
-        std::shared_ptr<DbConnection> connection,
-        Context context,
-        const QString &objectType,
-        std::function<QVariant(QString)> envCallback)
+void execute(
+        CppConductor *env,
+        DbConnection *connection,
+        Script *s)
 {
-    std::unique_ptr<CppConductor> env { new CppConductor(connection, envCallback) };
-    auto s = Scripting::getScript(connection.get(), context, objectType);
-    if (!s)
-        return nullptr;
-
     QString query = s->body;
 
     // replace macroses with corresponding values in both sql and qs scripts
@@ -216,7 +210,7 @@ std::unique_ptr<CppConductor> execute(
     // replace macroses with values
     foreach (QString macro, macros)
     {
-        QString value = envCallback(macro).toString();
+        QString value = env->value(macro).toString();
         query = query.replace("$" + macro + "$", value.isEmpty() ? "NULL" : value);
     }
 
@@ -254,13 +248,13 @@ std::unique_ptr<CppConductor> execute(
     {
         QJSEngine e;
         qmlRegisterType<DataTable>();
-        QQmlEngine::setObjectOwnership(connection.get(), QQmlEngine::CppOwnership);
-        QJSValue cn = e.newQObject(connection.get());
+        QQmlEngine::setObjectOwnership(connection, QQmlEngine::CppOwnership);
+        QJSValue cn = e.newQObject(connection);
         e.globalObject().setProperty("__connection", cn);
 
         // environment access in a functional style
-        QQmlEngine::setObjectOwnership(env.get(), QQmlEngine::CppOwnership);
-        QJSValue cppEnv = e.newQObject(env.get());
+        QQmlEngine::setObjectOwnership(env, QQmlEngine::CppOwnership);
+        QJSValue cppEnv = e.newQObject(env);
         e.globalObject().setProperty("__env", cppEnv);
         QJSValue env_fn = e.evaluate(R"(
                                      function(objectType) {
@@ -295,7 +289,33 @@ std::unique_ptr<CppConductor> execute(
         if (execRes.isError())
             throw QObject::tr("error at line %1: %2").arg(execRes.property("lineNumber").toInt()).arg(execRes.toString());
     }
+}
 
+std::unique_ptr<CppConductor> execute(
+        DbConnection *connection,
+        Context context,
+        const QString &objectType,
+        std::function<QVariant (QString)> envCallback)
+{
+    std::unique_ptr<CppConductor> env { new CppConductor(nullptr, envCallback) };
+    auto s = Scripting::getScript(connection, context, objectType);
+    if (!s)
+        return nullptr;
+    execute(env.get(), connection, s);
+    return env;
+}
+
+std::unique_ptr<CppConductor> execute(
+        std::shared_ptr<DbConnection> connection,
+        Context context,
+        const QString &objectType,
+        std::function<QVariant(QString)> envCallback)
+{
+    std::unique_ptr<CppConductor> env { new CppConductor(connection, envCallback) };
+    auto s = Scripting::getScript(connection.get(), context, objectType);
+    if (!s)
+        return nullptr;
+    execute(env.get(), connection.get(), s);
     return env;
 }
 
@@ -306,7 +326,9 @@ CppConductor::~CppConductor()
 
 QVariant CppConductor::value(QString type)
 {
-    return _cb(type);
+    if (_cb)
+        return _cb(type);
+    return QVariant();
 }
 
 void CppConductor::appendTable(DataTable *table)

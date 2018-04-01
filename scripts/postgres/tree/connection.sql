@@ -51,7 +51,7 @@ union all
 select
       'test_html',
       null,
-      '<i><u>Test HTML result</u></i>',
+      '<i>Test HTML result</i>',
       null,
       null,
       '10'

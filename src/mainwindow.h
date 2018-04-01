@@ -58,12 +58,14 @@ private slots:
     void objectsViewAdjustColumnWidth(const QModelIndex &);
     void on_actionFind_triggered();
     void on_tabWidget_currentChanged(int index);
+    void onActionOpenFile();
+    void openFile(const QString &fileName, const QString &encoding);
 
 private:
     QLabel _contextLabel, _positionLabel, _durationLabel;
     ExtFileDialog _fileDialog;
     QStringList _mruDirs; // QFileDialog::history() keeps unused directories :(
-	Ui::MainWindow *ui;
+    Ui::MainWindow *ui;
     DbObjectsModel *_objectsModel;
     TableModel *_tableModel;
     QueryWidget* currentQueryWidget();
@@ -75,7 +77,8 @@ private:
     QTimer *_hideTimer;
     QTimer *_durationRefreshTimer;
     void log(const QString &msg);
-    void adjustMruDirs();
+    void adjustMru();
+    void addMruFile();
 
 public slots:
     QVariant current(const QString &nodeType, const QString &field);

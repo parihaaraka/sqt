@@ -516,7 +516,7 @@ bool OdbcConnection::open()
     SQLCHAR szConnStrOut[1024];
     SQLSMALLINT swStrLen;
     RETCODE retcode;
-    SQLPOINTER timeout = reinterpret_cast<SQLPOINTER>(std::intptr_t(5));
+    SQLPOINTER timeout = reinterpret_cast<SQLPOINTER>(std::intptr_t(10));
     std::string cs = finalConnectionString();
 
     SQLSetConnectAttrA(_hdbc, SQL_ATTR_CONNECTION_TIMEOUT, timeout, SQL_IS_UINTEGER);
@@ -568,10 +568,17 @@ QString OdbcConnection::dbmsVersion() const noexcept
 
 int OdbcConnection::dbmsComparableVersion()
 {
-    // TODO support of version.sql/version.qs
-    //if (Scripting::execute(this, Scripting::Context::Root, "version"))
+    if (auto s = Scripting::execute(this, Scripting::Context::Root, "version", nullptr))
     {
-
+        if (!s->resultsets.empty() &&
+                s->resultsets.last()->rowCount() == 1 &&
+                s->resultsets.last()->columnCount() == 1)
+        {
+            bool ok;
+            int version = s->resultsets.last()->value(0, 0).toInt(&ok);
+            if (ok)
+                return version;
+        }
     }
     return 0x7fffffff;
 }

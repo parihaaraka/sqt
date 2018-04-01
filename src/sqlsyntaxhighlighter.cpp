@@ -13,7 +13,7 @@ SqlSyntaxHighlighter::SqlSyntaxHighlighter(const QJsonObject &settings, QObject 
      * https://bugreports.qt.io/browse/QTBUG-32619
      */
 
-    delimiters = " \t\r\n``'\";:()[]<>{}/\\^&|!?~,.-+*%=" + settings["add_separators"].toString();
+    delimiters = " \t\r\n``'\";:()[]<>{}/\\^&$|!?~,.-+*%=" + settings["add_separators"].toString();
 
     auto get_format = [](
             const QJsonValue node,

@@ -221,6 +221,7 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
         int sort1Ind = table->getColumnOrd("sort1");
         int sort2Ind = table->getColumnOrd("sort2");
         int multiselectInd = table->getColumnOrd("allow_multiselect");
+        int tagInd = table->getColumnOrd("tag");
 
         for (int i = 0; i < table->rowCount(); ++i)
         {
@@ -246,6 +247,8 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
                 newItem->setData(r[sort2Ind], DbObject::Sort2Role);
             if (multiselectInd >= 0 && !r[multiselectInd].isNull())
                 newItem->setData(r[multiselectInd].toBool(), DbObject::MultiselectRole);
+            if (tagInd >= 0 && !r[tagInd].isNull())
+                newItem->setData(r[tagInd].toString(), DbObject::TagRole);
             if (typeInd >= 0)
             {
                 QString value = r[typeInd].toString();
@@ -318,6 +321,8 @@ QVariant DbObjectsModel::parentNodeProperty(const QModelIndex &index, QString ty
                 envValue = item->data(DbObject::IdRole);
             else if (!parts.at(1).compare("name", Qt::CaseInsensitive))
                 envValue = item->data(DbObject::NameRole);
+            else if (!parts.at(1).compare("tag", Qt::CaseInsensitive))
+                envValue = item->data(DbObject::TagRole);
             else
                 break;
         }

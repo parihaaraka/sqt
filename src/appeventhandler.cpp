@@ -81,7 +81,33 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                 QApplication::clipboard()->setText(edit->textCursor().selectedText().replace(QChar::ParagraphSeparator, '\n'));
                 return true;
             }
+            else if (keyEvent->key() == Qt::Key_W && keyEvent->modifiers() & Qt::ControlModifier)
+            {
+                QTextOption textOption(edit->document()->defaultTextOption());
+                textOption.setWrapMode(textOption.wrapMode() == QTextOption::NoWrap ?
+                                           QTextOption::WrapAtWordBoundaryOrAnywhere :
+                                           QTextOption::NoWrap);
+                edit->document()->setDefaultTextOption(textOption);
+            }
+            else if (keyEvent->matches(QKeySequence::ZoomIn))
+                edit->zoomIn();
+            else if (keyEvent->matches(QKeySequence::ZoomOut))
+                edit->zoomOut();
         }
     }
+    else if (event->type() == QEvent::FontChange)
+    {
+        if (QPlainTextEdit *edit = qobject_cast<QPlainTextEdit*>(obj))
+        {
+            QTextOption textOption(edit->document()->defaultTextOption());
+            // accurate tab size evaluation
+            // TODO move tab stop size to settings
+            textOption.setTabStop(QFontMetrics(edit->font()).width(QString(3 * 100, ' ')) / 100.0);
+            if (edit->objectName() != "editCS")
+                textOption.setWrapMode(QTextOption::NoWrap);
+            edit->document()->setDefaultTextOption(textOption);
+        }
+    }
+
     return QObject::eventFilter(obj, event);
 }

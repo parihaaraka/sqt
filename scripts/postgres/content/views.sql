@@ -3,6 +3,7 @@ select c.oid, c.relname as "name",
         when nc.oid = pg_my_temp_schema() then 'local temporary'
         when c.relkind = any (array['r'::"char", 'p'::"char"]) then 'base table'
         when c.relkind = 'v'::"char" then 'view'
+        when c.relkind = 'm'::"char" then 'materialized view'
         when c.relkind = 'f'::"char" then 'foreign table'
         else null::text
     end as "type",
@@ -13,7 +14,7 @@ select c.oid, c.relname as "name",
 from pg_namespace nc
     join pg_class c on nc.oid = c.relnamespace
 where nc.oid = $schema.id$ and
-    c.relkind = 'v'::"char" and 
+    c.relkind in ('v'::"char", 'm'::"char") and 
     not pg_is_other_temp_schema(nc.oid) and 
     (
         pg_has_role(c.relowner, 'usage'::text) or 

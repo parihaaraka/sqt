@@ -12,16 +12,24 @@ select
 	null::text,
 	'Sequences',
 	null,
-	'counter.png',
+	'ui-paginator.png',
 	'2'
 union all
 select
 	'tables',
 	null::text,
 	'Tables',
-	'dummy',
+	null,
 	'tables.png',
 	'3'
+union all
+select
+	'types',
+	null::text,
+	'Types',
+	null,
+	'block.png',
+	'4'
 union all
 select
 	'views',
@@ -29,4 +37,4 @@ select
 	'Views',
 	null,
 	'views.png',
-	'4'
+	'5'

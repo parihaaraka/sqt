@@ -9,12 +9,22 @@ select
 		--pg_get_function_result(p.oid)
 		case 
 			when p.proisagg then '&#931;'
-			when exists (select 1 from pg_trigger where tgfoid = p.oid) then ' tr'
+			when t.oid is not null then ' tr'
 			else '' 
 		end
 		) ui_name,
 	quote_ident(p.proname) "name",
 	--'function.png' icon,
-	p.proname || oidvectortypes(p.proargtypes) sort1
-from pg_proc p 
+	p.proname || oidvectortypes(p.proargtypes) sort1,
+	case 
+		when p.proisagg then '2'
+		when t.oid is not null then '1'
+		else '0'
+	end || p.proname || oidvectortypes(p.proargtypes) sort2
+from pg_proc p
+	left join lateral (
+		select t.oid 
+		from pg_trigger t 
+		where t.tgfoid = p.oid and not t.tgisinternal 
+		limit 1) t on true
 where p.pronamespace = $schema.id$

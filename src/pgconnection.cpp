@@ -205,8 +205,9 @@ QString PgConnection::transactionStatus() const noexcept
         return "intrans";
     case PQTRANS_INERROR:
         return "inerror";
+    default:
+        return "";
     }
-    return "";
 }
 
 int PgConnection::dbmsComparableVersion()
@@ -841,7 +842,10 @@ int PgConnection::appendRawDataToTable(DataTable &dst, PGresult *src) noexcept
                     (*row)[i] = (val[0] == 't');
                     break;
                 case CHAROID:
-                    (*row)[i] = val[0];
+                    if (!val[0])
+                        (*row)[i] = QChar(0);
+                    else
+                        (*row)[i] = QString::fromStdString(val).at(0);
                     break;
 
                 // QDate is lack of special values support, lack of precision to keep huge dates

@@ -20,7 +20,7 @@ ConnectionDialog::ConnectionDialog(QWidget *parent, QString name, QString connec
                     "Driver=FreeTDS;Server=mssql.local;TDS_Version=7.2;Port=1433;Database=master;UID=%user%;PWD=%pass%;ClientCharset=UTF-8;App=sqt;"
             #endif
                     "\n or\n"
-                    "host=127.0.0.1 port=5432 dbname=postgres user=%user% password=%pass%";
+                    "host=127.0.0.1 port=5432 dbname=postgres user=%user% password=%pass% connect_timeout=5";
     }
     ui->editCS->setPlainText(connectionString);
     ui->editName->setText(name);

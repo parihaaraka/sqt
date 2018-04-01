@@ -24,6 +24,7 @@ public:
         DataRole,
         CurrentSortRole,
         MultiselectRole,
+        TagRole,                    ///< any valuable data accessible by $<node type>.tag$ macro
         Sort1Role,
         Sort2Role
     };

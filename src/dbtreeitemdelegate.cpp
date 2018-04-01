@@ -81,12 +81,8 @@ QSize DbTreeItemDelegate::sizeHint(const QStyleOptionViewItem &option, const QMo
 void DbTreeItemDelegate::prepareDocToDrawDbTreeNode(const QStyleOptionViewItem &option, const QModelIndex &index, QTextDocument &doc) const
 {
     Q_UNUSED(option);
-    QFont objectsFont(QApplication::font());
-    objectsFont.setPointSize(9);        // TODO: move to settings
 
-    doc.setDefaultFont(objectsFont);
     doc.setDocumentMargin(0);
-
     QTextOption opt;
     opt.setWrapMode(QTextOption::NoWrap);
     doc.setDefaultTextOption(opt);

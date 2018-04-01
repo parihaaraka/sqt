@@ -292,14 +292,6 @@ T* initEditor(QWidget **textEdit, QueryWidget *parent)
         return editor;
 
     editor = new T(parent);
-    // TODO move to settings
-    QFont font("Consolas, monospace, Menlo, Lucida Console, Liberation Mono, DejaVu Sans Mono, Bitstream Vera Sans Mono, Courier New, serif");
-    font.setStyleHint(QFont::TypeWriter);
-    font.setPointSize(9);
-
-    editor->setFont(font);
-    editor->setTabStopWidth(QFontMetrics(font).averageCharWidth() * 3);
-    editor->setWordWrapMode(QTextOption::NoWrap);
     editor->setObjectName("sql");
     editor->installEventFilter(parent);
     editor->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard | Qt::LinksAccessibleByMouse);

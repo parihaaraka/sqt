@@ -20,6 +20,7 @@ select
     'arrow-transition.png',
     x'7FFFFFF0'::int,
     '1'
+where '$table.tag$' != 'f'
 union all
 select
     'indexes',
@@ -29,6 +30,7 @@ select
     'paper-plane.png',
     x'7FFFFFF1'::int,
     '2'
+where '$table.tag$' not in ('v', 'f')
 union all
 select
     'constraints',
@@ -38,3 +40,14 @@ select
     'traffic-cone.png',
     x'7FFFFFF2'::int,
     '3'
+where '$table.tag$' in ('r', 'p')
+union all
+select
+    'rules',
+    '<i><u>Rules</u></i>',
+    null,
+    null,
+    'image-saturation-up.png',
+    x'7FFFFFF3'::int,
+    '4'
+where '$table.tag$' != 'f'
