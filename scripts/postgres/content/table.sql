@@ -30,6 +30,7 @@ begin
 				case when _t.relpersistence = 'u'::"char" then 'UNLOGGED ' else '' end || 
 				'TABLE ' || _obj_name || E'\n(\n';
 
+			-- TODO: tablespace, collations, inheritance
 			with tmp as
 			(
 				select ca.attname, c.contype::text, c.conname, pg_get_constraintdef(c.oid, true) def
@@ -49,26 +50,36 @@ begin
 						) on a.attnum = dep.refobjsubid and a.attrelid = dep.refobjid
 				where a.attrelid = _obj_id and 
 					-- don't print default in case of sequence ownership
-					(s.oid is null or a.atttypid not in ('int'::regtype::oid, 'bigint'::regtype::oid))
+					(
+						s.oid is null or 
+						a.atttypid not in (
+							'smallint'::regtype::oid, 'int'::regtype::oid, 'bigint'::regtype::oid
+						)
+					)
 			),
 			c as
 			(
 				select attname, array_agg(contype) ctypes, string_agg(
-					case contype
-						when 'p' then 'PRIMARY KEY'
-						when 'f' then regexp_replace(def, '.*\m(REFERENCES.+)', '\1')
+					case
+						when contype in ('p', 'u') then regexp_replace(def, '\s+\([^)]+\)\s+', ' ')
+						when contype = 'f' then regexp_replace(def, '.*\m(REFERENCES.+)', '\1')
 						else def
 					end, ' '
-					order by translate(contype, 'pcdf', '0123')
+					order by translate(contype, 'pcduf', '01234')
 				) clist
 				from tmp
 				where attname is not null
 				group by attname
 			)
 			select 
-				string_agg(E'\t' || 
+				string_agg(
+					-- comment
+					coalesce(E'\t-- ' || replace(col_description(_obj_id, a.attnum), E'\n', E'\n\t-- ') || E'\n', '') ||
+					-- column
+					E'\t' || 
 					quote_ident(a.attname) || ' ' ||
 					case 
+						when s.oid is not null and a.atttypid = 'smallint'::regtype::oid then 'smallserial'
 						when s.oid is not null and a.atttypid = 'int'::regtype::oid then 'serial'
 						when s.oid is not null and a.atttypid = 'bigint'::regtype::oid then 'bigserial'
 						else pg_catalog.format_type(a.atttypid, a.atttypmod)
@@ -109,7 +120,10 @@ begin
 					) || E'\n)'
 					else '' end
 				|| E';\n\n';
-		end if;	
+		end if;
+		_create_object := coalesce(E'/*\n' || 
+			obj_description(_obj_id, 'pg_class') || 
+			E'\n*/\n', '') || _create_object;
 	end if;
 
 	-- prepare helpful queries for db programmer

@@ -7,10 +7,6 @@
 #include <QStatusBar>
 #include <QPlainTextEdit>
 
-//#include <QMimeData>
-//#include <QMessageBox>
-//#include <QLineEdit>
-
 AppEventHandler::AppEventHandler(QObject *parent) : QObject(parent)
 {
 }
@@ -81,18 +77,27 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                 QApplication::clipboard()->setText(edit->textCursor().selectedText().replace(QChar::ParagraphSeparator, '\n'));
                 return true;
             }
-            else if (keyEvent->key() == Qt::Key_W && keyEvent->modifiers() & Qt::ControlModifier)
+            else if (keyEvent->key() == Qt::Key_W && keyEvent->modifiers().testFlag(Qt::ControlModifier))
             {
                 QTextOption textOption(edit->document()->defaultTextOption());
                 textOption.setWrapMode(textOption.wrapMode() == QTextOption::NoWrap ?
                                            QTextOption::WrapAtWordBoundaryOrAnywhere :
                                            QTextOption::NoWrap);
                 edit->document()->setDefaultTextOption(textOption);
+                return true;
             }
-            else if (keyEvent->matches(QKeySequence::ZoomIn))
+            else if (keyEvent->matches(QKeySequence::ZoomIn) ||
+                     // to enable ctrl+shift+'=' on keyboards without numpad
+                     (keyEvent->key() == Qt::Key_Plus && keyEvent->modifiers().testFlag(Qt::ControlModifier)))
+            {
                 edit->zoomIn();
+                return true;
+            }
             else if (keyEvent->matches(QKeySequence::ZoomOut))
+            {
                 edit->zoomOut();
+                return true;
+            }
         }
     }
     else if (event->type() == QEvent::FontChange)

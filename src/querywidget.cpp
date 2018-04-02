@@ -23,6 +23,7 @@
 #include "dbobjectsmodel.h"
 #include "mainwindow.h"
 #include "scripting.h"
+#include <QDesktopServices>
 
 QueryWidget::QueryWidget(QWidget *parent) : QueryWidget(nullptr, parent)
 {
@@ -618,6 +619,14 @@ bool QueryWidget::eventFilter(QObject *object, QEvent *event)
         {
             e->setOverwriteMode(!e->overwriteMode());
             e->setCursorWidth(e->overwriteMode() ? e->cursorWidth() * 3 : e->cursorWidth() / 3);
+            return true;
+        }
+
+        if (keyEvent->key() == Qt::Key_F1)
+        {
+            QDesktopServices::openUrl(QUrl(keyEvent->modifiers().testFlag(Qt::ShiftModifier) ?
+                                               "https://www.postgresql.org/docs/current/static/functions.html":
+                                               "https://www.postgresql.org/docs/current/static/sql-commands.html"));
             return true;
         }
 
