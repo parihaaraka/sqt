@@ -31,9 +31,10 @@ begin
 				'TABLE ' || _obj_name || E'\n(\n';
 
 			-- TODO: tablespace, collations, inheritance
-			with tmp as
+			
+			with tmp as -- union of constraints data
 			(
-				select ca.attname, c.contype::text, c.conname, pg_get_constraintdef(c.oid, true) def
+				select ca.attnum, c.contype::text, c.conname, pg_get_constraintdef(c.oid, true) def
 				from pg_catalog.pg_constraint c
 					left join pg_catalog.pg_attribute ca on 
 						ca.attrelid = c.conrelid and 
@@ -41,7 +42,7 @@ begin
 						c.conkey[2] is null
 				where c.conrelid = _obj_id
 				union all
-				select a.attname, 'd', null::text, 'DEFAULT ' || d.adsrc
+				select a.attnum, 'd', null::text, 'DEFAULT ' || d.adsrc
 				from pg_catalog.pg_attribute a
 					join pg_catalog.pg_attrdef d on a.attrelid = d.adrelid and a.attnum = d.adnum
 					left join (
@@ -57,56 +58,74 @@ begin
 						)
 					)
 			),
-			c as
+			c as -- single column constraints to be concatenated with fields
 			(
-				select attname, array_agg(contype) ctypes, string_agg(
-					case
-						when contype in ('p', 'u') then regexp_replace(def, '\s+\([^)]+\)\s+', ' ')
-						when contype = 'f' then regexp_replace(def, '.*\m(REFERENCES.+)', '\1')
-						else def
-					end, ' '
-					order by translate(contype, 'pcduf', '01234')
-				) clist
+				select 
+					attnum, 
+					array_agg(contype) ctypes, 
+					string_agg(
+						case
+							when contype in ('p', 'u') then regexp_replace(def, '\s+\([^)]+\)\s+', ' ')
+							when contype = 'f' then regexp_replace(def, '.*\m(REFERENCES.+)', '\1')
+							else def
+						end, ' '
+						order by translate(contype, 'pcduf', '01234')
+					) clist
 				from tmp
-				where attname is not null
-				group by attname
-			)
-			select 
-				string_agg(
-					-- comment
-					coalesce(E'\t-- ' || replace(col_description(_obj_id, a.attnum), E'\n', E'\n\t-- ') || E'\n', '') ||
-					-- column
-					E'\t' || 
+				where attnum is not null
+				group by attnum
+			),
+			to_show as  -- sets of per-column data of table definition to apply length-specific format
+			(
+				select
+					a.attnum, 
+					col_description(_obj_id, a.attnum) description,
 					quote_ident(a.attname) || ' ' ||
-					case 
-						when s.oid is not null and a.atttypid = 'smallint'::regtype::oid then 'smallserial'
-						when s.oid is not null and a.atttypid = 'int'::regtype::oid then 'serial'
-						when s.oid is not null and a.atttypid = 'bigint'::regtype::oid then 'bigserial'
-						else pg_catalog.format_type(a.atttypid, a.atttypmod)
-					end ||
-					case when a.attnotnull and 'p'::"char" != all(c.ctypes) then ' NOT NULL' else '' end ||
-					coalesce(' ' || c.clist, ''),
-					E',\n' order by a.attnum
+						case 
+							when s.oid is not null and a.atttypid = 'smallint'::regtype::oid then 'smallserial'
+							when s.oid is not null and a.atttypid = 'int'::regtype::oid then 'serial'
+							when s.oid is not null and a.atttypid = 'bigint'::regtype::oid then 'bigserial'
+							else pg_catalog.format_type(a.atttypid, a.atttypmod)
+						end ||
+						case when a.attnotnull and 'p'::"char" != all(c.ctypes) then ' NOT NULL' else '' end ||
+						coalesce(' ' || c.clist, '') definition
+				from pg_catalog.pg_attribute a
+					left join c on a.attnum = c.attnum
+					left join pg_catalog.pg_attrdef d on a.attrelid = d.adrelid and a.attnum = d.adnum
+					left join (
+						pg_depend dep
+							join pg_class s on s.oid = dep.objid and s.relkind = 'S'
+						) on a.attnum = dep.refobjsubid and a.attrelid = dep.refobjid
+				where 
+					a.attnum > 0 and not a.attisdropped and
+					a.attrelid = _obj_id
+			)
+			select
+				string_agg(
+					case
+						when length(definition) + length(description) > 110 then
+							-- comment above column definition
+							coalesce(E'\t\t--\u2193 ' || replace(description, E'\n', E'\n\t\t-- ') || E'\n', '') ||
+							-- column
+							E'\t' ||	definition || ','
+						else
+							-- column
+							E'\t' ||	definition || ',' ||
+							-- comment to the right
+							coalesce(E'   -- ' || regexp_replace(description, '\s*\n\s*', ' ', 'g'), '')
+					end,
+					E'\n' order by attnum
 				) ||
 				coalesce(E',\n' ||
-					(
-						select string_agg(E'\t' || def, E',\n')
-						from tmp
-						where attname is null
-					), ''
-				)
+						(
+							select string_agg(E'\t' || def, E',\n')
+							from tmp
+							where attnum is null
+						), ''
+					)
 			into _tmp
-			from pg_catalog.pg_attribute a
-				left join c on a.attname = c.attname
-				left join pg_catalog.pg_attrdef d on a.attrelid = d.adrelid and a.attnum = d.adnum
-				left join (
-					pg_depend dep
-						join pg_class s on s.oid = dep.objid and s.relkind = 'S'
-					) on a.attnum = dep.refobjsubid and a.attrelid = dep.refobjid
-			where 
-				a.attnum > 0 and not a.attisdropped and
-				a.attrelid = _obj_id;
-							
+			from to_show;
+
 			if current_setting('default_with_oids', true)::bool is distinct from _t.relhasoids then
 				_t.reloptions := coalesce(_t.reloptions, '{}'::text[]) ||
 					case when _t.relhasoids then 'OIDS' else 'OIDS=false' end;
@@ -121,9 +140,19 @@ begin
 					else '' end
 				|| E';\n\n';
 		end if;
-		_create_object := coalesce(E'/*\n' || 
-			obj_description(_obj_id, 'pg_class') || 
-			E'\n*/\n', '') || _create_object;
+
+		-- prepend description		
+		select coalesce(
+				case 
+				when array_length(regexp_split_to_array(description, E'\n'), 1) > 1 then
+					E'/*\n' || description || E'\n*/\n'
+				else
+					'-- ' || replace(description, E'\n', E'\n-- ') || E'\n\n'
+				end, ''
+			) || _create_object
+		into _create_object
+		from (values (obj_description(_obj_id, 'pg_class'))) as v(description);
+
 	end if;
 
 	-- prepare helpful queries for db programmer
