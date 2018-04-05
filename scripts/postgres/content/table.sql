@@ -75,7 +75,7 @@ begin
 				where attnum is not null
 				group by attnum
 			),
-			to_show as  -- sets of per-column data of table definition to apply length-specific format
+			to_show as  -- sets of per-column data of table definition to apply length-specific format + trailing constraints
 			(
 				select
 					a.attnum, 
@@ -99,6 +99,13 @@ begin
 				where 
 					a.attnum > 0 and not a.attisdropped and
 					a.attrelid = _obj_id
+				union all
+				select
+					1000000 + row_number() over(),
+					null,
+					def
+				from tmp
+				where attnum is null
 			)
 			select
 				string_agg(
@@ -107,22 +114,15 @@ begin
 							-- comment above column definition
 							coalesce(E'\t\t--\u2193 ' || replace(description, E'\n', E'\n\t\t-- ') || E'\n', '') ||
 							-- column
-							E'\t' ||	definition || ','
+							E'\t' ||	definition || case when attnum = (select max(attnum) from to_show) then '' else ',' end
 						else
 							-- column
-							E'\t' ||	definition || ',' ||
+							E'\t' ||	definition || case when attnum = (select max(attnum) from to_show) then '' else ',' end ||
 							-- comment to the right
 							coalesce(E'   -- ' || regexp_replace(description, '\s*\n\s*', ' ', 'g'), '')
 					end,
 					E'\n' order by attnum
-				) ||
-				coalesce(E',\n' ||
-						(
-							select string_agg(E'\t' || def, E',\n')
-							from tmp
-							where attnum is null
-						), ''
-					)
+				)
 			into _tmp
 			from to_show;
 

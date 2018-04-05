@@ -89,10 +89,10 @@ public slots: // to use from QJSEngine
     void clearResultsets();
 
 signals:
-    void message(QString msg) const;
-    void error(QString msg) const;
+    void message(const QString &msg) const;
+    void error(const QString &msg) const;
     void fetched(DataTable *table);
-    void setContext(QString context) const;
+    void setContext(const QString &context) const;
     void queryStateChanged();
 
 protected:

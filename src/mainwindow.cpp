@@ -380,11 +380,12 @@ void MainWindow::on_actionRefresh_triggered()
 
     // clear all child nodes
     _objectsModel->removeRows(0, item->childCount(), nodeToRefresh);
+    // force refresh
+    _objectsModel->dataChanged(nodeToRefresh, nodeToRefresh);
 
-    _objectsModel->fillChildren(nodeToRefresh);
     // clear current node's preserved data
     item->setData(QVariant(), DbObject::ContentRole);
-    // refresh
+    // refresh context part
     scriptSelectedObjects();
 }
 
@@ -498,9 +499,14 @@ bool MainWindow::closeTab(int index)
     if (ensureSaved(index, false, true))
     {
         QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(index));
+
+        // let it close while query is executing (?!)
+        /*
         DbConnection *con = w->dbConnection();
         if (con && con->queryState() != QueryState::Inactive)
             return false;
+        */
+
         ui->tabWidget->removeTab(index);
         delete w;
         refreshContextInfo();
@@ -1114,9 +1120,10 @@ void MainWindow::log(const QString &msg)
             .arg(msg.trimmed()));
 
     int blockCount = ui->log->document()->blockCount();
-    if (blockCount > 100)
+    // limit log to 1000 rows
+    if (blockCount > 1000)
     {
-        auto b = ui->log->document()->findBlockByNumber(blockCount - 101);
+        auto b = ui->log->document()->findBlockByNumber(blockCount - 1001);
         QTextCursor c = ui->log->textCursor();
         c.movePosition(QTextCursor::Start);
         c.setPosition(b.position() + b.length(), QTextCursor::KeepAnchor);

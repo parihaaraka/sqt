@@ -95,6 +95,7 @@ void PgConnection::openAsync() noexcept
     if (PQstatus(_conn) == CONNECTION_BAD)
     {
         // connection failed
+        setQueryState(QueryState::Inactive);
         emit error(PQerrorMessage(_conn));
         if (_conn)
         {
@@ -104,7 +105,7 @@ void PgConnection::openAsync() noexcept
         return;
     }
     _async_stage = async_stage::connecting;
-    watchSocket(SocketWatchMode::Write);
+    asyncConnectionProceed();
 }
 
 void PgConnection::close() noexcept
@@ -391,6 +392,12 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
         emit error(PQerrorMessage(_conn));
     };
 
+    if (query.isEmpty())
+    {
+        run_query();
+        return;
+    }
+
     // Massively data fetching query freezes ui, so we want to run it in
     // separate thread. Asynchronous libpq API is used for the sake of
     // opportunities it provides.
@@ -399,6 +406,12 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
     auto state_handler_connection = std::make_shared<QMetaObject::Connection>();
     connect(thread, &QThread::started, [this, run_query, thread, state_handler_connection]() {
 
+        // stop event loop on inactive query state
+        *state_handler_connection = connect(this, &PgConnection::queryStateChanged, [this, thread]() {
+            if (_query_state == QueryState::Inactive)
+                thread->quit();
+        });
+
         run_query();
 
         if (_query_state == QueryState::Inactive)
@@ -406,12 +419,6 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
             // the next call to QThread::exec() will also return immediately.
             // (next to this handler Qt will call exec())
             thread->exit();
-
-        // stop event loop on inactive query state
-        *state_handler_connection = connect(this, &PgConnection::queryStateChanged, [this, thread]() {
-            if (_query_state == QueryState::Inactive)
-                thread->quit();
-        });
     });
     connect(thread, &QThread::finished, [this, thread, state_handler_connection]() {
         // disconnect queryStateChanged handler
@@ -564,7 +571,13 @@ void PgConnection::fetch() noexcept
         //_last_action_moment = chrono::system_clock::now();
         if (!PQconsumeInput(_conn))
         {
-            setQueryState(QueryState::Inactive);
+            // disconnection detects here
+            if (PQstatus(_conn) == CONNECTION_BAD)
+            {
+                watchSocket(SocketWatchMode::None);
+                _async_stage = async_stage::none;
+                setQueryState(QueryState::Inactive);
+            }
             emit error(PQerrorMessage(_conn));
             break;  // incorrect processing?
         }
@@ -659,6 +672,7 @@ void PgConnection::asyncConnectionProceed()
         break;
     case PGRES_POLLING_FAILED:
         // connection failed
+        _async_stage = async_stage::none;
         watchSocket(SocketWatchMode::None);
         emit error(PQerrorMessage(_conn));
         // do not release _conn here to avoid error "connection pointer is NULL"
@@ -743,6 +757,22 @@ void PgConnection::watchSocket(int mode)
     // force disabling socket watcher in case of incorrect handle
     if (socket_handle == -1)
         mode = SocketWatchMode::None;
+
+    // PQconnectStart may reuse connection freed by previous PQfinish() call (considering object address),
+    // and moreover this connection may have the same socket handle, but this is logically another socket
+    // (just re-enabling QSocketNotifier doesn't work).
+    // So we free listeners to grant the line "sn && sn->socket() != socket_handle" works as expected.
+    if (mode == SocketWatchMode::None)
+    {
+        if (_readNotifier)
+            delete _readNotifier;
+        _readNotifier = nullptr;
+
+        if (_writeNotifier)
+            delete _writeNotifier;
+        _writeNotifier = nullptr;
+        return;
+    }
 
     auto adjustNotifier = [this, mode, socket_handle](QSocketNotifier::Type type) {
         QSocketNotifier* &sn = (type == QSocketNotifier::Read ?
