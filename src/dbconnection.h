@@ -75,7 +75,7 @@ public:
     /*!
      * \brief synchronous query execution used by objects tree and so on
      */
-    virtual bool execute(const QString &query, const QVector<QVariant> *params = nullptr, int limit = -1) = 0;
+    virtual bool execute(const QString &query, const QVector<QVariant> *params = nullptr) = 0;
 
     void setDatabase(const QString &database);
     void setConnectionString(const QString &connectionString);

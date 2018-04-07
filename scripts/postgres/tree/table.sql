@@ -14,7 +14,7 @@ where a.attnum > 0 and not a.attisdropped and a.attrelid = $table.id$
 union all
 select
     'triggers',
-    '<i><u>Triggers</u></i>',
+    '<i>Triggers</i>',
     null,
     null,
     'arrow-transition.png',
@@ -24,7 +24,7 @@ where '$table.tag$' != 'f'
 union all
 select
     'indexes',
-    '<i><u>Indexes</u></i>',
+    '<i>Indexes</i>',
     null,
     null,
     'paper-plane.png',
@@ -34,7 +34,7 @@ where '$table.tag$' not in ('v', 'f')
 union all
 select
     'constraints',
-    '<i><u>Constraints</u></i>',
+    '<i>Constraints</i>',
     null,
     null,
     'traffic-cone.png',
@@ -44,7 +44,7 @@ where '$table.tag$' in ('r', 'p')
 union all
 select
     'rules',
-    '<i><u>Rules</u></i>',
+    '<i>Rules</i>',
     null,
     null,
     'image-saturation-up.png',

@@ -7,10 +7,13 @@
 #include <QRegularExpression>
 #include <QThread>
 
+#include <QDebug>
+
 PgConnection::PgConnection() :
     DbConnection(), _readNotifier(nullptr), _writeNotifier(nullptr), _temp_result(nullptr), _temp_result_rowcount(0)
 {
-
+    connect(&_copy_context, &CopyContext::error, this, &PgConnection::error);
+    connect(&_copy_context, &CopyContext::message, this, &PgConnection::message);
 }
 
 PgConnection::~PgConnection()
@@ -145,9 +148,12 @@ QString PgConnection::context() const noexcept
 {
     if (!isOpened())
         return QString();
+    QString user = PQuser(_conn);
     QString host = PQhost(_conn);
     QString port = PQport(_conn);
-    return host + (port.isEmpty() ? "" : ":" + port + "/" + database());
+    return (user.isEmpty() ? "" : user + "@") +
+            host +
+            (port.isEmpty() ? "" : ":" + port + "/" + database());
 }
 
 QString PgConnection::database() const noexcept
@@ -305,7 +311,7 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
     PGTransactionStatusType initial_state = PQtransactionStatus(_conn);
     if (initial_state == PQTRANS_ACTIVE)
     {
-        emit error(tr("another command is already in progress\n"));
+        emit error(tr("another command is already in progress"));
         return;
     }
 
@@ -437,16 +443,13 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
     thread->start();
 }
 
-bool PgConnection::execute(const QString &query, const QVector<QVariant> *params, int limit)
+bool PgConnection::execute(const QString &query, const QVector<QVariant> *params)
 {
-    // limit works in preview query
-    Q_UNUSED(limit)
-
     // save transaction status to avoid reconnects within transaction
     PGTransactionStatusType initial_state = PQtransactionStatus(_conn);
     if (initial_state == PQTRANS_ACTIVE)
     {
-        emit message("another command is already in progress\n");
+        emit message(tr("another command is already in progress\n"));
         return false;
     }
 
@@ -574,12 +577,19 @@ void PgConnection::fetch() noexcept
             // disconnection detects here
             if (PQstatus(_conn) == CONNECTION_BAD)
             {
+                _copy_context.clear();
                 watchSocket(SocketWatchMode::None);
                 _async_stage = async_stage::none;
                 setQueryState(QueryState::Inactive);
             }
             emit error(PQerrorMessage(_conn));
             break;  // incorrect processing?
+        }
+
+        if (_async_stage == async_stage::copy_out)
+        {
+            getCopyData();
+            return;
         }
 
         fetchNotifications();
@@ -590,7 +600,7 @@ void PgConnection::fetch() noexcept
 
         if (!tmp_res)   // query processing finished
         {
-
+            _copy_context.clear();
             _async_stage = async_stage::none;
             // restore watching socket to receive notifications
             watchSocket(SocketWatchMode::Read);
@@ -614,6 +624,30 @@ void PgConnection::fetch() noexcept
         {
             emit message(tr("empty query"));
             continue;
+        }
+
+        if (status == PGRES_COPY_OUT)
+        {
+            if (!_copy_context)
+                _copy_context.init(_query_tmp);
+            if (!_copy_context.nextDestination())
+                cancel();
+            _async_stage = async_stage::copy_out;
+            getCopyData();
+            return;
+        }
+
+        if (status == PGRES_COPY_IN)
+        {
+            if (!_copy_context)
+                _copy_context.init(_query_tmp);
+            if (!_copy_context.nextSource())
+                cancel();
+            watchSocket(SocketWatchMode::Write);
+            _async_stage = async_stage::copy_in;
+            _copy_in_buf.resize(0);
+            putCopyData();
+            return;
         }
 
         // in case of error the result contains its details,
@@ -696,16 +730,105 @@ void PgConnection::asyncConnectionProceed()
     }
 }
 
+void PgConnection::getCopyData()
+{
+    do
+    {
+        char *buf;
+        int len = PQgetCopyData(_conn, &buf, true);
+        std::unique_ptr<char, void(*)(void*)> buf_guard(buf, PQfreemem);
+
+        if (len > 0) // row fetched
+        {
+            if (_query_state != QueryState::Cancelling)
+            {
+                if (!_copy_context.write(buf, len))
+                    cancel();
+            }
+            continue;
+        }
+
+        if (len == -1) // done
+        {
+            _async_stage = async_stage::wait_ready_read;
+            fetch();
+        }
+        else if (len == -2) // error
+        {
+            emit error(PQerrorMessage(_conn));
+        }
+
+        break;
+    }
+    while (true);
+}
+
+void PgConnection::putCopyData()
+{
+    do
+    {
+        // read data if buffer is empty
+        // (buffer may stay non-empty if last write opertion failed because of overflowed internal buffer)
+        if (    _query_state != QueryState::Cancelling &&
+                !_copy_in_buf.size() &&
+                !_copy_context.read(_copy_in_buf, 1024 * 512))
+        {
+            cancel();
+            continue;
+        }
+
+        if (!_copy_in_buf.size()) // eof
+        {
+            int end_res = PQputCopyEnd(_conn, nullptr);
+            if (end_res >= 0) // error
+            {
+                if (end_res > 0) // data sent
+                    _async_stage = async_stage::flush_copy;
+                watchSocket(SocketWatchMode::Write);
+            }
+            else
+            {
+                _async_stage = async_stage::wait_ready_read;
+                watchSocket(SocketWatchMode::Read);
+                emit error(PQerrorMessage(_conn));
+            }
+            break;
+        }
+
+        int res = PQputCopyData(_conn, _copy_in_buf.data(), _copy_in_buf.size());
+        if (res > 0)
+        {
+            _copy_in_buf.resize(0);
+            continue;
+        }
+
+        if (!res)
+            watchSocket(SocketWatchMode::Write);
+        else if (res < 0) // error
+        {
+            _async_stage = async_stage::wait_ready_read;
+            watchSocket(SocketWatchMode::Read);
+            emit error(PQerrorMessage(_conn));
+        }
+
+        break;
+    }
+    while (true);
+}
+
 void PgConnection::readyReadSocket()
 {
-    if (_async_stage == async_stage::connecting)
+    switch (_async_stage)
     {
+    case async_stage::wait_ready_read:
+    case async_stage::copy_out:
+    case async_stage::copy_in: // is it possible?
+        fetch();
+        break;
+    case async_stage::connecting:
         asyncConnectionProceed();
-        return;
-    }
-
-    if (_async_stage == async_stage::flush) // sending query to a server
-    {
+        break;
+    case async_stage::flush:  // sending query to a server
         if (PQconsumeInput(_conn))
         {
             readyWriteSocket();
@@ -714,11 +837,10 @@ void PgConnection::readyReadSocket()
         emit error(PQerrorMessage(_conn));
         _async_stage = async_stage::none;
         watchSocket(SocketWatchMode::Read);
-    }
-    // async query is fetching result or notification received
-    else if (_async_stage == async_stage::wait_ready_read || isIdle())
-    {
-        fetch();
+        break;
+    default:
+        if (isIdle())
+            fetch();
     }
 }
 
@@ -730,7 +852,14 @@ void PgConnection::readyWriteSocket()
         return;
     }
 
-    if (_async_stage == async_stage::flush)
+    if (_async_stage == async_stage::copy_in)
+    {
+        watchSocket(SocketWatchMode::Read); // may we get something here?
+        putCopyData();
+        return;
+    }
+
+    if (_async_stage == async_stage::flush || _async_stage == async_stage::flush_copy)
     {
         int res = PQflush(_conn);
         if (res < 0)    // error
@@ -798,8 +927,7 @@ void PgConnection::watchSocket(int mode)
                             &PgConnection::readyWriteSocket);
             }
 
-            if (sn->isEnabled())
-                sn->setEnabled(true);
+            sn->setEnabled(true);
         }
         else if (sn)
         {

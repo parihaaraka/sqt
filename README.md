@@ -6,5 +6,8 @@ The subject was aimed to provide fast and convenient ms sql query tool under lin
 
 `sqt` has fully customizible objects tree, dependent content view and sql highlighting. See [scripts/README.md](https://github.com/parihaaraka/sqt/blob/master/scripts/README.md) and any existing `hl.conf` for more details.
 
+![screenshot](https://github.com/parihaaraka/sqt/blob/master/screenshot1.png)
+
+
 #### Acknowledgment
 Some icons by [Yusuke  Kamiyamane](http://p.yusukekamiyamane.com). All rights reserved.

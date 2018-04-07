@@ -6,8 +6,10 @@
 #include <memory>
 #include <libpq-fe.h>
 #include "pgparams.h"
+#include "copycontext.h"
 
 class QSocketNotifier;
+
 class PgConnection : public DbConnection
 {
     Q_OBJECT
@@ -31,10 +33,20 @@ public:
     virtual bool isNumericType(int sqlType) const noexcept override;
     virtual QMetaType::Type sqlTypeToVariant(int sqlType) const noexcept override;
     virtual void executeAsync(const QString &query, const QVector<QVariant> *params = nullptr) noexcept override;
-    virtual bool execute(const QString &query, const QVector<QVariant> *params = nullptr, int limit = -1) override;
+    virtual bool execute(const QString &query, const QVector<QVariant> *params = nullptr) override;
 
 private:
-    enum class async_stage { none, connecting, sending_query, flush, wait_ready_read };
+    enum class async_stage
+    {
+        none,
+        connecting,
+        sending_query,
+        flush,
+        flush_copy,
+        wait_ready_read,
+        copy_out,
+        copy_in
+    };
     QSocketNotifier *_readNotifier, *_writeNotifier;
     PGconn *_conn = nullptr;
     async_stage _async_stage = async_stage::none;
@@ -42,6 +54,8 @@ private:
     QString _query_tmp; ///< query storage during asynchronous connection if needed
     PgParams _params_tmp;
     int _temp_result_rowcount;
+    CopyContext _copy_context;
+    std::vector<char> _copy_in_buf;
 
     virtual void openAsync() noexcept;
     bool isIdle() const noexcept;
@@ -49,6 +63,8 @@ private:
     void fetchNotifications();
     void fetch() noexcept;
     void asyncConnectionProceed();
+    void getCopyData();
+    void putCopyData();
     void readyReadSocket();
     void readyWriteSocket();
     void watchSocket(int mode);

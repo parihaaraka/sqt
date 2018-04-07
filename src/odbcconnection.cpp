@@ -212,8 +212,11 @@ QMetaType::Type OdbcConnection::sqlTypeToVariant(int sqlType) const noexcept
     return var_type;
 }
 
-bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *params, int limit)
+bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *params)
 {
+    // TODO implement params to use in js-scripts
+    Q_UNUSED(params)
+
     clearResultsets();
     if (!open())
         return false;
@@ -280,7 +283,7 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
                                     Qt::AlignRight : Qt::AlignLeft);
                 }
 
-                while ((limit == -1 || rowcount < limit) && (retcode = SQLFetch(hstmt_local)) != SQL_NO_DATA)
+                while (/*(limit == -1 || rowcount < limit) &&*/ (retcode = SQLFetch(hstmt_local)) != SQL_NO_DATA)
                 {
                     if (!checkStmt(retcode, hstmt_local))
                         break;
@@ -480,8 +483,8 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
                     emit message(tr("%1 rows affected").arg(cb));
             }
 
-            if (rowcount == limit)
-                SQLCloseCursor(hstmt_local);
+            //if (rowcount == limit)
+            //    SQLCloseCursor(hstmt_local);
             retcode = SQLMoreResults(hstmt_local);
         }
     }
@@ -494,7 +497,7 @@ void OdbcConnection::executeAsync(const QString &query, const QVector<QVariant> 
     QThread* thread = new QThread(); // man: The object cannot be moved if it has a parent.
     moveToThread(thread);
     connect(thread, &QThread::started, [this, query, thread, params]() {
-        execute(query, params, -1);
+        execute(query, params);
         thread->quit();
     });
     connect(thread, &QThread::finished, [this, thread]() {
@@ -622,7 +625,7 @@ QString OdbcConnection::context() const noexcept
     const SQLSMALLINT buf_size = 256;
     SQLSMALLINT res_size;
     char info_buf[buf_size];
-    QString tmp, context;
+    QString user, tmp, context;
 
     retcode = SQLGetInfoA(_hdbc, SQL_SERVER_NAME, info_buf, buf_size, &res_size);
     if (retcode != SQL_SUCCESS)
@@ -630,8 +633,11 @@ QString OdbcConnection::context() const noexcept
     //if (check(retcode, _hdbc, SQL_HANDLE_DBC) && res_size)
     context = QString::fromLocal8Bit(info_buf, SQL_NTS);
 
+    retcode = SQLGetInfoA(_hdbc, SQL_USER_NAME, info_buf, buf_size, &res_size);
+    if (retcode == SQL_SUCCESS)
+        user = QString::fromLocal8Bit(info_buf, SQL_NTS);
+
     retcode = SQLGetInfoA(_hdbc, SQL_DATABASE_NAME, info_buf, buf_size, &res_size);
-    //if (check(retcode, _hdbc, SQL_HANDLE_DBC) && res_size)
     if (retcode == SQL_SUCCESS)
         tmp = QString::fromLocal8Bit(info_buf, SQL_NTS);
 
@@ -640,7 +646,7 @@ QString OdbcConnection::context() const noexcept
     else if (!tmp.isEmpty())
         context += '/' + tmp;
 
-    return context;
+    return (user.isEmpty() ? "" : user + "@") + context;
 }
 
 QString OdbcConnection::database() const noexcept
