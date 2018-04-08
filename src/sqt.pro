@@ -25,7 +25,8 @@ SOURCES += main.cpp\
     sqlsyntaxhighlighter.cpp \
     scripting.cpp \
     appeventhandler.cpp \
-    copycontext.cpp
+    copycontext.cpp \
+    codeeditor.cpp
 
 HEADERS  += mainwindow.h \
     dbobjectsmodel.h \
@@ -48,7 +49,8 @@ HEADERS  += mainwindow.h \
     sqlsyntaxhighlighter.h \
     scripting.h \
     appeventhandler.h \
-    copycontext.h
+    copycontext.h \
+    codeeditor.h
 
 FORMS    += mainwindow.ui \
     logindialog.ui \

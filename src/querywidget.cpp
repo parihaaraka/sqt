@@ -24,6 +24,7 @@
 #include "mainwindow.h"
 #include "scripting.h"
 #include <QDesktopServices>
+#include "codeeditor.h"
 
 QueryWidget::QueryWidget(QWidget *parent) : QueryWidget(nullptr, parent)
 {
@@ -320,7 +321,8 @@ T* initEditor(QWidget **textEdit, QueryWidget *parent)
 
 void QueryWidget::setPlainText(const QString &text)
 {
-    QPlainTextEdit *editor = initEditor<QPlainTextEdit>(&_editor, this);
+    CodeEditor *editor = initEditor<CodeEditor>(&_editor, this);
+    //QPlainTextEdit *editor = initEditor<QPlainTextEdit>(&_editor, this);
     editor->setPlainText(text);
     //editor->document()->setModified(false);
 }
@@ -507,11 +509,27 @@ void QueryWidget::onActionCopyTriggered()
 void QueryWidget::onCursorPositionChanged()
 {
     QList<QTextEdit::ExtraSelection> left_bracket;
-    QList<QTextEdit::ExtraSelection> right_bracket;
-    setExtraSelections(left_bracket);
+    QList<QTextEdit::ExtraSelection> right_bracket_and_current_line;
+    setExtraSelections(left_bracket); // clear extra selections
+
+    /*  current line distinct background
+    if (!isReadOnly())
+    {
+        QTextEdit::ExtraSelection selection;
+        QColor lineColor = QColor("#efefef");
+        selection.format.setBackground(lineColor);
+        selection.format.setProperty(QTextFormat::FullWidthSelection, true);
+        selection.cursor = textCursor();
+        selection.cursor.clearSelection();
+        right_bracket_and_current_line.append(selection);
+    }*/
+
     QTextCursor cursor = textCursor();
     if (cursor.selectedText().length() > 1 || !_highlighter || !_highlighter->document())
+    {
+        setExtraSelections(right_bracket_and_current_line);
         return;
+    }
 
     QTextCursor c(cursor);
     c.clearSelection();
@@ -524,9 +542,9 @@ void QueryWidget::onCursorPositionChanged()
     if (c.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor))
     {
         // get bracket to the right and matching one selected
-        right_bracket = matchBracket(c, left_bracket.empty() ? 100 : 115);
+        right_bracket_and_current_line.append(matchBracket(c, left_bracket.empty() ? 100 : 115));
     }
-    setExtraSelections(right_bracket + left_bracket);
+    setExtraSelections(right_bracket_and_current_line + left_bracket);
 }
 
 bool QueryWidget::isEnveloped(const QTextCursor &c)
@@ -791,5 +809,5 @@ bool QueryWidget::eventFilter(QObject *object, QEvent *event)
     default:
         break;
     }
-    return false;
+    return object->eventFilter(object, event);
 }

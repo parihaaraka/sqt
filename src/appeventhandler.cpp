@@ -111,6 +111,7 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
             if (edit->objectName() != "editCS")
                 textOption.setWrapMode(QTextOption::NoWrap);
             edit->document()->setDefaultTextOption(textOption);
+            edit->setCursorWidth(2);
         }
     }
 
