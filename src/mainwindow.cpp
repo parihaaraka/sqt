@@ -23,8 +23,8 @@
 #include "findandreplacepanel.h"
 #include <memory>
 #include "scripting.h"
-
-#include <QDebug>
+#include "codeeditor.h"
+#include <QScrollBar>
 
 struct RecentFile
 {
@@ -198,6 +198,34 @@ MainWindow::~MainWindow()
     delete _frPanel;
     delete _objectsModel;
     delete ui;
+}
+
+void MainWindow::activateEditorBlock(CodeBlockProperties *blockProperties)
+{
+    if (!blockProperties)
+        return;
+
+    QTextDocument *doc = qobject_cast<QTextDocument*>(blockProperties->queryWidget()->document());
+    QPlainTextEdit *ed = qobject_cast<QPlainTextEdit*>(blockProperties->queryWidget()->editor());
+    if (!doc || !ed)
+        return;
+
+    QTextBlock block = doc->begin();
+    while (block.isValid())
+    {
+        if (block.userData() == blockProperties)
+        {
+            if (ui->tabWidget->isHidden())
+                ui->actionQuery_editor->trigger();
+            ui->tabWidget->setCurrentWidget(blockProperties->queryWidget());
+
+            QTextCursor cursor(block);
+            blockProperties->queryWidget()->setTextCursor(cursor);
+            ed->centerCursor();
+            break;
+        }
+        block = block.next();
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

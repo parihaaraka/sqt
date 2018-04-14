@@ -7,6 +7,7 @@ select
 		'</span></i>' ui_name,
 	i.oid id,
 	i.relname "name",
+	i.reltablespace tag,
 	i.relname sort1
 from pg_index x
 	join pg_class c on c.oid = x.indrelid

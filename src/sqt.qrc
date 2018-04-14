@@ -9,5 +9,6 @@
         <file>img/control.png</file>
         <file>img/control-stop.png</file>
         <file>sqt.ico</file>
+        <file>img/bookmark.png</file>
     </qresource>
 </RCC>

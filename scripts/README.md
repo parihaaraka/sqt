@@ -23,7 +23,7 @@ Script to build tree must return resultset with the following columns:
 |node_type|varchar|*Mandatory* type of node.<br/>(= file name of dependent script inside sibling folders)|
 |name|varchar|`name` field to referrence to from another script. Usually it's a full or schemaless quoted or unquoted db object's name depending on the way you use the value within the script.|
 |id|varchar|As a rule it's an internal id of database object to be referenced from dependent scripts (or any other convinient value).|
-|tag|varchar|Any data to be used within dependent scripts.|
+|tag|varchar/int|Any data to be used within dependent scripts.|
 |icon|varchar|Icon file name.|
 |allow_multiselect|bool|Whether the object may have multiple selected children.|
 |sort1|varchar/int|Value to sort on.|

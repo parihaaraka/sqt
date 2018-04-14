@@ -1,6 +1,5 @@
 #include "datatable.h"
 #include <QApplication>
-#include <QDebug>
 
 DataTable::DataTable(const DataTable &table) : QObject()
 {

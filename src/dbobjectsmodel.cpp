@@ -1,7 +1,6 @@
 #include "dbobjectsmodel.h"
 #include "dbobject.h"
 #include <QSettings>
-#include <QDebug>
 #include <QIcon>
 #include <QJSEngine>
 #include <QFile>
@@ -248,7 +247,7 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
             if (multiselectInd >= 0 && !r[multiselectInd].isNull())
                 newItem->setData(r[multiselectInd].toBool(), DbObject::MultiselectRole);
             if (tagInd >= 0 && !r[tagInd].isNull())
-                newItem->setData(r[tagInd].toString(), DbObject::TagRole);
+                newItem->setData(r[tagInd], DbObject::TagRole);
             if (typeInd >= 0)
             {
                 QString value = r[typeInd].toString();

@@ -7,8 +7,6 @@
 #include <QRegularExpression>
 #include <QThread>
 
-#include <QDebug>
-
 PgConnection::PgConnection() :
     DbConnection(), _readNotifier(nullptr), _writeNotifier(nullptr), _temp_result(nullptr), _temp_result_rowcount(0)
 {

@@ -22,6 +22,7 @@ class FindAndReplacePanel;
 class DbObjectsModel;
 class DbConnection;
 class DataTable;
+class CodeBlockProperties;
 
 class MainWindow : public QMainWindow
 {
@@ -30,6 +31,7 @@ class MainWindow : public QMainWindow
 public:
 	explicit MainWindow(QWidget *parent = 0);
 	~MainWindow();
+    void activateEditorBlock(CodeBlockProperties *blockProperties);
 	
 protected:
     void closeEvent(QCloseEvent *event);

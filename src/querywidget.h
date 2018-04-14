@@ -22,7 +22,6 @@ public:
     explicit QueryWidget(QWidget *parent = 0);
     explicit QueryWidget(DbConnection *connection, QWidget *parent = 0);
     ~QueryWidget();
-    //QPlainTextEdit* queryEditor() { return _editor; }
     const QString& fileName() { return _fn; }
     void openFile(const QString &fileName, const QString &encoding);
     bool saveFile(const QString &fileName, const QString &encoding = QString());
@@ -41,6 +40,7 @@ public:
     QString toPlainText();
     QTextCursor textCursor() const;
     QTextDocument* document() const;
+    QWidget* editor() const;
     void setPlainText(const QString &text);
     void setHtml(const QString &html);
 

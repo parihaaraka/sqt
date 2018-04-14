@@ -6,6 +6,8 @@
 #include <QMainWindow>
 #include <QStatusBar>
 #include <QPlainTextEdit>
+#include "mainwindow.h"
+#include "codeeditor.h"
 
 AppEventHandler::AppEventHandler(QObject *parent) : QObject(parent)
 {
@@ -16,6 +18,16 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
     if (event->type() == QEvent::KeyPress)
     {
         QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+        if ((keyEvent->key() == Qt::Key_Comma || keyEvent->key() == Qt::Key_Period) &&
+                keyEvent->modifiers().testFlag(Qt::ControlModifier))
+        {
+            CodeBlockProperties *p = (keyEvent->key() == Qt::Key_Comma ?
+                                          Bookmarks::previous() : Bookmarks::next());
+            MainWindow *w = qobject_cast<MainWindow*>(QApplication::activeWindow());
+            w->activateEditorBlock(p);
+            return true;
+        }
+
         if (QTableView *tv = qobject_cast<QTableView*>(obj))
         {
             if (keyEvent->matches(QKeySequence::Copy))

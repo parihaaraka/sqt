@@ -10,6 +10,7 @@ declare
 	_obj_name text := '$schema.name$.$table.name$';
 	_obj_id oid := $table.id$;
 	_t record;
+	_inherits text;
 begin
 
 	if '$children.ids$' = '-1' then
@@ -30,12 +31,29 @@ begin
 				case when _t.relpersistence = 'u'::"char" then 'UNLOGGED ' else '' end || 
 				'TABLE ' || _obj_name || E'\n(\n';
 
-			-- TODO: tablespace, collations, inheritance
+			select E'\nINHERITS (' || string_agg(inhparent::regclass::text, ', ' order by inhseqno) || ')'
+			into _inherits
+			from pg_inherits
+			where inhrelid = _obj_id;
 			
 			with tmp as -- union of constraints data
 			(
-				select ca.attnum, c.contype::text, c.conname, pg_get_constraintdef(c.oid, true) def
+				select ca.attnum, c.contype::text, c.conname, 
+					case 
+						when c.contype::text in ('p','u','x') then
+							-- place index parameters after first closing parenthesis
+							regexp_replace(pg_get_constraintdef(c.oid, true), '\)', ')' ||
+								coalesce(' WITH (' || btrim(i.reloptions::text, '{}') || ')', '') ||
+								case 
+									when coalesce(i.reltablespace, 0) = 0 then '' 
+									else E' USING INDEX TABLESPACE ' || (pg_identify_object('pg_tablespace'::regclass::oid, i.reltablespace, 0)).identity
+								end
+							)
+						else
+							pg_get_constraintdef(c.oid, true)
+					end def
 				from pg_catalog.pg_constraint c
+					left join pg_class i on c.conindid = i.oid
 					left join pg_catalog.pg_attribute ca on 
 						ca.attrelid = c.conrelid and 
 						ca.attnum = any(c.conkey) and
@@ -65,7 +83,7 @@ begin
 					array_agg(contype) ctypes, 
 					string_agg(
 						case
-							when contype in ('p', 'u') then regexp_replace(def, '\s+\([^)]+\)\s+', ' ')
+							when contype in ('p', 'u') then regexp_replace(def, '\s+\([^)]+\)(\s*)', '\1')
 							when contype = 'f' then regexp_replace(def, '.*\m(REFERENCES.+)', '\1')
 							else def
 						end, ' '
@@ -78,17 +96,26 @@ begin
 			to_show as  -- sets of per-column data of table definition to apply length-specific format + trailing constraints
 			(
 				select
-					a.attnum, 
+					a.attnum, a.attislocal,
 					col_description(_obj_id, a.attnum) description,
-					quote_ident(a.attname) || ' ' ||
-						case 
-							when s.oid is not null and a.atttypid = 'smallint'::regtype::oid then 'smallserial'
-							when s.oid is not null and a.atttypid = 'int'::regtype::oid then 'serial'
-							when s.oid is not null and a.atttypid = 'bigint'::regtype::oid then 'bigserial'
-							else pg_catalog.format_type(a.atttypid, a.atttypmod)
-						end ||
-						case when a.attnotnull and 'p'::"char" != all(c.ctypes) then ' NOT NULL' else '' end ||
-						coalesce(' ' || c.clist, '') definition
+					case when a.attislocal then '' else '-- inherited:  ' end ||
+						quote_ident(a.attname) || ' ' ||
+							case 
+								when s.oid is not null and a.atttypid = 'smallint'::regtype::oid then 'smallserial'
+								when s.oid is not null and a.atttypid = 'int'::regtype::oid then 'serial'
+								when s.oid is not null and a.atttypid = 'bigint'::regtype::oid then 'bigserial'
+								else pg_catalog.format_type(a.atttypid, a.atttypmod)
+							end ||
+							case
+								-- do we have a simpler way to detect default collation oid?
+								when a.attcollation = 0 or pg_describe_object('pg_collation'::regclass::oid, a.attcollation, 0) ilike '%default' then ''
+								else ' COLLATE ' || (pg_identify_object('pg_collation'::regclass::oid, a.attcollation, 0)).identity
+							end ||
+							case 
+								when a.attnotnull and 'p'::"char" != all(c.ctypes) then ' NOT NULL' 
+								else '' 
+							end ||
+							coalesce(' ' || c.clist, '') definition
 				from pg_catalog.pg_attribute a
 					left join c on a.attnum = c.attnum
 					left join pg_catalog.pg_attrdef d on a.attrelid = d.adrelid and a.attnum = d.adnum
@@ -101,7 +128,7 @@ begin
 					a.attrelid = _obj_id
 				union all
 				select
-					1000000 + row_number() over(),
+					1000000 + row_number() over(), true,
 					null,
 					def
 				from tmp
@@ -114,10 +141,18 @@ begin
 							-- comment above column definition
 							coalesce(E'\t\t--\u2193 ' || replace(description, E'\n', E'\n\t\t-- ') || E'\n', '') ||
 							-- column
-							E'\t' ||	definition || case when attnum = (select max(attnum) from to_show) then '' else ',' end
+							E'\t' ||	definition || 
+								case 
+									when attnum = (select max(attnum) from to_show where attislocal) then '' 
+									else ',' 
+								end
 						else
 							-- column
-							E'\t' ||	definition || case when attnum = (select max(attnum) from to_show) then '' else ',' end ||
+							E'\t' ||	definition ||
+								case 
+									when attnum = (select max(attnum) from to_show where attislocal) then '' 
+									else ',' 
+								end ||
 							-- comment to the right
 							coalesce(E'   -- ' || regexp_replace(description, '\s*\n\s*', ' ', 'g'), '')
 					end,
@@ -132,22 +167,29 @@ begin
 			end if;
 			
 			_create_object := _create_object || _tmp || E'\n)' ||
-				case when _t.reloptions is not null then
-					E'\nWITH\n(\n' || (
-						select string_agg(E'\t' || o, E',\n')
-						from unnest(_t.reloptions) o
-					) || E'\n)'
-					else '' end
-				|| E';\n\n';
+				coalesce(_inherits, '') ||
+				case 
+					when _t.reloptions is not null then
+						E'\nWITH\n(\n' || (
+							select string_agg(E'\t' || o, E',\n')
+							from unnest(_t.reloptions) o
+						) || E'\n)'
+					else ''
+				end || 
+				case 
+					when _t.reltablespace = 0 then '' 
+					else E'\nTABLESPACE ' || (pg_identify_object('pg_tablespace'::regclass::oid, _t.reltablespace, 0)).identity
+				end ||
+				E';\n\n';
 		end if;
 
 		-- prepend description		
 		select coalesce(
 				case 
-				when array_length(regexp_split_to_array(description, E'\n'), 1) > 1 then
-					E'/*\n' || description || E'\n*/\n'
-				else
-					'-- ' || replace(description, E'\n', E'\n-- ') || E'\n\n'
+					when array_length(regexp_split_to_array(description, E'\n'), 1) > 1 then
+						E'/*\n' || description || E'\n*/\n'
+					else
+						'-- ' || replace(description, E'\n', E'\n-- ') || E'\n\n'
 				end, ''
 			) || _create_object
 		into _create_object

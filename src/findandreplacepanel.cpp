@@ -9,6 +9,7 @@ FindAndReplacePanel::FindAndReplacePanel(QWidget *parent) :
     ui(new Ui::FindAndReplacePanel), _queryWidget(0)
 {
     ui->setupUi(this);
+    setContentsMargins(1, 1, 1, 1);
     setLayout(ui->gridLayout);
     QAction *actionEsc = new QAction(this);
     actionEsc->setShortcut(QKeySequence(Qt::Key_Escape));

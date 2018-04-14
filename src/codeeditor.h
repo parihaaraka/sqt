@@ -2,6 +2,26 @@
 #define CODEEDITOR_H
 
 #include <QPlainTextEdit>
+#include <QTextBlockUserData>
+
+class CodeBlockProperties;
+namespace Bookmarks
+{
+    CodeBlockProperties* next();
+    CodeBlockProperties* previous();
+}
+
+class QueryWidget;
+class CodeBlockProperties : public QTextBlockUserData
+{
+public:
+    CodeBlockProperties(QueryWidget *w);
+    ~CodeBlockProperties();
+    QueryWidget* queryWidget() const;
+private:
+    bool _isBookmarked = true;
+    QueryWidget *_w;
+};
 
 class CodeEditor : public QPlainTextEdit
 {

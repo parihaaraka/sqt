@@ -286,6 +286,11 @@ QTextDocument* QueryWidget::document() const
     return nullptr;
 }
 
+QWidget *QueryWidget::editor() const
+{
+    return _editor;
+}
+
 template<class T>
 T* initEditor(QWidget **textEdit, QueryWidget *parent)
 {
@@ -642,13 +647,30 @@ bool QueryWidget::eventFilter(QObject *object, QEvent *event)
 
         if (keyEvent->key() == Qt::Key_F1)
         {
-            QDesktopServices::openUrl(QUrl(keyEvent->modifiers().testFlag(Qt::ShiftModifier) ?
-                                               "https://www.postgresql.org/docs/current/static/functions.html":
-                                               "https://www.postgresql.org/docs/current/static/sql-commands.html"));
+            const QStringList &URIs =
+                    (QLocale::system().language() == QLocale::Russian ?
+                         QStringList {
+                         "https://postgrespro.ru/docs/postgresql/current/functions",
+                         "https://postgrespro.ru/docs/postgresql/current/sql-commands"
+                        } :
+                         QStringList {
+                         "https://www.postgresql.org/docs/current/static/functions.html",
+                         "https://www.postgresql.org/docs/current/static/sql-commands.html"
+                        }
+                    );
+            int ind = keyEvent->modifiers().testFlag(Qt::ShiftModifier) ? 0 : 1;
+            QDesktopServices::openUrl(QUrl(URIs[ind]));
             return true;
         }
 
         QTextCursor c = e->textCursor();
+
+        if (keyEvent->key() == Qt::Key_M && keyEvent->modifiers().testFlag(Qt::ControlModifier))
+        {
+            CodeBlockProperties *prop = static_cast<CodeBlockProperties*>(c.block().userData());
+            c.block().setUserData(prop ? nullptr : new CodeBlockProperties(this));
+        }
+
         if (keyEvent->key() == Qt::Key_Return)
         {
             // previous indentation

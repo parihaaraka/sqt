@@ -4,7 +4,6 @@
 #include <string.h>
 #include <stdio.h>
 #include <QDateTime>
-#include <QDebug>
 #include <QTextCodec>
 #include <QStringList>
 #include <QRegularExpression>
