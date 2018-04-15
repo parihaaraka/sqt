@@ -161,7 +161,7 @@ begin
 			into _tmp
 			from to_show;
 
-			if current_setting('default_with_oids', true)::bool is distinct from _t.relhasoids then
+			if current_setting('default_with_oids')::bool is distinct from _t.relhasoids then
 				_t.reloptions := coalesce(_t.reloptions, '{}'::text[]) ||
 					case when _t.relhasoids then 'OIDS' else 'OIDS=false' end;
 			end if;

@@ -118,12 +118,12 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
         {
             QTextOption textOption(edit->document()->defaultTextOption());
             // accurate tab size evaluation
-            // TODO move tab stop size to settings
+            // TODO move tab size to settings
             textOption.setTabStop(QFontMetrics(edit->font()).width(QString(3 * 100, ' ')) / 100.0);
             if (edit->objectName() != "editCS")
                 textOption.setWrapMode(QTextOption::NoWrap);
             edit->document()->setDefaultTextOption(textOption);
-            edit->setCursorWidth(2);
+            edit->setCursorWidth(edit->overwriteMode() ? 2*3 : 2);
         }
     }
 

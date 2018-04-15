@@ -56,6 +56,8 @@ bool PgConnection::open()
         return false;
     }
 
+    _dbmsScriptingID = dbmsName() + dbmsVersion();
+
     // _database is initially empty within 'connection' node
     // (used to display current context (no need to set it in async method)
     if (_database.isEmpty())
@@ -111,6 +113,7 @@ void PgConnection::openAsync() noexcept
 
 void PgConnection::close() noexcept
 {
+    _dbmsScriptingID.clear();
     clearResultsets();
     if (!_conn)
         return;

@@ -528,6 +528,7 @@ bool OdbcConnection::open()
                                 1024, &swStrLen, SQL_DRIVER_NOPROMPT);
     if (check(retcode, _hdbc, SQL_HANDLE_DBC))
     {
+        _dbmsScriptingID = dbmsName() + dbmsVersion() + "_odbc";
         emit setContext(context());
         return true;
     }
@@ -655,6 +656,7 @@ QString OdbcConnection::database() const noexcept
 
 void OdbcConnection::close() noexcept
 {
+    _dbmsScriptingID.clear();
     clearResultsets();
     if (!isOpened())
         return;

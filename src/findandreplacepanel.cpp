@@ -61,7 +61,10 @@ void FindAndReplacePanel::findTriggered()
 {
     QTextCursor c = find(_queryWidget->textCursor(), 0, sender() == ui->actionFind_previous ? Backward : Forward);
     if (!c.isNull())
+    {
         _queryWidget->setTextCursor(c);
+        _queryWidget->setFocus();
+    }
 }
 
 void FindAndReplacePanel::on_actionReplace_and_find_next_triggered()
@@ -69,7 +72,10 @@ void FindAndReplacePanel::on_actionReplace_and_find_next_triggered()
     on_btnReplace_clicked();
     QTextCursor c = find();
     if (!c.isNull())
+    {
         _queryWidget->setTextCursor(c);
+        _queryWidget->setFocus();
+    }
 }
 
 QTextCursor FindAndReplacePanel::find(const QTextCursor &cursor, bool *nextPass, FindMode mode)

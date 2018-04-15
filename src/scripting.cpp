@@ -15,40 +15,40 @@
 namespace Scripting
 {
 
-// key = dbms info, value = root scripts path
+// key = dbms_scripting_id, value = root scripts path
 QHash<QString, QString> _dbms_paths;
-// key = path/context/, value = { type, script }
+// key = dbms_scripting_id/context/, value = { type, script }
 QHash<QString, QHash<QString, Script>> _scripts;
+
+QString context2str(Context context)
+{
+    switch (context) {
+    case Context::Tree:
+        return "tree";
+    case Context::Content:
+        return "content";
+    case Context::Preview:
+        return "preview";
+    default: // root
+        return "";
+    }
+}
 
 QString dbmsScriptPath(DbConnection *con, Context context)
 {
-    if (!con)
+    if (!con || con->dbmsScriptingID().isEmpty())
         throw QObject::tr("db connection unavailable");
+    OdbcConnection *odbcConnection = qobject_cast<OdbcConnection*>(con);
 
-    // ensure the connection is opened
-    con->open();
-    QString dbmsID = con->dbmsName() + con->dbmsVersion();
-    QString contextFolder;
-    switch (context) {
-    case Context::Tree:
-        contextFolder = "tree/";
-        break;
-    case Context::Content:
-        contextFolder = "content/";
-        break;
-    case Context::Preview:
-        contextFolder = "preview/";
-        break;
-    default: // root
-        contextFolder = "";
-    }
+    QString contextFolder = context2str(context);
+    if (!contextFolder.isEmpty())
+        contextFolder += '/';
 
-    const auto it = _dbms_paths.find(dbmsID);
+    const auto it = _dbms_paths.find(con->dbmsScriptingID());
     if (it != _dbms_paths.end())
         return it.value() + contextFolder;
 
     QString startPath = QApplication::applicationDirPath() + "/scripts/";
-    OdbcConnection *odbcConnection = qobject_cast<OdbcConnection*>(con);
     if (odbcConnection)
         startPath += "odbc/";
 
@@ -80,7 +80,7 @@ QString dbmsScriptPath(DbConnection *con, Context context)
 
     if (!QFile::exists(startPath + contextFolder))
         throw QObject::tr("directory %1 is not available").arg(startPath + contextFolder);
-    _dbms_paths.insert(dbmsID, startPath);
+    _dbms_paths.insert(con->dbmsScriptingID(), startPath);
     return startPath + contextFolder;
 }
 
@@ -152,7 +152,7 @@ void refresh(DbConnection *connection, Context context)
         return;
 
     QString path = dbmsScriptPath(connection, context);
-    auto &bunch = _scripts[path];
+    auto &bunch = _scripts[connection->dbmsScriptingID() + context2str(context)];
     bunch.clear();
 
     QFileInfoList files = QDir(path).entryInfoList({"*.*"}, QDir::Files);
@@ -182,7 +182,7 @@ void refresh(DbConnection *connection, Context context)
 
 Script* getScript(DbConnection *connection, Context context, const QString &objectType)
 {
-    auto &bunch = _scripts[dbmsScriptPath(connection, context)];
+    auto &bunch = _scripts[connection->dbmsScriptingID() + context2str(context)];
     if (bunch.isEmpty())
         refresh(connection, context);
     const auto it = bunch.find(objectType);

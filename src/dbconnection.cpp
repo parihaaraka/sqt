@@ -13,12 +13,17 @@ DbConnection::~DbConnection()
     clearResultsets();
 }
 
+QString DbConnection::dbmsScriptingID() const noexcept
+{
+    return _dbmsScriptingID;
+}
+
 QString DbConnection::transactionStatus() const noexcept
 {
     return "";
 }
 
-void DbConnection::setDatabase(const QString &database)
+void DbConnection::setDatabase(const QString &database) noexcept
 {
     if (_database != database)
     {
@@ -33,12 +38,12 @@ void DbConnection::setConnectionString(const QString &connectionString)
     _connection_string = connectionString;
 }
 
-QString DbConnection::connectionString() const
+QString DbConnection::connectionString() const noexcept
 {
     return _connection_string;
 }
 
-QueryState DbConnection::queryState() const
+QueryState DbConnection::queryState() const noexcept
 {
     return _query_state;
 }
@@ -67,7 +72,7 @@ void DbConnection::setQueryState(QueryState state)
     }
 }
 
-QString DbConnection::elapsed()
+QString DbConnection::elapsed() const noexcept
 {
     int elapsed_ms = _elapsed_ms;
     int precision = 3;

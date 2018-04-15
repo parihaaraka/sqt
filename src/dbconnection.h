@@ -55,6 +55,7 @@ public:
     virtual QString dbmsInfo() const noexcept = 0;
     virtual QString dbmsName() const noexcept = 0;
     virtual QString dbmsVersion() const noexcept = 0;
+    virtual QString dbmsScriptingID() const noexcept;
     virtual QString transactionStatus() const noexcept;
     virtual int dbmsComparableVersion() = 0;
     /*!
@@ -77,11 +78,11 @@ public:
      */
     virtual bool execute(const QString &query, const QVector<QVariant> *params = nullptr) = 0;
 
-    void setDatabase(const QString &database);
+    void setDatabase(const QString &database) noexcept;
     void setConnectionString(const QString &connectionString);
-    QString connectionString() const;
-    QueryState queryState() const;
-    QString elapsed();
+    QString connectionString() const noexcept;
+    QueryState queryState() const noexcept;
+    QString elapsed() const noexcept;
     QList<DataTable*> _resultsets;
 
 public slots: // to use from QJSEngine
@@ -92,7 +93,7 @@ signals:
     void message(const QString &msg) const;
     void error(const QString &msg) const;
     void fetched(DataTable *table);
-    void setContext(const QString &context) const;
+    void setContext(const QString &context);
     void queryStateChanged();
 
 protected:
@@ -100,7 +101,9 @@ protected:
     QString _database, _connection_string;
     QTime _timer;
     QMutex _resultsetsGuard; // TODO needs refactoring
+    QString _dbmsScriptingID;
     void setQueryState(QueryState queryState);
+
 private:
     int _elapsed_ms = 0;
 };

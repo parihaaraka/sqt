@@ -9,7 +9,7 @@ int main(int argc, char *argv[])
     a.setWindowIcon(QIcon(":/sqt.ico"));
     QCoreApplication::setOrganizationName("parihaaraka");
     QCoreApplication::setApplicationName("sqt");
-    QCoreApplication::setApplicationVersion("0.3.0");
+    QCoreApplication::setApplicationVersion("0.3.1");
     setlocale(LC_NUMERIC, "C");
 
     // TODO first start eveluation only
