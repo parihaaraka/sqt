@@ -35,6 +35,11 @@ public:
     virtual void executeAsync(const QString &query, const QVector<QVariant> *params = nullptr) noexcept override;
     virtual bool execute(const QString &query, const QVector<QVariant> *params = nullptr) override;
 
+    virtual QString escapeIdentifier(const QString &identifier) override;
+    virtual QPair<QString,int> typeInfo(int sqlType) override;
+
+    void clarifyTableStructure(DataTable &table);
+
 private:
     enum class async_stage
     {
@@ -56,6 +61,15 @@ private:
     int _temp_result_rowcount;
     CopyContext _copy_context;
     std::vector<char> _copy_in_buf;
+    /*!
+    * \brief <oid, <name, element oid>>
+    *
+    * Although pg's Oid is unsigned int, it's small values let us use signed int to
+    * support both ms sql and postgresql. Or may be we should not spare bits and switch
+    * to int64_t? Then it's necessary to change sqlType in DbConnection interface
+    * (and fix DataTable).
+    */
+    QHash<int, QPair<QString, int>> _data_types; ///< non-static, not version-specific storage because of db-level user types
 
     virtual void openAsync() noexcept;
     bool isIdle() const noexcept;

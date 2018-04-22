@@ -61,6 +61,10 @@ public:
     /*!
      * \brief determine if a value of sqlType must be quoted
      * \param sqlType provider-specific data type identity
+     *
+     * Although pg's Oid is unsigned int, it's small values let us use signed int to
+     * support both ms sql and postgresql. Or may be we should not spare bits and switch
+     * to int64_t?
      */
     virtual bool isUnquotedType(int sqlType) const noexcept = 0;
     /*!
@@ -78,6 +82,15 @@ public:
      */
     virtual bool execute(const QString &query, const QVector<QVariant> *params = nullptr) = 0;
 
+    virtual QString escapeIdentifier(const QString &identifier);
+
+    /*!
+     * \brief name of internal dbms type and its element internal id (if array)
+     * \param sqlType dbms type id
+     * \return name, element id (-1 if not an array)
+     */
+    virtual QPair<QString, int> typeInfo(int sqlType);
+
     void setDatabase(const QString &database) noexcept;
     void setConnectionString(const QString &connectionString);
     QString connectionString() const noexcept;
@@ -93,7 +106,6 @@ signals:
     void message(const QString &msg) const;
     void error(const QString &msg) const;
     void fetched(DataTable *table);
-    void setContext(const QString &context);
     void queryStateChanged();
 
 protected:

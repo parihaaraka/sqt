@@ -36,7 +36,7 @@ QString context2str(Context context)
 
 QString dbmsScriptPath(DbConnection *con, Context context)
 {
-    if (!con || con->dbmsScriptingID().isEmpty())
+    if (!con || (con->dbmsScriptingID().isEmpty() && !con->open()))
         throw QObject::tr("db connection unavailable");
     OdbcConnection *odbcConnection = qobject_cast<OdbcConnection*>(con);
 
@@ -156,7 +156,7 @@ void refresh(DbConnection *connection, Context context)
     bunch.clear();
 
     QFileInfoList files = QDir(path).entryInfoList({"*.*"}, QDir::Files);
-    for (auto &f : files)
+    for (const auto &f : files)
     {
         QString suffix = f.suffix().toLower();
         if (suffix != "sql" && suffix != "qs")

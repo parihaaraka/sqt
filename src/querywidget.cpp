@@ -66,9 +66,40 @@ QueryWidget::QueryWidget(DbConnection *connection, QWidget *parent) :
         setSizes(QList<int>() << 1 << 0);
         setOrientation(Qt::Vertical);
 
-        connect(_connection.get(), &DbConnection::fetched, this, &QueryWidget::fetched);
-        connect(_connection.get(), &DbConnection::message, this, &QueryWidget::onMessage);
-        connect(_connection.get(), &DbConnection::error, this, &QueryWidget::onError);
+        connect(_connection.get(), &DbConnection::fetched, this, &QueryWidget::fetched, Qt::QueuedConnection);
+        connect(_connection.get(), &DbConnection::message, this, &QueryWidget::onMessage, Qt::QueuedConnection);
+        connect(_connection.get(), &DbConnection::error, this, &QueryWidget::onError, Qt::QueuedConnection);
+        connect(_connection.get(), &DbConnection::queryStateChanged, this, [this]() {
+            if (_connection->queryState() == QueryState::Inactive)
+            {
+                onMessage(tr("done in %1").arg(_connection->elapsed()));
+
+                // print all resultsets structure ready to be used in 'create function returning table(...)'
+                QColor resultsetStructureColor = _messages->palette().text().color();
+                resultsetStructureColor.setAlphaF(0.6);
+                for (const auto res: _connection->_resultsets)
+                {
+                    QString structure;
+                    for (int i = 0; i < res->columnCount(); ++i)
+                    {
+                        auto &c = res->getColumn(i);
+                        QString typeDescr = c.type();
+
+                        if (i)
+                            structure += ", ";
+                        structure += _connection->escapeIdentifier(c.name()) + ' ' + typeDescr;
+                    }
+                    log('(' + structure + ')', resultsetStructureColor);
+                }
+
+                // scroll down and left
+                auto cursor = _messages->textCursor();
+                cursor.movePosition(QTextCursor::End);
+                cursor.movePosition(QTextCursor::StartOfLine);
+                _messages->setTextCursor(cursor);
+            }
+        }, Qt::QueuedConnection);
+
         _connection->open();
     }
 
@@ -312,7 +343,6 @@ T* initEditor(QWidget **textEdit, QueryWidget *parent)
 
     if (MainWindow *mainWindow = qobject_cast<MainWindow*>(parent->window()))
         QObject::connect(editor, &T::cursorPositionChanged, mainWindow, &MainWindow::refreshCursorInfo);
-    //connect(w->queryEditor(), &QPlainTextEdit::selectionChanged, this, &MainWindow::refreshCursorInfo);
 
     auto l = parent->widget(0)->layout();
     if (*textEdit)
@@ -327,16 +357,13 @@ T* initEditor(QWidget **textEdit, QueryWidget *parent)
 void QueryWidget::setPlainText(const QString &text)
 {
     CodeEditor *editor = initEditor<CodeEditor>(&_editor, this);
-    //QPlainTextEdit *editor = initEditor<QPlainTextEdit>(&_editor, this);
     editor->setPlainText(text);
-    //editor->document()->setModified(false);
 }
 
 void QueryWidget::setHtml(const QString &html)
 {
     QTextEdit *editor = initEditor<QTextEdit>(&_editor, this);
     editor->setHtml(html);
-    //editor->document()->setModified(false);
 }
 
 void QueryWidget::log(const QString &text, QColor color)
@@ -375,7 +402,6 @@ void QueryWidget::fetched(DataTable *table)
         res_tw->setCurrentIndex(0);
     }
 
-    //DbConnection *con = qobject_cast<DbConnection*>(sender());
     QString tname = QString::number(std::intptr_t(table));
     QTableView *tv = nullptr;
     TableModel *m = nullptr;
@@ -384,6 +410,7 @@ void QueryWidget::fetched(DataTable *table)
     if (!tv || tv->objectName() != tname)
     {
         tv = new QTableView(_resSplitter);
+        tv->horizontalHeader()->viewport()->setMouseTracking(true);
         tv->setObjectName(tname);
         tv->verticalHeader()->setDefaultSectionSize(tv->verticalHeader()->minimumSectionSize());
 
@@ -406,7 +433,6 @@ void QueryWidget::fetched(DataTable *table)
         m = qobject_cast<TableModel*>(tv->model());
         m->take(table);
     }
-    //QCoreApplication::processEvents();
 }
 
 void QueryWidget::clearResult()
@@ -641,7 +667,6 @@ bool QueryWidget::eventFilter(QObject *object, QEvent *event)
         if (keyEvent->key() == Qt::Key_Insert && keyEvent->modifiers() == Qt::NoModifier)
         {
             e->setOverwriteMode(!e->overwriteMode());
-            e->setCursorWidth(e->overwriteMode() ? e->cursorWidth() * 3 : e->cursorWidth() / 3);
             return true;
         }
 

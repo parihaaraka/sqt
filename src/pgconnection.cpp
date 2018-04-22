@@ -405,18 +405,24 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
         return;
     }
 
+    QMutexLocker lk(&_resultsetsGuard);
+    clearResultsets();
+    lk.unlock();
+
     // Massively data fetching query freezes ui, so we want to run it in
     // separate thread. Asynchronous libpq API is used for the sake of
     // opportunities it provides.
-    QThread* thread = new QThread(); // man: The object cannot be moved if it has a parent.
-    moveToThread(thread);
+    QThread* thread = new QThread();
     auto state_handler_connection = std::make_shared<QMetaObject::Connection>();
     connect(thread, &QThread::started, [this, run_query, thread, state_handler_connection]() {
-
         // stop event loop on inactive query state
         *state_handler_connection = connect(this, &PgConnection::queryStateChanged, [this, thread]() {
             if (_query_state == QueryState::Inactive)
+            {
+                for (auto res: _resultsets)
+                    clarifyTableStructure(*res);
                 thread->quit();
+            }
         });
 
         run_query();
@@ -428,17 +434,13 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
             thread->exit();
     });
     connect(thread, &QThread::finished, [this, thread, state_handler_connection]() {
+        thread->deleteLater();
         // disconnect queryStateChanged handler
         disconnect(*state_handler_connection);
 
         // autorollback
         if (PQtransactionStatus(_conn) == PQTRANS_INERROR)
             PQclear(PQexec(_conn, "rollback"));
-
-        thread->deleteLater();
-        moveToThread(QApplication::instance()->thread());
-        emit message(tr("done in %1").arg(elapsed()));
-        emit setContext(context());
     });
     _timer.start();
     thread->start();
@@ -529,6 +531,98 @@ bool PgConnection::execute(const QString &query, const QVector<QVariant> *params
     while (true);
 
     return true;
+}
+
+QString PgConnection::escapeIdentifier(const QString &identifier)
+{
+    QByteArray tmp = identifier.toUtf8();
+    std::unique_ptr<char, void(*)(void*)> res(
+                PQescapeIdentifier(_conn, tmp.data(), tmp.size()),
+                PQfreemem);
+    return QString::fromUtf8(res.get());
+}
+
+QPair<QString,int> PgConnection::typeInfo(int sqlType)
+{
+    auto it = _data_types.constFind(sqlType);
+    if (it != _data_types.constEnd())
+        return it.value();
+
+    QPair<QString,int> tInfo("unknown", -1);
+    std::unique_ptr<DbConnection> cn{clone()};
+    QVariantList params;
+    QString query =
+            "select t.oid, t.typname, el.oid "
+            "from pg_type t "
+            "   left join pg_type el on t.typelem = el.oid ";
+    if (!_data_types.empty())
+    {
+        query += "where t.oid = $1::oid";
+        params.append(QVariant(sqlType));
+    }
+
+    if (DataTable *res = cn->execute(query, params))
+    {
+        for (int i = 0; i < res->rowCount(); ++i)
+        {
+            auto r = res->getRow(i);
+            _data_types[r[0].toInt()] = {
+                    r[1].toString(),
+                    r[2].isValid() ? r[2].toInt() : -1
+                };
+            if (sqlType == r[0].toInt())
+                tInfo = _data_types[sqlType];
+        }
+    }
+    return tInfo;
+}
+
+void PgConnection::clarifyTableStructure(DataTable &table)
+{
+    for (int i = 0; i < table.columnCount(); ++i)
+    {
+        DataColumn &c = table.getColumn(i);
+        int16_t dec_digits = -1;
+        int len = -1;
+        int fmod = c.modifier();
+
+        auto ti = typeInfo(c.sqlType());
+        int sqlType = (ti.second > 0 ? ti.second : c.sqlType());
+
+        if (fmod >= 0)
+        {
+            switch (sqlType) {
+            case NUMERICOID:
+                len = (fmod >> 16);
+                dec_digits = ((fmod - VARHDRSZ) & 0xffff);
+                break;
+            case BITOID:
+            case VARBITOID:
+                len = fmod;
+                fmod = -1;
+                break;
+            default:
+                if (fmod >= VARHDRSZ) { // if not?
+                    len = fmod - VARHDRSZ;
+                    fmod = -1;
+                }
+            }
+        }
+
+        QString typeDescr = ti.first.startsWith('_') ? ti.first.mid(1) : ti.first;
+        if (c.modifier() >= 0)
+            typeDescr += '(' +
+                    QString::number(c.length()) +
+                    (c.scale() > 0 ? ',' + QString::number(c.scale()) : "") +
+                    ')';
+        else if (typeDescr == "char")
+            typeDescr = "\"char\"";
+
+        if (ti.second > 0 && ti.first[0] == '_')
+            typeDescr += "[]";
+
+        c.clarifyType(typeDescr, len, dec_digits, ti.second);
+    }
 }
 
 bool PgConnection::isIdle() const noexcept
@@ -949,24 +1043,17 @@ int PgConnection::appendRawDataToTable(DataTable &dst, PGresult *src) noexcept
     {
         for (int i = 0; i < src_columns_count; ++i)
         {
-            int16_t dec_digits = -1;
             int data_type = PQftype(src, i);
-            if (data_type == NUMERICOID)
-            {
-                int pgfmod = PQfmod(src, i);
-                if (pgfmod != -1)
-                    dec_digits = ((pgfmod - VARHDRSZ) & 0xffff);
-            }
-            dst.addColumn(
-                        QString::fromLocal8Bit(PQfname(src, i)),
-                        sqlTypeToVariant(data_type),
-                        data_type,
-                        PQfsize(src, i),
-                        dec_digits,
-                        1, //nullable, no way to get column-level info
-                        isNumericType(data_type) ?
-                            Qt::AlignRight :
-                            Qt::AlignLeft);
+            int fmod = PQfmod(src, i);
+            DataColumn *c = new DataColumn(QString::fromUtf8(PQfname(src, i)),
+                                           sqlTypeToVariant(data_type),
+                                           data_type,
+                                           fmod,
+                                           1, //nullable, no way to get column-level info
+                                           isNumericType(data_type) ?
+                                               Qt::AlignRight :
+                                               Qt::AlignLeft);
+            dst.addColumn(c);
         }
         dst_columns_count = src_columns_count;
     }

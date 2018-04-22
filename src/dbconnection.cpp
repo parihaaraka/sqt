@@ -23,6 +23,18 @@ QString DbConnection::transactionStatus() const noexcept
     return "";
 }
 
+QString DbConnection::escapeIdentifier(const QString &identifier)
+{
+    // TODO
+    return identifier;
+}
+
+QPair<QString, int> DbConnection::typeInfo(int sqlType)
+{
+    // TODO
+    return {"unknown", -1};
+}
+
 void DbConnection::setDatabase(const QString &database) noexcept
 {
     if (_database != database)

@@ -301,9 +301,6 @@ void MainWindow::on_objectsView_activated(const QModelIndex &index)
         }
 
         std::shared_ptr<DbConnection> con = DbConnectionFactory::createConnection(QString::number(std::intptr_t(obj)), cs);
-        //connect(con.get(), &DbConnection::setContext, this, &MainWindow::refreshContextInfo, Qt::UniqueConnection);
-        //QString messages;
-        //QMetaObject::Connection errConnection =
         connect(con.get(), &DbConnection::error, this, &MainWindow::onError);
         connect(con.get(), &DbConnection::message, this, &MainWindow::onMessage);
         if (!con->open())
@@ -545,17 +542,6 @@ bool MainWindow::closeTab(int index)
 
 void MainWindow::on_actionNew_triggered()
 {
-/*
-    QueryWidget *w = new QueryWidget(QString(), ui->tabWidget);
-    int ind = ui->tabWidget->addTab(w, QString());
-    ui->tabWidget->setCurrentIndex(ind);
-    w->queryEditor()->installEventFilter(this);
-    w->queryEditor()->document()->setModified(false);
-    connect(w->queryEditor(), &QTextEdit::cursorPositionChanged, this, &MainWindow::refreshCursorInfo);
-    connect(w->queryEditor(), &QTextEdit::selectionChanged, this, &MainWindow::refreshCursorInfo);
-    connect(w, &QueryWidget::sqlChanged, this, &MainWindow::sqlChanged);
-*/
-
     QModelIndex srcIndex = static_cast<QSortFilterProxyModel*>(ui->objectsView->model())->
             mapToSource(ui->objectsView->currentIndex());
     std::shared_ptr<DbConnection> con = _objectsModel->dbConnection(srcIndex);
@@ -571,8 +557,12 @@ void MainWindow::on_actionNew_triggered()
     {
         DbConnection *cn = con->clone();
         w = new QueryWidget(cn, ui->tabWidget);
-        connect(cn, &DbConnection::setContext, this, &MainWindow::refreshContextInfo);
-        connect(cn, &DbConnection::queryStateChanged, this, &MainWindow::refreshActions);
+        connect(cn, &DbConnection::queryStateChanged, this, [this, cn, w]() {
+            refreshActions();
+            if (cn->queryState() == QueryState::Inactive && ui->tabWidget->currentWidget() == w)
+                refreshContextInfo();
+        }, Qt::QueuedConnection);
+
     }
     // create editor without query execution ability
     // (broken by previous opened connection check)
@@ -1113,7 +1103,7 @@ void MainWindow::onActionOpenFile()
         delete a;
 
         QList<RecentFile> itemsToSave;
-        for (QAction *a: ui->menuOpen_recent->actions())
+        for (const QAction *a: ui->menuOpen_recent->actions())
             itemsToSave.append({a->text(), a->data().toString()});
 
         QSettings settings;

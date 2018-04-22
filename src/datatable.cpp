@@ -149,9 +149,22 @@ QVariant& DataRow::operator [](int index)
     return _row[index];
 }
 
-DataColumn::DataColumn(QString col_name, QMetaType::Type type, int sql_type, int size, int16_t dec_digits, int8_t nullable_desc, Qt::AlignmentFlag hAlignment) :
-    _col_name(col_name), _var_type(type), _sql_type(sql_type), _col_size(size), _dec_digits(dec_digits), _nullable_desc(nullable_desc), _hAlignment(hAlignment)
+DataColumn::DataColumn(const QString &name, QMetaType::Type type, int sqlType, int length, int16_t decDigits, int8_t nullableDesc, Qt::AlignmentFlag hAlignment, int arrayElementType) :
+    _name(name), _varType(type), _sqlType(sqlType), _length(length), _decDigits(decDigits), _nullableDesc(nullableDesc), _hAlignment(hAlignment), _arrayElementType(arrayElementType)
 {
+}
+
+DataColumn::DataColumn(const QString &name, QMetaType::Type type, int sqlType, int modifier, int8_t nullableDesc, Qt::AlignmentFlag hAlignment) :
+    _name(name), _varType(type), _sqlType(sqlType), _modifier(modifier), _nullableDesc(nullableDesc), _hAlignment(hAlignment)
+{
+}
+
+void DataColumn::clarifyType(const QString &type, int length, int16_t decDigits, int arrayElementType)
+{
+    _type = type;
+    _length = length;
+    _decDigits = decDigits;
+    _arrayElementType = arrayElementType;
 }
 
 

@@ -8,24 +8,38 @@
 #include <QMutex>
 
 class DataTable;
-
+// TODO
+// rethink this mostly legacy code
 class DataColumn
 {
 public:
     DataColumn(const DataColumn &column) = default;
-    DataColumn(QString _col_name, QMetaType::Type type, int sql_type, int size, int16_t _dec_digits, int8_t _nullable_desc, Qt::AlignmentFlag hAlignment);
-    QMetaType::Type variantType() { return _var_type; }
-    int sqlType() { return _sql_type; }
-    QString name() { return _col_name; }
-    Qt::AlignmentFlag hAlignment() { return _hAlignment; }
+    DataColumn(const QString &name, QMetaType::Type type, int sqlType, int length, int16_t decDigits, int8_t nullableDesc, Qt::AlignmentFlag hAlignment, int arrayElementType = -1);
+
+    // ctor for postgres only for delayed column type specification (it's about arrays)
+    DataColumn(const QString &name, QMetaType::Type type, int sqlType, int modifier, int8_t nullableDesc, Qt::AlignmentFlag hAlignment);
+    void clarifyType(const QString &type, int length = -1, int16_t decDigits = -1, int arrayElementType = -1);
+
+    QMetaType::Type variantType() const noexcept { return _varType; }
+    int sqlType() const noexcept { return _sqlType; }
+    int arrayElementType() const noexcept { return _arrayElementType; }
+    QString name() const noexcept { return _name; }
+    Qt::AlignmentFlag hAlignment() const noexcept { return _hAlignment; }
+    int length() const noexcept { return _length; }
+    int16_t scale() const noexcept { return _decDigits; }
+    int modifier() const noexcept { return _modifier; }
+    QString type() const noexcept { return _type; }
+
 private:
-    QString _col_name;
-    QMetaType::Type _var_type;
-    int _sql_type;
-    int _col_size;
-    int16_t _dec_digits;
-    int8_t _nullable_desc;
-    Qt::AlignmentFlag _hAlignment;
+    QString _name, _type;
+    QMetaType::Type _varType;
+    int _sqlType;
+    int _length = -1;
+    int _modifier = -1;
+    int16_t _decDigits = -1;
+    int8_t _nullableDesc = 1;
+    Qt::AlignmentFlag _hAlignment = Qt::AlignLeft;
+    int _arrayElementType = -1;
 };
 
 class DataRow

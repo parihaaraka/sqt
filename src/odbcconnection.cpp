@@ -493,17 +493,13 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
 
 void OdbcConnection::executeAsync(const QString &query, const QVector<QVariant> *params) noexcept
 {
-    QThread* thread = new QThread(); // man: The object cannot be moved if it has a parent.
-    moveToThread(thread);
+    QThread* thread = new QThread();
     connect(thread, &QThread::started, [this, query, thread, params]() {
         execute(query, params);
         thread->quit();
     });
     connect(thread, &QThread::finished, [this, thread]() {
         thread->deleteLater();
-        moveToThread(QApplication::instance()->thread());
-        emit message(tr("done (%1)").arg(elapsed()));
-        emit setContext(context());
     });
     thread->start();
 }
@@ -529,7 +525,6 @@ bool OdbcConnection::open()
     if (check(retcode, _hdbc, SQL_HANDLE_DBC))
     {
         _dbmsScriptingID = dbmsName() + dbmsVersion() + "_odbc";
-        emit setContext(context());
         return true;
     }
     return false;

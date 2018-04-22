@@ -90,11 +90,16 @@ Qt::ItemFlags TableModel::flags(const QModelIndex &index) const
 
 QVariant TableModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
-    if (role != Qt::DisplayRole)
-        return QVariant();
     if (orientation == Qt::Horizontal)
-        return _table->getColumn(section).name();
-    return QString::number(section + 1);
+    {
+        if (role == Qt::ToolTipRole)
+        {
+            QString colType = _table->getColumn(section).type();
+            return (colType.isEmpty() ? QVariant() : colType);
+        }
+        return (role == Qt::DisplayRole ? _table->getColumn(section).name() : QVariant());
+    }
+    return (role == Qt::DisplayRole ? QString::number(section + 1) : QVariant());
 }
 
 void TableModel::take(DataTable *srcTable)
