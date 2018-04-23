@@ -416,6 +416,10 @@ void MainWindow::on_actionRefresh_triggered()
 
 void MainWindow::on_actionChange_sort_mode_triggered()
 {
+    QWidget *fw = QApplication::focusWidget();
+    if (fw != ui->objectsView)
+        return;
+
     QModelIndex i = ui->objectsView->selectionModel()->currentIndex();
     if (!i.isValid())
         return;
@@ -514,6 +518,14 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event)
         if (object == ui->objectsView)
             objectsViewAdjustColumnWidth(QModelIndex());
         break;
+    case QEvent::FocusIn:
+        if (object->isWidgetType() && (object == ui->objectsView || !qobject_cast<QMenu*>(object)))
+        {
+            refreshActions();
+            refreshContextInfo();
+            refreshCursorInfo();
+        }
+        break;
     default: ; // to avoid a bunch of warnigs
     }
     return QObject::eventFilter(object, event);
@@ -534,7 +546,6 @@ bool MainWindow::closeTab(int index)
 
         ui->tabWidget->removeTab(index);
         delete w;
-        refreshContextInfo();
         return true;
     }
     return false;
@@ -752,8 +763,8 @@ void MainWindow::refreshActions()
     else
         ui->actionExecute_query->setShortcuts(QKeySequence::Refresh);
 
-    ui->actionRefresh->setEnabled(ui->objectsView->hasFocus());
-    ui->actionChange_sort_mode->setEnabled(ui->actionRefresh->isEnabled());
+    ui->actionRefresh->setEnabled(fw == ui->objectsView);
+    ui->actionChange_sort_mode->setEnabled(fw == ui->objectsView);
 
     QueryWidget *qw = (ui->tabWidget->isHidden() ? _objectScript : w);
     foreach(QAction *action, ui->menuEdit->actions())
@@ -1086,10 +1097,7 @@ void MainWindow::on_tabWidget_currentChanged(int index)
     Q_UNUSED(index)
     QueryWidget *q = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
     _frPanel->setEditor(q);
-    refreshActions();
     refreshConnectionState();
-    refreshContextInfo();
-    refreshCursorInfo();
 }
 
 void MainWindow::onActionOpenFile()

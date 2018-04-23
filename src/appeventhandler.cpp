@@ -59,8 +59,12 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
             }
             else if (keyEvent->key() == Qt::Key_F6) // sum numerical values of selected cells
             {
+                // lets try to sum big numerics precisely
+                double sumDouble = 0;
+                qlonglong sumInt = 0;
+                qlonglong sumFrac = 0;
+                int maxScale = 0;
                 bool ok;
-                double sum = 0;
                 int count = 0;
                 QString res;
                 QModelIndexList il = tv->selectionModel()->selectedIndexes();
@@ -69,16 +73,64 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                     double val = i.data(Qt::EditRole).toDouble(&ok);
                     if (ok)
                     {
-                        sum += val;
-                        count++;
-                        res += (res.isEmpty() ? "" : " + ") + i.data(Qt::EditRole).toString();
+                        QString tmp = i.data(Qt::EditRole).toString();
+                        int dotPos = tmp.indexOf('.');
+                        if (dotPos == -1 && val != static_cast<qlonglong>(val)) // floating point exponential form
+                        {
+                            sumDouble += val;
+                            maxScale = std::max(maxScale, 6);
+                        }
+                        else if (dotPos == -1) // integer
+                            sumInt += val;
+                        else    // decimal
+                        {
+                            sumInt += tmp.mid(0, dotPos).toLongLong();
+                            maxScale = std::max(maxScale, tmp.length() - dotPos - 1);
+                            qlonglong frac = (tmp + "000000000000000000").mid(dotPos + 1, 18).toLongLong();
+                            if (val < 0)
+                            {
+                                sumFrac -= frac;
+                                if (sumFrac < 0)
+                                {
+                                    --sumInt;
+                                    sumFrac = 1000000000000000000LL + sumFrac;
+                                }
+                            }
+                            else
+                            {
+                                sumFrac += frac;
+                                if (sumFrac >= 1000000000000000000LL)
+                                {
+                                    ++sumInt;
+                                    sumFrac = sumFrac - 1000000000000000000LL;
+                                }
+                            }
+                        }
+
+                        ++count;
+                        res += (res.isEmpty() ? "" : " + ") + tmp;
                     }
                 }
+
+                QString totalAmount;
+                QLocale locale;
+                if (sumDouble != 0) //if there was a floating point, cast result to double
+                {
+                    double sum = sumDouble + sumInt + sumFrac/1000000000000000000.0;
+                    totalAmount = locale.toString(sum, 'f', maxScale);
+                }
+                else
+                {
+                    totalAmount = locale.toString(sumInt);
+                    if (maxScale)
+                        totalAmount += locale.decimalPoint() + QString::number(sumFrac).mid(0, maxScale);
+                }
+
                 if (count)
                     QApplication::clipboard()->setText(res);
                 QMainWindow *w = qobject_cast<QMainWindow*>(QApplication::activeWindow());
                 if (w && w->statusBar())
-                    w->statusBar()->showMessage(QString("%1 (%2 cells)").arg(QLocale().toString(sum, 'f', 2)).arg(count), 1000*15);
+                    w->statusBar()->showMessage(QString("%1 (%2 cells)").arg(totalAmount).arg(count), 1000*15);
                 return true;
             }
         }
@@ -126,6 +178,12 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
             edit->setCursorWidth(2);
         }
     }
+    else if (event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut)
+    {
+        MainWindow *w = qobject_cast<MainWindow*>(QApplication::activeWindow());
+        if (w)
+            return w->eventFilter(obj, event); // handle actions state if needed
+    }
 
-    return QObject::eventFilter(obj, event);
+    return false;
 }

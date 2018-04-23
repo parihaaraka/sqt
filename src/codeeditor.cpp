@@ -78,7 +78,7 @@ void CodeEditor::leftSideBarPaintEvent(QPaintEvent *event)
                              _leftSideBar->width() - RIGHT_MARGIN,
                              fontMetrics().height(),
                              Qt::AlignRight,
-                             QString::number(blockNumber + 1));
+                             QString::number(blockNumber ? blockNumber + 1 : blockCount()));
             CodeBlockProperties *prop = static_cast<CodeBlockProperties*>(block.userData());
             if (prop)
             {

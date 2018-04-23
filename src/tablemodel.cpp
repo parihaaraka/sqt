@@ -99,7 +99,17 @@ QVariant TableModel::headerData(int section, Qt::Orientation orientation, int ro
         }
         return (role == Qt::DisplayRole ? _table->getColumn(section).name() : QVariant());
     }
-    return (role == Qt::DisplayRole ? QString::number(section + 1) : QVariant());
+
+    if (role == Qt::TextAlignmentRole)
+        return Qt::AlignRight;
+
+    // first row header cotains total numer of rows
+    if (role == Qt::ToolTipRole && !section)
+        return tr("total number of rows");
+    if (role == Qt::DisplayRole)
+        return QString::number(section ? section + 1: rowCount());
+
+    return QVariant();
 }
 
 void TableModel::take(DataTable *srcTable)

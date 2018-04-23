@@ -34,8 +34,8 @@ public:
     void activateEditorBlock(CodeBlockProperties *blockProperties);
 	
 protected:
-    void closeEvent(QCloseEvent *event);
-    void changeEvent(QEvent *e);
+    virtual void closeEvent(QCloseEvent *event) override;
+    virtual void changeEvent(QEvent *e) override;
 	
 private slots:
     void on_addConnectionAction_triggered();
@@ -73,7 +73,6 @@ private:
     QueryWidget* currentQueryWidget();
     QueryWidget* _objectScript;
     bool closeTab(int index);
-    bool eventFilter(QObject *object, QEvent *event);
     bool ensureSaved(int index, bool ask_name = false, bool forceWarning = false);
     FindAndReplacePanel *_frPanel;
     QTimer *_hideTimer;
@@ -85,6 +84,7 @@ private:
 public slots:
     QVariant current(const QString &nodeType, const QString &field);
     QVariantList selected(const QString &nodeType, const QString &field);
+    virtual bool eventFilter(QObject *object, QEvent *event) override;
 
     void refreshActions();
     void refreshContextInfo();

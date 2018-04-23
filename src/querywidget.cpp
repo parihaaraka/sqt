@@ -51,7 +51,6 @@ QueryWidget::QueryWidget(DbConnection *connection, QWidget *parent) :
     _editorLayout->setMargin(0);
     QWidget *w = new QWidget(this);
     w->setLayout(_editorLayout);
-
     addWidget(w);
 
     if (_connection)
@@ -655,7 +654,6 @@ QList<QTextEdit::ExtraSelection> QueryWidget::matchBracket(const QTextCursor &se
 
 bool QueryWidget::eventFilter(QObject *object, QEvent *event)
 {
-    Q_UNUSED(object)
     switch (event->type())
     {
     case QEvent::KeyPress:
@@ -841,20 +839,8 @@ bool QueryWidget::eventFilter(QObject *object, QEvent *event)
         }
         break;
     }
-    case QEvent::FocusIn:
-    case QEvent::FocusOut:
-    case QEvent::Hide:
-        // change environment on tab change ?
-        if (MainWindow *mainWindow = qobject_cast<MainWindow*>(this->window()))
-        {
-            mainWindow->refreshActions();
-            mainWindow->refreshContextInfo();
-            mainWindow->refreshCursorInfo();
-        }
-        break;
-
     default:
         break;
     }
-    return object->eventFilter(object, event);
+    return QObject::eventFilter(object, event);
 }
