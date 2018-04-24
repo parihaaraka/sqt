@@ -10,8 +10,8 @@
 PgConnection::PgConnection() :
     DbConnection(), _readNotifier(nullptr), _writeNotifier(nullptr), _temp_result(nullptr), _temp_result_rowcount(0)
 {
-    connect(&_copy_context, &CopyContext::error, this, &PgConnection::error);
-    connect(&_copy_context, &CopyContext::message, this, &PgConnection::message);
+    connect(&_copy_context, &PgCopyContext::error, this, &PgConnection::error);
+    connect(&_copy_context, &PgCopyContext::message, this, &PgConnection::message);
 }
 
 PgConnection::~PgConnection()

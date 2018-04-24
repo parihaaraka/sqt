@@ -1,7 +1,7 @@
 #include "copycontext.h"
 #include <QRegularExpression>
 
-void CopyContext::init(const QString &query)
+void PgCopyContext::init(const QString &query)
 {
     clear();
 
@@ -32,7 +32,7 @@ void CopyContext::init(const QString &query)
     _initialized = true;
 }
 
-void CopyContext::clear()
+void PgCopyContext::clear()
 {
     _file.close();
     _srcFiles.clear();
@@ -42,7 +42,7 @@ void CopyContext::clear()
     _initialized = false;
 }
 
-bool CopyContext::nextSource()
+bool PgCopyContext::nextSource()
 {
     if (_file.isOpen())
         _file.close();
@@ -61,7 +61,7 @@ bool CopyContext::nextSource()
     return true;
 }
 
-bool CopyContext::nextDestination()
+bool PgCopyContext::nextDestination()
 {
     if (_file.isOpen())
         _file.close();
@@ -86,13 +86,13 @@ bool CopyContext::nextDestination()
     return true;
 }
 
-bool CopyContext::write(const char *data, qint64 size)
+bool PgCopyContext::write(const char *data, qint64 size)
 {
     if (_dstFiles[_curDstIndex].isEmpty())
         emit message(QString::fromStdString(data));
     else
     {
-        int bytesWritten = _file.write(data, size);
+        qint64 bytesWritten = _file.write(data, size);
         if (bytesWritten == size)
             return true;
         else if (bytesWritten < 0)
@@ -104,23 +104,23 @@ bool CopyContext::write(const char *data, qint64 size)
     return true;
 }
 
-bool CopyContext::read(std::vector<char> &data, qint64 maxSize)
+bool PgCopyContext::read(std::vector<char> &data, size_t maxSize)
 {
     if (data.size() < maxSize)
         data.resize(maxSize);
-    int size = _file.read(data.data(), maxSize);
+    qint64 size = _file.read(data.data(), static_cast<qint64>(maxSize));
     if (size < 0)
     {
         data.resize(0);
         emit error(_file.errorString());
         return false;
     }
-    if (size < maxSize)
-        data.resize(size);
+    if (static_cast<size_t>(size) < maxSize)
+        data.resize(static_cast<size_t>(size));
     return true;
 }
 
-CopyContext::operator bool() const
+PgCopyContext::operator bool() const
 {
     return _initialized;
 }

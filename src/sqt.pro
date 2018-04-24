@@ -4,6 +4,9 @@ TARGET = sqt
 TEMPLATE = app
 CONFIG += c++11
 
+# prevent making debug and release subfolders in target dir on windows
+CONFIG -= debug_and_release debug_and_release_target
+
 SOURCES += main.cpp\
         mainwindow.cpp \
     dbobjectsmodel.cpp \
@@ -64,6 +67,8 @@ RESOURCES += \
 unix {
     INCLUDEPATH += /usr/include/postgresql
     LIBS += -lodbc -lpq -lssl
+    QMAKE_POST_LINK += $$quote($$QMAKE_SYMBOLIC_LINK $$system_quote($${_PRO_FILE_PWD_}/../decor) $$system_quote($$OUT_PWD))$$escape_expand(\n\t)
+    QMAKE_POST_LINK += $$quote($$QMAKE_SYMBOLIC_LINK $$system_quote($${_PRO_FILE_PWD_}/../scripts) $$system_quote($$OUT_PWD))$$escape_expand(\n\t)
 }
 
 win32 {
@@ -78,8 +83,15 @@ win32-msvc*:contains(QMAKE_HOST.arch, x86_64):{
         -lodbccp32
 }
     RC_FILE = sqt.rc
-}
 
-# TODO
-#QMAKE_EXTRA_TARGETS
-#ln -s $$_PRO_FILE_PWD_/../decor $$OUT_PWD && ln -s $$_PRO_FILE_PWD_/../scripts $$OUT_PWD
+    PG_BIN_TREE = "C:/Dev/pgsql-9.6.6"
+    LIBS += "$${PG_BIN_TREE}/lib/libpq.lib"
+    INCLUDEPATH += "$${PG_BIN_TREE}/include" "$${PG_BIN_TREE}/include/libpq"
+
+    QMAKE_EXTRA_TARGETS += makedirs
+    makedirs.target = sqt_subdirs
+    makedirs.commands = $$sprintf($$QMAKE_MKDIR_CMD, $$OUT_PWD/decor) $$escape_expand(\n\t) $$sprintf($$QMAKE_MKDIR_CMD, $$OUT_PWD/scripts)
+
+    QMAKE_POST_LINK += $$QMAKE_COPY_DIR $$system_quote($$shell_path($${_PRO_FILE_PWD_}/../decor)) $$system_quote($$shell_path($$OUT_PWD/decor))$$escape_expand(\n\t)
+    QMAKE_POST_LINK += $$QMAKE_COPY_DIR $$system_quote($$shell_path($${_PRO_FILE_PWD_}/../scripts)) $$system_quote($$shell_path($$OUT_PWD/scripts))$$escape_expand(\n\t)
+}

@@ -4,18 +4,18 @@
 #include <QStringList>
 #include <QFile>
 
-class CopyContext : public QObject
+class PgCopyContext : public QObject
 {
     Q_OBJECT
 public:
-    CopyContext() = default;
+    PgCopyContext() = default;
     void init(const QString &query);
     void clear();
     bool nextSource();
     bool nextDestination();
     operator bool() const;
     bool write(const char *data, qint64 size);
-    bool read(std::vector<char> &data, qint64 maxSize);
+    bool read(std::vector<char> &data, size_t maxSize);
 private:
     QFile _file;
     QStringList _srcFiles;

@@ -59,7 +59,7 @@ private:
     QString _query_tmp; ///< query storage during asynchronous connection if needed
     PgParams _params_tmp;
     int _temp_result_rowcount;
-    CopyContext _copy_context;
+    PgCopyContext _copy_context;
     std::vector<char> _copy_in_buf;
     /*!
     * \brief <oid, <name, element oid>>

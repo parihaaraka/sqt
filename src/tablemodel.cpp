@@ -107,7 +107,9 @@ QVariant TableModel::headerData(int section, Qt::Orientation orientation, int ro
     if (role == Qt::ToolTipRole && !section)
         return tr("total number of rows");
     if (role == Qt::DisplayRole)
-        return QString::number(section ? section + 1: rowCount());
+        return (section || rowCount() < 5 ?
+                    QString::number(section + 1):
+                    "↓" + QString::number(rowCount()));
 
     return QVariant();
 }

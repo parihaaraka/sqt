@@ -56,6 +56,8 @@ void CodeEditor::leftSideBarPaintEvent(QPaintEvent *event)
     int bottom = top + (int) blockBoundingRect(block).height();
 
     QFont curFont(font());
+    int bCount = blockCount();
+    // draw line numbers
     while (block.isValid() && top <= event->rect().bottom())
     {
         if (block.isVisible() && bottom >= event->rect().top())
@@ -69,16 +71,26 @@ void CodeEditor::leftSideBarPaintEvent(QPaintEvent *event)
             else
                 painter.setFont(curFont);
 
-            // draw line number
             QColor penColor = palette().windowText().color();
-            penColor.setAlphaF(curBlock == blockNumber ? 0.7 : 0.4);
+            QString label;
+            if (blockNumber || bCount < 10)
+            {
+                penColor.setAlphaF(curBlock == blockNumber ? 0.7 : 0.4);
+                label = QString::number(blockNumber + 1);
+            }
+            else
+            {
+                penColor.setGreenF(0.5);
+                label = "↓" + QString::number(bCount);
+            }
+
             painter.setPen(penColor);
             painter.drawText(0,
                              top,
                              _leftSideBar->width() - RIGHT_MARGIN,
                              fontMetrics().height(),
                              Qt::AlignRight,
-                             QString::number(blockNumber ? blockNumber + 1 : blockCount()));
+                             label);
             CodeBlockProperties *prop = static_cast<CodeBlockProperties*>(block.userData());
             if (prop)
             {
