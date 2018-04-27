@@ -494,8 +494,11 @@ bool PgConnection::execute(const QString &query, const QVector<QVariant> *params
         // disconnected or connection broken => reconnect and try again
         if (PQstatus(_conn) == CONNECTION_BAD)
         {
-            emit error(PQerrorMessage(_conn));
-            close();
+            if (_conn)
+            {
+                emit error(PQerrorMessage(_conn));
+                close();
+            }
             if (was_in_transaction || !open())
                 return false;
             continue;

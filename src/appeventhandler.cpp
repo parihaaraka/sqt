@@ -38,7 +38,7 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                     return true;
                 std::sort(indexes.begin(), indexes.end());
                 QModelIndex prev;
-                foreach(QModelIndex cur, indexes)
+                for (const QModelIndex &cur: indexes)
                 {
                     if (!prev.isValid())
                         ;
@@ -68,7 +68,7 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                 int count = 0;
                 QString res;
                 QModelIndexList il = tv->selectionModel()->selectedIndexes();
-                foreach(QModelIndex i, il)
+                for (const QModelIndex &i: il)
                 {
                     double val = i.data(Qt::EditRole).toDouble(&ok);
                     if (ok)

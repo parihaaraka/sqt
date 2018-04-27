@@ -48,8 +48,8 @@ bool PgCopyContext::nextSource()
         _file.close();
     if (++_curSrcIndex > _srcFiles.size() - 1)
     {
-        emit error("COPY source file is not specified.\n"
-                   "  Use special comment to pass source file: /*sqt CopySrc(<file>) */");
+        emit error(tr("COPY source file is not specified.\n"
+                      "  Use special comment to pass source file: /*sqt CopySrc(<file>) */"));
         return false;
     }
     _file.setFileName(_srcFiles[_curSrcIndex]);
@@ -67,9 +67,9 @@ bool PgCopyContext::nextDestination()
         _file.close();
     if (++_curDstIndex > _dstFiles.size() - 1)
     {
-        emit error("COPY destination file is not specified.\n"
-                   "  Use special comment to pass destination file: /*sqt CopyDst(<file>) */\n"
-                   "  If argument is omitted, then log widget will be used instead of file.");
+        emit error(tr("COPY destination file is not specified.\n"
+                      "  Use special comment to pass destination file: /*sqt CopyDst(<file>) */\n"
+                      "  If argument is omitted, then log widget will be used instead of file."));
         return false;
     }
 
@@ -98,7 +98,7 @@ bool PgCopyContext::write(const char *data, qint64 size)
         else if (bytesWritten < 0)
             emit error(_file.errorString());
         else
-            emit error(QString("% bytes out of % were sucessfully written").arg(bytesWritten).arg(size));
+            emit error(tr("% bytes out of % were sucessfully written").arg(bytesWritten).arg(size));
         return false;
     }
     return true;

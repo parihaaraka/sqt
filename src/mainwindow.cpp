@@ -62,12 +62,15 @@ MainWindow::MainWindow(QWidget *parent) :
     qRegisterMetaTypeStreamOperators<QList<RecentFile>>("RecentFile");
 
     setCentralWidget(ui->splitterV);
-    _contextLabel.setFrameStyle(QFrame::StyledPanel);
     ui->statusBar->addPermanentWidget(&_contextLabel);
-    _positionLabel.setFrameStyle(QFrame::StyledPanel);
     _positionLabel.setVisible(false);
     ui->statusBar->addPermanentWidget(&_positionLabel);
     ui->statusBar->addPermanentWidget(&_durationLabel);
+
+#ifndef Q_OS_WIN
+    _contextLabel.setFrameStyle(QFrame::StyledPanel);
+    _positionLabel.setFrameStyle(QFrame::StyledPanel);
+#endif
 
     _objectScript = new QueryWidget(this);
     _objectScript->setReadOnly(true);
@@ -77,6 +80,20 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->objectsView->setStyle(new MyProxyStyle);
     connect(ui->objectsView, &QTreeView::expanded, this, &MainWindow::objectsViewAdjustColumnWidth);
     connect(ui->objectsView, &QTreeView::collapsed, this, &MainWindow::objectsViewAdjustColumnWidth);
+    connect(ui->objectsView, &QTreeView::collapsed, [this](const QModelIndex &index) {
+        const QModelIndex currentNodeIndex =
+                qobject_cast<const QSortFilterProxyModel*>(index.model())->
+                mapToSource(index);
+        DbObject *obj = static_cast<DbObject*>(currentNodeIndex.internalPointer());
+        // close db connection on database node collapse
+        if (obj && obj->data(DbObject::TypeRole).toString() == "database")
+        {
+            auto con = DbConnectionFactory::connection(QString::number(std::intptr_t(obj)));
+            if (con)
+                con->close();
+        }
+        objectsViewAdjustColumnWidth(index);
+    });
 
     DboSortFilterProxyModel *proxyModel = new DboSortFilterProxyModel(this);
     proxyModel->sort(0, Qt::AscendingOrder);
@@ -317,6 +334,7 @@ void MainWindow::on_objectsView_activated(const QModelIndex &index)
             scriptSelectedObjects();
         }
     }
+    ui->objectsView->expand(index);
 }
 
 void MainWindow::on_objectsView_customContextMenuRequested(const QPoint &pos)
@@ -372,12 +390,11 @@ void MainWindow::on_objectsView_customContextMenuRequested(const QPoint &pos)
         {
             DbObject *item = static_cast<DbObject*>(srcIndex.internalPointer());
             _objectsModel->removeRows(0, item->childCount(), srcIndex);
-            //DbConnection *con = _objectsModel->dbConnection(srcIndex);
             con->close();
             con->disconnect(); // disconnect all slots from all signals
             _objectsModel->setData(srcIndex, false, DbObject::ParentRole);
-            _objectsModel->setData(srcIndex, QString(), DbObject::ContentRole);
-            _objectScript->clear();
+            _objectsModel->setData(srcIndex, QVariant(), DbObject::ContentRole);
+            showContent(srcIndex, nullptr);
         }
         else
         {
@@ -443,7 +460,7 @@ void MainWindow::selectionChanged(const QItemSelection &selected, const QItemSel
     // so the current node's parent is indicative one.
 
     bool allowMultiselect = (cur.parent().isValid() && cur.parent().data(DbObject::MultiselectRole).toBool());
-    foreach(QModelIndex i, si)
+    for (const QModelIndex &i: si)
     {
         if (
                 // deselect nodes with different parent
@@ -614,11 +631,12 @@ void MainWindow::sqlChanged()
     QString caption = ui->tabWidget->tabText(ind);
     QString fn = QFileInfo(w->fileName()).fileName();
     bool isModified = w->isModified();
-    if (!caption.endsWith("*") && isModified)
+    bool captionMarked = caption.endsWith("*");
+    if (!captionMarked && isModified)
     {
         ui->tabWidget->setTabText(ind, fn + " *");
     }
-    else if (!isModified && caption.endsWith("*"))
+    else if (!isModified && captionMarked)
     {
         ui->tabWidget->setTabText(ind, fn);
     }
@@ -767,7 +785,7 @@ void MainWindow::refreshActions()
     ui->actionChange_sort_mode->setEnabled(fw == ui->objectsView);
 
     QueryWidget *qw = (ui->tabWidget->isHidden() ? _objectScript : w);
-    foreach(QAction *action, ui->menuEdit->actions())
+    for (QAction *action: ui->menuEdit->actions())
         action->setEnabled(qw);
     _frPanel->setEditor(qw);
 }
@@ -819,7 +837,9 @@ void MainWindow::scriptSelectedObjects()
     //if (!_objectScript->isVisible() && !ui->tableView->isVisible())
     //    return;
     _tableModel->clear();
-    QModelIndex srcIndex = static_cast<QSortFilterProxyModel*>(ui->objectsView->model())->mapToSource(ui->objectsView->currentIndex());
+    QModelIndex srcIndex =
+            static_cast<QSortFilterProxyModel*>(ui->objectsView->model())->
+            mapToSource(ui->objectsView->currentIndex());
     if (!srcIndex.isValid())
     {
         _objectScript->clear();
@@ -830,8 +850,11 @@ void MainWindow::scriptSelectedObjects()
     QModelIndexList si = selectionModel->selectedIndexes();
 
     std::shared_ptr<DbConnection> con = _objectsModel->dbConnection(srcIndex);
-    if (!con)
+    if (!con || !con->isOpened())
+    {
+        showContent(srcIndex, nullptr);
         return;
+    }
     con->clearResultsets();
     QApplication::setOverrideCursor(Qt::WaitCursor);
     ScopeGuard<void(*)()> cursorGuard(QApplication::restoreOverrideCursor);
@@ -852,7 +875,7 @@ void MainWindow::scriptSelectedObjects()
                                                  DbObject::IdRole :
                                                  DbObject::NameRole);
                 QString children;
-                foreach(QModelIndex i, si)
+                for(const QModelIndex &i: si)
                 {
                     if (i.data(role).isValid())
                         children += (children.length() > 0 ? "," : "") +

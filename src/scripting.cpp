@@ -184,7 +184,10 @@ Script* getScript(DbConnection *connection, Context context, const QString &obje
 {
     auto &bunch = _scripts[connection->dbmsScriptingID() + context2str(context)];
     if (bunch.isEmpty())
+    {
         refresh(connection, context);
+        bunch = _scripts[connection->dbmsScriptingID() + context2str(context)];
+    }
     const auto it = bunch.find(objectType);
     return (it == bunch.end() ? nullptr : &it.value());
 }
@@ -208,7 +211,7 @@ void execute(
             macros << match.captured(1);
     }
     // replace macroses with values
-    foreach (QString macro, macros)
+    for (const QString &macro: macros)
     {
         QString value = env->value(macro).toString();
         query = query.replace("$" + macro + "$", value.isEmpty() ? "NULL" : value);

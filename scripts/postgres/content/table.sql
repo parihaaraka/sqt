@@ -14,6 +14,9 @@ declare
 begin
 
 	if '$children.ids$' = '-1' then
+	
+		-- TODO pg v10 support
+		
 		-- script table structure here
 
 		if _relkind = 'v' then
@@ -23,12 +26,22 @@ begin
 			_create_object := 'CREATE MATERIALIZED VIEW ' || _obj_name || E'\nAS\n' ||
 				pg_get_viewdef(_obj_id::regclass, true) || E'\n\n';
 		else
-			select * from pg_class into _t
-			where oid = _obj_id;
+			select
+				c.relpersistence, c.relkind, c.relhasoids, c.reloptions, c.reltablespace,
+				ft.ftoptions, fs.srvname
+			from pg_class c
+				left join pg_foreign_table ft on c.oid = ft.ftrelid
+				left join pg_foreign_server fs on ft.ftserver = fs.oid
+			into _t
+			where c.oid = _obj_id;
 			
 			_create_object := 
 				E'CREATE ' ||
-				case when _t.relpersistence = 'u'::"char" then 'UNLOGGED ' else '' end || 
+				case 
+					when _t.relpersistence = 'u'::"char" then 'UNLOGGED '
+					when _t.relkind = 'f'::"char" then 'FOREIGN '
+					else '' 
+				end || 
 				'TABLE ' || _obj_name || E'\n(\n';
 
 			select E'\nINHERITS (' || string_agg(inhparent::regclass::text, ', ' order by inhseqno) || ')'
@@ -112,7 +125,7 @@ begin
 								else ' COLLATE ' || (pg_identify_object('pg_collation'::regclass::oid, a.attcollation, 0)).identity
 							end ||
 							case 
-								when a.attnotnull and 'p'::"char" != all(c.ctypes) then ' NOT NULL' 
+								when a.attnotnull and ('p'::"char" != all(c.ctypes) or c.ctypes is null) then ' NOT NULL' 
 								else '' 
 							end ||
 							coalesce(' ' || c.clist, '') definition
@@ -168,6 +181,15 @@ begin
 			
 			_create_object := _create_object || _tmp || E'\n)' ||
 				coalesce(_inherits, '') ||
+				case
+					when _t.relkind = 'f'::"char" then E'\nSERVER ' || _t.srvname || 
+						coalesce(E'\nOPTIONS (' || 
+							(
+								select string_agg(regexp_replace(o, '=(.+)$', ' ''\1'''), ', ')
+								from unnest(_t.ftoptions) o
+							) || ')', '')
+					else ''
+				end ||
 				case 
 					when _t.reloptions is not null then
 						E'\nWITH\n(\n' || (
@@ -198,16 +220,23 @@ begin
 	end if;
 
 	-- prepare helpful queries for db programmer
+	with tmp as
+	(
+		select 
+			row_number() over (order by a.attnum) rn,
+			quote_ident(a.attname) attname
+		from pg_catalog.pg_attribute a
+		where 
+			a.attnum > 0 and not a.attisdropped and
+			a.attrelid = _obj_id and
+			(a.attnum in ($children.ids$) or '$children.ids$' = '-1')
+	)
 	select 
-		string_agg(quote_ident(a.attname), ', ' order by a.attnum),
-		string_agg(E'\t' || quote_ident(a.attname) || ' = ?', E',\n' order by a.attnum),
-		string_agg('?', ', ')
+		string_agg(attname, ', ' order by rn),
+		string_agg(E'\t' || attname || ' = $' || rn::text, E',\n' order by rn),
+		string_agg('$' || rn::text, ', ')
 	into _plain_list, _update_list, _values
-	from pg_catalog.pg_attribute a
-	where 
-		a.attnum > 0 and not a.attisdropped and
-		a.attrelid = _obj_id and
-		(a.attnum in ($children.ids$) or '$children.ids$' = '-1');
+	from tmp;
 
    raise notice 
 '%SELECT %

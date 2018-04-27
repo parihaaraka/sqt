@@ -241,7 +241,7 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
     setQueryState(QueryState::Running);
 
     _timer.start();
-    foreach (QString q, queries)
+    for (QString &q: queries)
     {
         // ms sql server wants \r\n line ends:
         // TODO check dbms vendor (or something else) to support \n only...

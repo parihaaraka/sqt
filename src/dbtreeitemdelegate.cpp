@@ -3,6 +3,10 @@
 #include <QApplication>
 #include <QAbstractTextDocumentLayout>
 #include <QTreeView>
+#include <QSortFilterProxyModel>
+#include "dbobject.h"
+#include "dbconnection.h"
+#include "dbconnectionfactory.h"
 
 DbTreeItemDelegate::DbTreeItemDelegate(QObject *parent) :
     QStyledItemDelegate(parent)
@@ -44,6 +48,22 @@ void DbTreeItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
     {
         QIcon i = qvariant_cast<QIcon>(icon);
         i.paint(painter, option.rect, Qt::AlignLeft | Qt::AlignVCenter);
+
+        // draw connection state indicator near the icon
+        const QModelIndex currentNodeIndex = qobject_cast<const QSortFilterProxyModel*>(index.model())->mapToSource(index);
+        DbObject *obj = static_cast<DbObject*>(currentNodeIndex.internalPointer());
+        QString type = obj->data(DbObject::TypeRole).toString();
+        if (type == "connection" || type == "database")
+        {
+            auto con = DbConnectionFactory::connection(QString::number(std::intptr_t(obj)));
+            if (con)
+            {
+                QColor color = (con->isOpened() ? Qt::green : Qt::red);
+                painter->setBrush(QBrush(color));
+                painter->setPen(color.darker(160));
+                painter->drawEllipse(option.rect.topLeft() + QPoint(17, 4), 2, 2);
+            }
+        }
     }
 
     QTextDocument doc;

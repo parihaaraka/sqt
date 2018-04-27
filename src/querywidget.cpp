@@ -501,7 +501,7 @@ void QueryWidget::onActionCopyTriggered()
     qSort(indexes);
 
     QModelIndex prev;
-    foreach(QModelIndex cur, indexes)
+    for(QModelIndex &cur: indexes)
     {
         //QMetaType::Type t = (QMetaType::Type)m->data(cur).type();
         QString val = m->data(cur).toString();
@@ -582,7 +582,7 @@ bool QueryWidget::isEnveloped(const QTextCursor &c)
     int pos = c.positionInBlock();
     if (c.hasSelection() && c.anchor() < c.position())
         pos -= 1;
-    foreach (QTextLayout::FormatRange r, c.block().layout()->formats())
+    for (const QTextLayout::FormatRange &r: c.block().layout()->formats())
     {
         if (pos >= r.start && pos < r.start + r.length)
         {
