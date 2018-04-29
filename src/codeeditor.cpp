@@ -202,3 +202,14 @@ CodeBlockProperties *Bookmarks::previous()
                                     _lastUsedBookmarkPos - 1 : _bookmarks.size() - 1);
     return _bookmarks[_lastUsedBookmarkPos];
 }
+
+CodeBlockProperties *Bookmarks::last()
+{
+    if (_bookmarks.isEmpty())
+        return nullptr;
+
+    if (_lastUsedBookmarkPos != static_cast<int>(_lastUsedBookmarkPos))
+        return _bookmarks[_bookmarks.size() - 1];
+
+    return _bookmarks[_lastUsedBookmarkPos];
+}

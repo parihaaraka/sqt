@@ -9,6 +9,7 @@ namespace Bookmarks
 {
     CodeBlockProperties* next();
     CodeBlockProperties* previous();
+    CodeBlockProperties* last();
 }
 
 class QueryWidget;

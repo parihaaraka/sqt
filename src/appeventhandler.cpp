@@ -18,11 +18,18 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
     if (event->type() == QEvent::KeyPress)
     {
         QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
-        if ((keyEvent->key() == Qt::Key_Comma || keyEvent->key() == Qt::Key_Period) &&
+        const int keyCode = keyEvent->key();
+        if ((keyCode == Qt::Key_Comma ||
+             keyCode == Qt::Key_Period ||
+             keyCode == Qt::Key_L) &&
                 keyEvent->modifiers().testFlag(Qt::ControlModifier))
         {
-            CodeBlockProperties *p = (keyEvent->key() == Qt::Key_Comma ?
-                                          Bookmarks::previous() : Bookmarks::next());
+            CodeBlockProperties *p =
+                    (keyCode == Qt::Key_Comma ?
+                         Bookmarks::previous() :
+                         (keyCode == Qt::Key_Period ?
+                              Bookmarks::next() :
+                              Bookmarks::last()));
             MainWindow *w = qobject_cast<MainWindow*>(QApplication::activeWindow());
             w->activateEditorBlock(p);
             return true;
@@ -57,7 +64,7 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                 QApplication::clipboard()->setText(result);
                 return true;
             }
-            else if (keyEvent->key() == Qt::Key_F6) // sum numerical values of selected cells
+            else if (keyCode == Qt::Key_F6) // sum numerical values of selected cells
             {
                 // lets try to sum big numerics precisely
                 double sumDouble = 0;
@@ -141,7 +148,9 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                 QApplication::clipboard()->setText(edit->textCursor().selectedText().replace(QChar::ParagraphSeparator, '\n'));
                 return true;
             }
-            else if (keyEvent->key() == Qt::Key_W && keyEvent->modifiers().testFlag(Qt::ControlModifier))
+            else if (keyCode == Qt::Key_W &&
+                     keyEvent->modifiers().testFlag(Qt::ControlModifier) &&
+                     keyEvent->modifiers().testFlag(Qt::ShiftModifier))
             {
                 QTextOption textOption(edit->document()->defaultTextOption());
                 textOption.setWrapMode(textOption.wrapMode() == QTextOption::NoWrap ?
@@ -152,7 +161,7 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
             }
             else if (keyEvent->matches(QKeySequence::ZoomIn) ||
                      // to enable ctrl+shift+'=' on keyboards without numpad
-                     (keyEvent->key() == Qt::Key_Plus && keyEvent->modifiers().testFlag(Qt::ControlModifier)))
+                     (keyCode == Qt::Key_Plus && keyEvent->modifiers().testFlag(Qt::ControlModifier)))
             {
                 edit->zoomIn();
                 return true;
