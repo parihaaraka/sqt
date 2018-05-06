@@ -29,7 +29,10 @@ SOURCES += main.cpp\
     scripting.cpp \
     appeventhandler.cpp \
     copycontext.cpp \
-    codeeditor.cpp
+    codeeditor.cpp \
+    settings.cpp \
+    settingsdialog.cpp \
+    jsonsyntaxhighlighter.cpp
 
 HEADERS  += mainwindow.h \
     dbobjectsmodel.h \
@@ -53,12 +56,16 @@ HEADERS  += mainwindow.h \
     scripting.h \
     appeventhandler.h \
     copycontext.h \
-    codeeditor.h
+    codeeditor.h \
+    settings.h \
+    settingsdialog.h \
+    jsonsyntaxhighlighter.h
 
 FORMS    += mainwindow.ui \
     logindialog.ui \
     findandreplacepanel.ui \
-    connectiondialog.ui
+    connectiondialog.ui \
+    settingsdialog.ui
 
 RESOURCES += \
     sqt.qrc

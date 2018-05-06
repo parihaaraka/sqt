@@ -3,7 +3,7 @@
 #include "ui_mainwindow.h"
 #include "sqlsyntaxhighlighter.h"
 #include "connectiondialog.h"
-#include <QSettings>
+#include "settings.h"
 #include <QMessageBox>
 #include "dbobject.h"
 #include "dbobjectsmodel.h"
@@ -25,6 +25,7 @@
 #include "scripting.h"
 #include "codeeditor.h"
 #include <QScrollBar>
+#include "settingsdialog.h"
 
 struct RecentFile
 {
@@ -58,8 +59,10 @@ MainWindow::MainWindow(QWidget *parent) :
     ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+
     qRegisterMetaType<QueryState>();
     qRegisterMetaTypeStreamOperators<QList<RecentFile>>("RecentFile");
+    SqtSettings::load();
 
     setCentralWidget(ui->splitterV);
     ui->statusBar->addPermanentWidget(&_contextLabel);
@@ -156,10 +159,9 @@ MainWindow::MainWindow(QWidget *parent) :
     // refresh root content (connection nodes from settings)
     _objectsModel->fillChildren();
 
-    QSettings settings;
-    restoreGeometry(settings.value("mainWindowGeometry").toByteArray());
-    restoreState(settings.value("mainWindowState").toByteArray());
-    QList<RecentFile> fList = settings.value("recentFiles").value<QList<RecentFile>>();
+    restoreGeometry(SqtSettings::value("mainWindowGeometry").toByteArray());
+    restoreState(SqtSettings::value("mainWindowState").toByteArray());
+    QList<RecentFile> fList = SqtSettings::value("recentFiles").value<QList<RecentFile>>();
     for (const auto &f: fList)
     {
         QAction *a = ui->menuOpen_recent->addAction(f.fileName);
@@ -167,10 +169,10 @@ MainWindow::MainWindow(QWidget *parent) :
         connect(a, &QAction::triggered, this, &MainWindow::onActionOpenFile);
     }
 
-    ui->splitterH->restoreState(settings.value("mainWindowHSplitter").toByteArray());
-    ui->contentSplitter->restoreState(settings.value("mainWindowScriptSplitter").toByteArray());
-    _fileDialog.restoreState(settings.value("fileDialog").toByteArray());
-    _mruDirs = settings.value("mruDirs").toStringList();
+    ui->splitterH->restoreState(SqtSettings::value("mainWindowHSplitter").toByteArray());
+    ui->contentSplitter->restoreState(SqtSettings::value("mainWindowScriptSplitter").toByteArray());
+    _fileDialog.restoreState(SqtSettings::value("fileDialog").toByteArray());
+    _mruDirs = SqtSettings::value("mruDirs").toStringList();
     // make previously used directory to be current
     if (!_mruDirs.isEmpty())
         _fileDialog.setDirectory(_mruDirs.last());
@@ -256,13 +258,12 @@ void MainWindow::closeEvent(QCloseEvent *event)
         }
     }
     event->accept();
-    QSettings settings;
-    settings.setValue("mainWindowGeometry", saveGeometry());
-    settings.setValue("mainWindowState", saveState());
-    settings.setValue("mainWindowHSplitter", ui->splitterH->saveState());
-    settings.setValue("mainWindowScriptSplitter", ui->contentSplitter->saveState());
-    settings.setValue("fileDialog", _fileDialog.saveState());
-    settings.setValue("mruDirs", _mruDirs);
+    SqtSettings::setValue("mainWindowGeometry", saveGeometry());
+    SqtSettings::setValue("mainWindowState", saveState());
+    SqtSettings::setValue("mainWindowHSplitter", ui->splitterH->saveState());
+    SqtSettings::setValue("mainWindowScriptSplitter", ui->contentSplitter->saveState());
+    SqtSettings::setValue("fileDialog", _fileDialog.saveState());
+    SqtSettings::setValue("mruDirs", _mruDirs);
 }
 
 void MainWindow::changeEvent(QEvent *e)
@@ -828,8 +829,7 @@ void MainWindow::addMruFile()
         itemsToSave.append({a->text(), a->data().toString()});
     }
 
-    QSettings settings;
-    settings.setValue("recentFiles", QVariant::fromValue(itemsToSave));
+    SqtSettings::setValue("recentFiles", QVariant::fromValue(itemsToSave));
 }
 
 void MainWindow::scriptSelectedObjects()
@@ -1137,8 +1137,7 @@ void MainWindow::onActionOpenFile()
         for (const QAction *a: ui->menuOpen_recent->actions())
             itemsToSave.append({a->text(), a->data().toString()});
 
-        QSettings settings;
-        settings.setValue("recentFiles", QVariant::fromValue(itemsToSave));
+        SqtSettings::setValue("recentFiles", QVariant::fromValue(itemsToSave));
         return;
     }
     openFile(fileName, a->data().toString());
@@ -1214,4 +1213,10 @@ void MainWindow::onError(const QString &err)
     fmt.setForeground(QBrush(Qt::red));
     ui->log->mergeCurrentCharFormat(fmt);
     log(err);
+}
+
+void MainWindow::on_actionSettings_triggered()
+{
+    SettingsDialog dlg(this);
+    dlg.exec();
 }

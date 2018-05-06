@@ -63,6 +63,8 @@ private slots:
     void onActionOpenFile();
     void openFile(const QString &fileName, const QString &encoding);
 
+    void on_actionSettings_triggered();
+
 private:
     QLabel _contextLabel, _positionLabel, _durationLabel;
     ExtFileDialog _fileDialog;

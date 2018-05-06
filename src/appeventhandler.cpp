@@ -8,6 +8,13 @@
 #include <QPlainTextEdit>
 #include "mainwindow.h"
 #include "codeeditor.h"
+#include "settings.h"
+
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QVBoxLayout>
+#include "jsonsyntaxhighlighter.h"
 
 AppEventHandler::AppEventHandler(QObject *parent) : QObject(parent)
 {
@@ -32,6 +39,100 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                               Bookmarks::last()));
             MainWindow *w = qobject_cast<MainWindow*>(QApplication::activeWindow());
             w->activateEditorBlock(p);
+            return true;
+        }
+
+        // json viewer (do we need good editor?)
+        if (keyEvent->key() == Qt::Key_J && keyEvent->modifiers().testFlag(Qt::ControlModifier))
+        {
+            QWidget *window = QApplication::activeWindow();
+            // do not open json viewer within itself
+            if (window && window->objectName() == "_json_")
+                return QObject::eventFilter(obj, event);
+
+            QString jsonString;
+            if (QTableView *tv = qobject_cast<QTableView*>(obj))
+                jsonString = tv->selectionModel()->currentIndex().data().toString();
+            else if (QPlainTextEdit *ed = qobject_cast<QPlainTextEdit*>(obj))
+            {
+                jsonString = ed->textCursor().selectedText();
+                if (jsonString.isEmpty())
+                    jsonString = ed->toPlainText();
+            }
+            else
+                return QObject::eventFilter(obj, event);
+
+            QJsonDocument doc = QJsonDocument::fromJson(jsonString.toUtf8());
+            std::function<QJsonValue(QJsonValueRef)> fixNode;
+            fixNode = [&fixNode](QJsonValueRef node) -> QJsonValue {
+                // extract json from textual escaped representation
+                if (node.isString())
+                {
+                    QString v = node.toString();
+                    if (!v.startsWith('{'))
+                        return node;
+
+                    QJsonDocument doc = QJsonDocument::fromJson(v.toUtf8());
+                    if (doc.isNull())
+                        return node;
+                    return doc.object();
+                }
+                else if (!node.isObject())
+                    return node;
+
+                QJsonObject obj = node.toObject();
+                for (auto &k: obj.keys())
+                {
+                    QJsonValueRef jv = obj[k];
+                    if (jv.isObject())
+                        obj.insert(k, fixNode(jv)); // replace
+                    else if (jv.isArray())
+                    {
+                        QJsonArray new_array;
+                        for (auto i: jv.toArray())
+                            new_array.append(fixNode(i));
+
+                        if (new_array != jv.toArray())
+                            obj.insert(k + "(nice)", new_array);
+                    }
+                    else
+                    {
+                        auto newValue = fixNode(jv);
+                        if (newValue.isObject())
+                            obj.insert(k + "(nice)", newValue);
+                    }
+                }
+                return obj;
+            };
+
+            if (doc.isObject())
+            {
+                QJsonObject new_obj;
+                QJsonObject cur_obj = doc.object();
+                for (auto &k: cur_obj.keys())
+                    new_obj.insert(k, fixNode(cur_obj[k]));
+
+                doc.setObject(new_obj);
+            }
+
+            QDialog *dlg = new QDialog(QApplication::activeWindow());
+            dlg->setObjectName("_json_");
+            dlg->setAttribute(Qt::WA_DeleteOnClose);
+            dlg->setWindowTitle(QObject::tr("json"));
+
+            QVBoxLayout *layout = new QVBoxLayout();
+            QPlainTextEdit *ed = new QPlainTextEdit(dlg);
+            layout->addWidget(ed);
+            ed->setPlainText(doc.toJson(QJsonDocument::Indented));
+            JsonSyntaxHighlighter *hl = new JsonSyntaxHighlighter(ed);
+            hl->setDocument(ed->document());
+            QStatusBar *status = new QStatusBar(dlg);
+            status->setMaximumHeight(QFontMetrics(QApplication::font()).height());
+            layout->addWidget(status);
+            layout->setContentsMargins(0, 0, 0, 0);
+            dlg->setLayout(layout);
+            dlg->resize(800, 600);
+            dlg->open();
             return true;
         }
 
@@ -177,10 +278,10 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
     {
         if (QPlainTextEdit *edit = qobject_cast<QPlainTextEdit*>(obj))
         {
+            int tabSize = SqtSettings::value("tabSize", 3).toInt();
             QTextOption textOption(edit->document()->defaultTextOption());
             // accurate tab size evaluation
-            // TODO move tab size to settings
-            textOption.setTabStop(QFontMetrics(edit->font()).width(QString(3 * 100, ' ')) / 100.0);
+            textOption.setTabStop(QFontMetrics(edit->font()).width(QString(tabSize * 100, ' ')) / 100.0);
             if (edit->objectName() != "editCS")
                 textOption.setWrapMode(QTextOption::NoWrap);
             edit->document()->setDefaultTextOption(textOption);

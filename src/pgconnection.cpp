@@ -6,6 +6,7 @@
 #include <QSocketNotifier>
 #include <QRegularExpression>
 #include <QThread>
+#include "settings.h"
 
 PgConnection::PgConnection() :
     DbConnection(), _readNotifier(nullptr), _writeNotifier(nullptr), _temp_result(nullptr), _temp_result_rowcount(0)
@@ -347,13 +348,9 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
                                           0) :
                         PQsendQuery(_conn, _query_tmp.toStdString().c_str());
 
-            // TODO make gui option to enable single row mode
-            // (slow fetch of large rowset, but prevent partial result
-            //  from being discarded on error during fetching)
-            if (async_sent_ok)
-            {
-                //PQsetSingleRowMode(_conn);
-            }
+            // Single row mode prevents resultset from being discarded on error during fetching.
+            if (async_sent_ok && SqtSettings::value("pgSingleRowMode", false).toBool())
+                PQsetSingleRowMode(_conn);
 
             //_last_action_moment = chrono::system_clock::now();
         }

@@ -25,6 +25,7 @@
 #include "scripting.h"
 #include <QDesktopServices>
 #include "codeeditor.h"
+#include "settings.h"
 
 QueryWidget::QueryWidget(QWidget *parent) : QueryWidget(nullptr, parent)
 {
@@ -71,7 +72,7 @@ QueryWidget::QueryWidget(DbConnection *connection, QWidget *parent) :
         connect(_connection.get(), &DbConnection::queryStateChanged, this, [this]() {
             if (_connection->queryState() == QueryState::Inactive)
             {
-                onMessage(tr("done in %1").arg(_connection->elapsed()));
+                onMessage(tr("%1: done in %2").arg(QTime::currentTime().toString("HH:mm:ss")).arg(_connection->elapsed()));
 
                 // print all resultsets structure ready to be used in 'create function returning table(...)'
                 QColor resultsetStructureColor = _messages->palette().text().color();
@@ -774,6 +775,7 @@ bool QueryWidget::eventFilter(QObject *object, QEvent *event)
             bool firstPass = true;
             if (keyEvent->key() == Qt::Key_Backtab)
             {
+                int tabSize = SqtSettings::value("tabSize", 3).toInt();
                 do
                 {
                     if (!firstPass)
@@ -787,8 +789,8 @@ bool QueryWidget::eventFilter(QObject *object, QEvent *event)
                     if (c.position() >= end)
                         break;
 
-                    int tabSize = 3;  // TODO: move to settings
-                    while (tabSize > 0)
+                    int tab = tabSize;
+                    while (tab > 0)
                     {
                         QChar curChar = e->document()->characterAt(c.position());
                         if (QString(" \t").contains(curChar))
@@ -798,7 +800,7 @@ bool QueryWidget::eventFilter(QObject *object, QEvent *event)
                             --end;
                             if (start > startOfFirstBlock && c.position() <= start)
                                 --start;
-                            tabSize -= (curChar == '\t' ? 3 : 1);
+                            tab -= (curChar == '\t' ? tabSize : 1);
                         }
                         else
                             break;
