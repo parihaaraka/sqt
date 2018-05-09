@@ -2,7 +2,6 @@ select
     'role' node_type,
     rolname ui_name,
     oid id,
-    false is_parent,
     case 
         when not rolcanlogin then 'users.png'
         when rolsuper then 'ghost.png' 

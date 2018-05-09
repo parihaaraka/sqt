@@ -13,6 +13,7 @@ The main target audience are db programmers.
 * convenient (Qt Creator-like) search/replace panel;
 * multiple resultsets support;
 * bookmarks (mark: `Ctrl+M`, previous: `Ctrl+,`, next: `Ctrl+.`, last: `Ctrl+L`);
+* json viewer with highlighting and extracting json as text value (`Ctrl+J`);
 * totalling selected cells (`F6`);
 * resultsets structure textual output;
 * pg: client-side COPY to file or log widget, COPY from file;

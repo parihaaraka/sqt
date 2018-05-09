@@ -11,20 +11,23 @@ declare
 	_obj_id oid := $table.id$;
 	_t record;
 	_inherits text;
+	_comment text := obj_description(_obj_id, 'pg_class');
+	_obj_type text;
 begin
 
 	if '$children.ids$' = '-1' then
-	
-		-- TODO pg v10 support
-		
-		-- script table structure here
 
+		-- TODO pg v10 support (partition by, etc.)
+		
+		-- script table structure
 		if _relkind = 'v' then
 			_create_object := 'CREATE OR REPLACE VIEW ' || _obj_name || E'\nAS\n' ||
 				pg_get_viewdef(_obj_id::regclass, true) || E'\n\n';
+			_obj_type := 'VIEW';
 		elsif _relkind = 'm' then
 			_create_object := 'CREATE MATERIALIZED VIEW ' || _obj_name || E'\nAS\n' ||
 				pg_get_viewdef(_obj_id::regclass, true) || E'\n\n';
+			_obj_type := 'MATERIALIZED VIEW';
 		else
 			select
 				c.relpersistence, c.relkind, c.relhasoids, c.reloptions, c.reltablespace,
@@ -43,6 +46,7 @@ begin
 					else '' 
 				end || 
 				'TABLE ' || _obj_name || E'\n(\n';
+			_obj_type := case when _relkind = 'f' then 'FOREIGN ' else '' end || 'TABLE';
 
 			select E'\nINHERITS (' || string_agg(inhparent::regclass::text, ', ' order by inhseqno) || ')'
 			into _inherits
@@ -213,7 +217,8 @@ begin
 					else
 						'-- ' || replace(description, E'\n', E'\n-- ') || E'\n\n'
 				end, ''
-			) || _create_object
+			) || _create_object ||
+				format(E'COMMENT ON %s %s IS %s;\n\n', _obj_type, _obj_name, coalesce(E'\n' || quote_literal(_comment), 'NULL'))
 		into _create_object
 		from (values (obj_description(_obj_id, 'pg_class'))) as v(description);
 

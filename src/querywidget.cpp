@@ -26,6 +26,7 @@
 #include <QDesktopServices>
 #include "codeeditor.h"
 #include "settings.h"
+#include <QTextBrowser>
 
 QueryWidget::QueryWidget(QWidget *parent) : QueryWidget(nullptr, parent)
 {
@@ -362,7 +363,9 @@ void QueryWidget::setPlainText(const QString &text)
 
 void QueryWidget::setHtml(const QString &html)
 {
-    QTextEdit *editor = initEditor<QTextEdit>(&_editor, this);
+    //QTextEdit *editor = initEditor<QTextEdit>(&_editor, this);
+    QTextBrowser *editor = initEditor<QTextBrowser>(&_editor, this);
+    editor->setOpenExternalLinks(true);
     editor->setHtml(html);
 }
 

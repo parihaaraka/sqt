@@ -1,9 +1,9 @@
 select '
 <html>
 <body>
-<p>Qt has a very <a href="http://qt-project.org/doc/qt-5.0/qtgui/richtext-html-subset.html">limited support</a> of html (without WebKit),
-but it is still enough for simple formatted output</p><br/>
-<table border=1>
+<p>Qt has a very <a href="http://doc.qt.io/qt-5/richtext-html-subset.html">limited support</a> of html (without WebKit),
+but it is still enough for simple formatted output</p><p/>
+<table border=1 cellspacing=0 cellpadding=3>
   <tr bgcolor="#AAFFAA">
     <th>Value</th>
     <th>Description</th>

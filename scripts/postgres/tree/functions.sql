@@ -15,6 +15,7 @@ select
 		) ui_name,
 	quote_ident(p.proname) "name",
 	--'function.png' icon,
+	not p.proisagg as allow_multiselect,
 	p.proname || oidvectortypes(p.proargtypes) sort1,
 	case 
 		when p.proisagg then '2'
