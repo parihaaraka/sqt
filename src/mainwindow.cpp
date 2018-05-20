@@ -18,6 +18,7 @@
 #include <QTextDocumentFragment>
 #include <QCloseEvent>
 #include <QTextEdit>
+#include <QToolButton>
 #include "tablemodel.h"
 #include "dbtreeitemdelegate.h"
 #include "findandreplacepanel.h"
@@ -144,7 +145,6 @@ MainWindow::MainWindow(QWidget *parent) :
 
     _tableModel = new TableModel(this);
     ui->tableView->setModel(_tableModel);
-    ui->tableView->verticalHeader()->setDefaultSectionSize(ui->tableView->verticalHeader()->minimumSectionSize());
     ui->tableView->hide();
     //ui->tableView->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
 
@@ -185,7 +185,7 @@ MainWindow::MainWindow(QWidget *parent) :
         if (ui->tabWidget->currentIndex() < ui->tabWidget->count() - 1)
             ui->tabWidget->setCurrentIndex(ui->tabWidget->currentIndex() + 1);
     });
-    ui->tabWidget->addAction(tabWidgetAction);
+    ui->tabWidget->tabBar()->addAction(tabWidgetAction);
 
     // switch to previous tab page
     tabWidgetAction = new QAction(tr("previous page"), ui->tabWidget);
@@ -195,7 +195,7 @@ MainWindow::MainWindow(QWidget *parent) :
         if (ui->tabWidget->currentIndex() > 0)
             ui->tabWidget->setCurrentIndex(ui->tabWidget->currentIndex() - 1);
     });
-    ui->tabWidget->addAction(tabWidgetAction);
+    ui->tabWidget->tabBar()->addAction(tabWidgetAction);
 
     // switch to previous tab page
     tabWidgetAction = new QAction(tr("close page"), ui->tabWidget);
@@ -208,8 +208,98 @@ MainWindow::MainWindow(QWidget *parent) :
         if (w)
             w->setFocus();
     });
-    ui->tabWidget->addAction(tabWidgetAction);
-    ui->tabWidget->setContextMenuPolicy(Qt::ActionsContextMenu);
+    ui->tabWidget->tabBar()->addAction(tabWidgetAction);
+    ui->tabWidget->tabBar()->setContextMenuPolicy(Qt::ActionsContextMenu);
+
+    // corner buttons
+    QWidget *cornerWidget = new QWidget();
+    QHBoxLayout *l = new QHBoxLayout();
+    l->setContentsMargins(2, 0, 2, 4);
+    QToolButton *dbBtn = new QToolButton(ui->tabWidget);
+    dbBtn->setAutoRaise(true);
+    QMenu *dbBtnMenu = new QMenu(dbBtn);
+    connect(dbBtnMenu, &QMenu::aboutToShow, [this, dbBtn, dbBtnMenu](){
+        dbBtnMenu->clear();
+        QueryWidget *qw = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
+        DbConnection *currentConnection = (qw ? qw->dbConnection() : nullptr);
+        auto m = ui->objectsView->model();
+        for (int cr = 0; cr < m->rowCount(); ++cr) // iterate connections
+        {
+            QModelIndex srcIndex = static_cast<QSortFilterProxyModel*>(m)->mapToSource(m->index(cr, 0));
+            DbConnection *connection = _objectsModel->dbConnection(srcIndex).get();
+            if (connection && connection->isOpened())
+            {
+                // collect databases on next level only
+                // (if somebody build folders of databases, then databases will not be found)
+                QStringList databases;
+                for (int dr = 0; dr < m->rowCount(m->index(cr, 0)); ++dr)
+                {
+                    QModelIndex ind = m->index(dr, 0, m->index(cr, 0));
+                    if (ind.data(DbObject::TypeRole).toString() != "database")
+                        continue;
+                    QModelIndex srcIndex = static_cast<QSortFilterProxyModel*>(m)->mapToSource(ind);
+                    DbConnection *connection = _objectsModel->dbConnection(srcIndex).get();
+                    databases.append(connection->database());
+                }
+
+                if (databases.isEmpty())
+                {
+                    dbBtnMenu->addAction(srcIndex.data().toString(), [this, qw, connection](){
+                        DbConnection *cn = connection->clone();
+                        qw->setDbConnection(cn);
+                        refreshContextInfo();
+                    });
+                }
+                else if (currentConnection && connection->connectionString() == currentConnection->connectionString())
+                {
+                    // put databases of current connection on top level
+                    QAction *next = dbBtnMenu->actions().isEmpty() ? nullptr : dbBtnMenu->actions().first();
+                    QList<QAction*> actions;
+                    for (int i = 0; i < databases.size(); ++i)
+                    {
+                        if (currentConnection->database() != databases[i])
+                        {
+                            QAction *a = new QAction(databases[i], dbBtnMenu);
+                            connect(a, &QAction::triggered, [this, a, currentConnection](){
+                                currentConnection->setDatabase(a->text());
+                                currentConnection->open();
+                                refreshContextInfo();
+                            });
+                            actions.append(a);
+                        }
+                    }
+                    dbBtnMenu->insertActions(next, actions);
+                    dbBtnMenu->insertSeparator(next);
+                }
+                else
+                {
+                    QMenu *menu = dbBtnMenu->addMenu(srcIndex.data().toString());
+                    for (const QString &db: databases)
+                        menu->addAction(db, [this, qw, connection, db](){
+                            DbConnection *cn = connection->clone();
+                            cn->setDatabase(db);
+                            qw->setDbConnection(cn);
+                            refreshContextInfo();
+                        });
+                }
+            }
+        }
+    });
+    dbBtn->setMenu(dbBtnMenu);
+    // don't use QToolButton::InstantPopup to use QAction's shortcut
+    // scope Qt::WidgetWithChildrenShortcut instead of manual handling
+    QAction *dbBtnAction = new QAction(ui->tabWidget);
+    dbBtnAction->setIcon(QIcon(":img/databases.png"));
+    dbBtnAction->setShortcut({"Ctrl+D"});
+    dbBtnAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(dbBtnAction, &QAction::triggered, dbBtn, &QToolButton::showMenu);
+    dbBtn->setDefaultAction(dbBtnAction);
+    dbBtn->setToolTip(tr("switch to another accessible database") +
+                      "<br/><b>" + dbBtnAction->shortcut().toString() + "</b>");
+    ui->tabWidget->addAction(dbBtnAction);
+    l->addWidget(dbBtn);
+    cornerWidget->setLayout(l);
+    ui->tabWidget->setCornerWidget(cornerWidget);//, Qt::TopLeftCorner);
 }
 
 MainWindow::~MainWindow()

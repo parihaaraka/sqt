@@ -23,6 +23,7 @@ select
       null,
       'information-white.png',
       '02'
+where $dbms.version$ > 90600
 union all
 select
       'pg_settings',

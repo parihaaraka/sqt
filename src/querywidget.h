@@ -27,6 +27,7 @@ public:
     bool saveFile(const QString &fileName, const QString &encoding = QString());
     QString encoding() { return _encoding; }
     DbConnection* dbConnection() { return _connection.get(); }
+    void setDbConnection(DbConnection *connection);
     void ShowFindPanel(FindAndReplacePanel *panel);
     void highlight(std::shared_ptr<DbConnection> con = nullptr);
     void dehighlight();

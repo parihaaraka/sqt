@@ -33,7 +33,7 @@ QueryWidget::QueryWidget(QWidget *parent) : QueryWidget(nullptr, parent)
 }
 
 QueryWidget::QueryWidget(DbConnection *connection, QWidget *parent) :
-    QSplitter(parent), _editor(nullptr), _connection(connection)
+    QSplitter(parent), _editor(nullptr)
 {
     _messages = nullptr;
     _highlighter = nullptr;
@@ -54,57 +54,7 @@ QueryWidget::QueryWidget(DbConnection *connection, QWidget *parent) :
     QWidget *w = new QWidget(this);
     w->setLayout(_editorLayout);
     addWidget(w);
-
-    if (_connection)
-    {
-        QTabWidget *res = new QTabWidget(this);
-        res->setDocumentMode(true);
-        _resSplitter = new QSplitter(res);
-        _messages = new QPlainTextEdit(res);
-        _messages->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
-        res->addTab(_messages, tr("messages"));
-        addWidget(res);
-        setSizes(QList<int>() << 1 << 0);
-        setOrientation(Qt::Vertical);
-
-        connect(_connection.get(), &DbConnection::fetched, this, &QueryWidget::fetched, Qt::QueuedConnection);
-        connect(_connection.get(), &DbConnection::message, this, &QueryWidget::onMessage, Qt::QueuedConnection);
-        connect(_connection.get(), &DbConnection::error, this, &QueryWidget::onError, Qt::QueuedConnection);
-        connect(_connection.get(), &DbConnection::queryStateChanged, this, [this]() {
-            if (_connection->queryState() == QueryState::Inactive)
-            {
-                onMessage(tr("%1: done in %2").arg(QTime::currentTime().toString("HH:mm:ss")).arg(_connection->elapsed()));
-
-                // print all resultsets structure ready to be used in 'create function returning table(...)'
-                QColor resultsetStructureColor = _messages->palette().text().color();
-                resultsetStructureColor.setAlphaF(0.6);
-                for (const auto res: _connection->_resultsets)
-                {
-                    QString structure;
-                    for (int i = 0; i < res->columnCount(); ++i)
-                    {
-                        auto &c = res->getColumn(i);
-                        QString typeDescr = c.type();
-
-                        if (i)
-                            structure += ", ";
-                        structure += _connection->escapeIdentifier(c.name()) + ' ' + typeDescr;
-                    }
-                    log('(' + structure + ')', resultsetStructureColor);
-                }
-
-                // scroll down and left
-                auto cursor = _messages->textCursor();
-                cursor.movePosition(QTextCursor::End);
-                cursor.movePosition(QTextCursor::StartOfLine);
-                _messages->setTextCursor(cursor);
-            }
-        }, Qt::QueuedConnection);
-
-        _connection->open();
-    }
-
-    highlight(_connection);
+    setDbConnection(connection);
 }
 
 QueryWidget::~QueryWidget()
@@ -164,6 +114,62 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
     save_stream.flush();
     f.close();
     return true;
+}
+
+void QueryWidget::setDbConnection(DbConnection *connection)
+{
+    _connection.reset(connection);
+    if (connection)
+    {
+        if (!findChild<QTabWidget*>("results"))
+        {
+            QTabWidget *res = new QTabWidget(this);
+            res->setObjectName("results");
+            res->setDocumentMode(true);
+            _resSplitter = new QSplitter(res);
+            _messages = new QPlainTextEdit(res);
+            _messages->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+            res->addTab(_messages, tr("messages"));
+            addWidget(res);
+            setSizes(QList<int>() << 1 << 0);
+            setOrientation(Qt::Vertical);
+        }
+        connect(connection, &DbConnection::fetched, this, &QueryWidget::fetched, Qt::QueuedConnection);
+        connect(connection, &DbConnection::message, this, &QueryWidget::onMessage, Qt::QueuedConnection);
+        connect(connection, &DbConnection::error, this, &QueryWidget::onError, Qt::QueuedConnection);
+        connect(connection, &DbConnection::queryStateChanged, this, [this]() {
+            if (_connection->queryState() == QueryState::Inactive)
+            {
+                onMessage(tr("%1: done in %2").arg(QTime::currentTime().toString("HH:mm:ss")).arg(_connection->elapsed()));
+
+                // print all resultsets structure ready to be used in 'create function returning table(...)'
+                QColor resultsetStructureColor = _messages->palette().text().color();
+                resultsetStructureColor.setAlphaF(0.6);
+                for (const auto res: _connection->_resultsets)
+                {
+                    QString structure;
+                    for (int i = 0; i < res->columnCount(); ++i)
+                    {
+                        auto &c = res->getColumn(i);
+                        QString typeDescr = c.typeName();
+
+                        if (i)
+                            structure += ", ";
+                        structure += _connection->escapeIdentifier(c.name()) + ' ' + typeDescr;
+                    }
+                    log('(' + structure + ')', resultsetStructureColor);
+                }
+
+                // scroll down and left
+                auto cursor = _messages->textCursor();
+                cursor.movePosition(QTextCursor::End);
+                cursor.movePosition(QTextCursor::StartOfLine);
+                _messages->setTextCursor(cursor);
+            }
+        }, Qt::QueuedConnection);
+        connection->open();
+    }
+    highlight(_connection);
 }
 
 void QueryWidget::ShowFindPanel(FindAndReplacePanel *panel)
@@ -415,7 +421,6 @@ void QueryWidget::fetched(DataTable *table)
         tv = new QTableView(_resSplitter);
         tv->horizontalHeader()->viewport()->setMouseTracking(true);
         tv->setObjectName(tname);
-        tv->verticalHeader()->setDefaultSectionSize(tv->verticalHeader()->minimumSectionSize());
 
         //tv->setContextMenuPolicy(Qt::CustomContextMenu);
         //connect(tv, &QTableView::customContextMenuRequested, this, &QueryWidget::onCustomGridContextMenuRequested);

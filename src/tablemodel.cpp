@@ -43,13 +43,14 @@ QVariant TableModel::data(const QModelIndex &index, int role) const
     {
     case Qt::SizeHintRole:
     {
+        // keep default cell width convenient to use
         QVariant &res = _table->getRow(index.row())[index.column()];
-        if (!res.isNull() && res.toString().length() > 200)
+        if (!res.isNull() && res.toString().length() > 100)
             return QSize(500, -1);
         return QVariant();
     }
     case Qt::TextAlignmentRole:
-        return _table->getColumn(index.column()).hAlignment() + Qt::AlignVCenter;
+        return int(_table->getColumn(index.column()).hAlignment() | Qt::AlignVCenter);
     case Qt::BackgroundRole:
         if (_table->getRow(index.row())[index.column()].isNull())
             return QBrush(QColor(0, 0, 0, 15));
@@ -94,14 +95,14 @@ QVariant TableModel::headerData(int section, Qt::Orientation orientation, int ro
     {
         if (role == Qt::ToolTipRole)
         {
-            QString colType = _table->getColumn(section).type();
+            QString colType = _table->getColumn(section).typeName();
             return (colType.isEmpty() ? QVariant() : colType);
         }
         return (role == Qt::DisplayRole ? _table->getColumn(section).name() : QVariant());
     }
 
     if (role == Qt::TextAlignmentRole)
-        return Qt::AlignRight;
+        return int(Qt::AlignRight | Qt::AlignVCenter);
 
     // first row header cotains total numer of rows
     if (role == Qt::ToolTipRole && !section)

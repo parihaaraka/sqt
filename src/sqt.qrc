@@ -11,5 +11,6 @@
         <file>sqt.ico</file>
         <file>img/bookmark.png</file>
         <file>img/gear.png</file>
+        <file>img/databases.png</file>
     </qresource>
 </RCC>

@@ -1,6 +1,8 @@
 #include "codeeditor.h"
 #include <QPainter>
 #include <QTextBlock>
+#include <QMimeData>
+#include "settings.h"
 
 #define RIGHT_MARGIN 2
 #define ICON_PLACE_WIDTH 13
@@ -89,7 +91,7 @@ void CodeEditor::leftSideBarPaintEvent(QPaintEvent *event)
                              top,
                              _leftSideBar->width() - RIGHT_MARGIN,
                              fontMetrics().height(),
-                             Qt::AlignRight,
+                             Qt::AlignRight | Qt::AlignVCenter,
                              label);
             CodeBlockProperties *prop = static_cast<CodeBlockProperties*>(block.userData());
             if (prop)
@@ -132,6 +134,33 @@ bool CodeEditor::eventFilter(QObject *, QEvent *event)
         updateLeftSideBarWidth();
     }
     return false;
+}
+
+void CodeEditor::insertFromMimeData(const QMimeData *source)
+{
+    if (!source->hasText())
+        return;
+
+    // count distance from the beginning of the line to the insertion position (chars)
+    QTextCursor c = textCursor();
+    QString block = c.block().text();
+    int distance = 0;
+    int tabSize = SqtSettings::value("tabSize", 3).toInt();
+    for (int i = 0; i < c.positionInBlock(); ++i)
+        distance += (block[i] == '\t' ? tabSize : 1);
+
+    // prepend every line of the inserted text with the following prefix
+    QString prefix = QString(distance / tabSize, '\t') + (distance % tabSize ? "\t" : "");
+    QString data = source->text();
+    if (distance % tabSize)
+        data = '\t' + data;
+    data.replace('\n', '\n' + prefix);
+
+    // TODO evaluate correct indentation according to surrounding code,
+    // find shortest indent within the text being inserted and make corresponding
+    // replacements before insertion
+
+    insertPlainText(data);
 }
 
 void CodeEditor::updateLeftSideBarWidth()
@@ -183,7 +212,7 @@ CodeBlockProperties *Bookmarks::next()
     _lastUsedBookmarkPos = static_cast<int>(_lastUsedBookmarkPos);
 
     _lastUsedBookmarkPos = (_bookmarks.size() - 1 > _lastUsedBookmarkPos ?
-                                    _lastUsedBookmarkPos + 1 : 0);
+                                _lastUsedBookmarkPos + 1 : 0);
     return _bookmarks[_lastUsedBookmarkPos];
 }
 
@@ -199,7 +228,7 @@ CodeBlockProperties *Bookmarks::previous()
     _lastUsedBookmarkPos = static_cast<int>(_lastUsedBookmarkPos + 0.5);
 
     _lastUsedBookmarkPos = (_lastUsedBookmarkPos > 0 ?
-                                    _lastUsedBookmarkPos - 1 : _bookmarks.size() - 1);
+                                _lastUsedBookmarkPos - 1 : _bookmarks.size() - 1);
     return _bookmarks[_lastUsedBookmarkPos];
 }
 

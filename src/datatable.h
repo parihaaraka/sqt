@@ -14,7 +14,7 @@ class DataColumn
 {
 public:
     DataColumn(const DataColumn &column) = default;
-    DataColumn(const QString &name, QMetaType::Type type, int sqlType, int length, int16_t decDigits, int8_t nullableDesc, Qt::AlignmentFlag hAlignment, int arrayElementType = -1);
+    DataColumn(const QString &name, const QString typeName, QMetaType::Type type, int sqlType, int length, int16_t decDigits, int8_t nullableDesc, Qt::AlignmentFlag hAlignment, int arrayElementType = -1);
 
     // ctor for postgres only for delayed column type specification (it's about arrays)
     DataColumn(const QString &name, QMetaType::Type type, int sqlType, int modifier, int8_t nullableDesc, Qt::AlignmentFlag hAlignment);
@@ -28,10 +28,10 @@ public:
     int length() const noexcept { return _length; }
     int16_t scale() const noexcept { return _decDigits; }
     int modifier() const noexcept { return _modifier; }
-    QString type() const noexcept { return _type; }
+    QString typeName() const noexcept { return _typeName; }
 
 private:
-    QString _name, _type;
+    QString _name, _typeName;
     QMetaType::Type _varType;
     int _sqlType;
     int _length = -1;
@@ -64,7 +64,6 @@ public:
     DataTable(QObject *parent = nullptr);
     ~DataTable();
 	void clear();
-    DataColumn& addColumn(QString col_name, QMetaType::Type type, int sql_type, int size, int16_t dec_digits, int8_t nullable_desc, Qt::AlignmentFlag hAlignment);
     DataRow& addRow();
     void addColumn(DataColumn *column);
     void addRow(DataRow *row);

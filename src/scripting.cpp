@@ -93,7 +93,7 @@ QString dbmsScriptPath(DbConnection *con, Context context)
 /// A script may contain comments corresponding to regexp:
 /// (?=\/\*\s*V(\d+)\+\s*\*\/)
 /// For example:
-/// /* V90000+ */
+/// /* V90600+ */
 /// select s.datname, s.pid, s.usename --, ...
 /// from pg_stat_activity s
 ///
@@ -213,7 +213,9 @@ void execute(
     // replace macroses with values
     for (const QString &macro: macros)
     {
-        QString value = env->value(macro).toString();
+        QString value = (macro == "dbms.version" ?
+                             QString::number(connection->dbmsComparableVersion()) :
+                             env->value(macro).toString());
         query = query.replace("$" + macro + "$", value.isEmpty() ? "NULL" : value);
     }
 

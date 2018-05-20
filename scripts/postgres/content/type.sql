@@ -24,7 +24,7 @@ begin
 			E',\n' order by a.attnum) || E'\n);'
 		into _content
 		from pg_type t
-			join pg_attribute a on t.typrelid = a.attrelid 
+			join pg_attribute a on t.typrelid = a.attrelid and not a.attisdropped
 		where t.oid = _obj_id;
 	else
 		_content := 'not implemented';

@@ -6,6 +6,7 @@
 #include <QMainWindow>
 #include <QStatusBar>
 #include <QPlainTextEdit>
+#include <QHeaderView>
 #include "mainwindow.h"
 #include "codeeditor.h"
 #include "settings.h"
@@ -43,28 +44,35 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
         }
 
         // json viewer (do we need good editor?)
+        // * it is used to view any textual value for a while (i need to view long text in cells somehow :)
+        // ** json objects being serialized into string values are expanded to become more readable
         if (keyEvent->key() == Qt::Key_J && keyEvent->modifiers().testFlag(Qt::ControlModifier))
         {
             QWidget *window = QApplication::activeWindow();
             // do not open json viewer within itself
-            if (window && window->objectName() == "_json_")
+            if (window && window->objectName() == "_viewer_")
                 return QObject::eventFilter(obj, event);
 
-            QString jsonString;
+            QString stringValue;
             if (QTableView *tv = qobject_cast<QTableView*>(obj))
-                jsonString = tv->selectionModel()->currentIndex().data().toString();
+                stringValue = tv->selectionModel()->currentIndex().data().toString();
             else if (QPlainTextEdit *ed = qobject_cast<QPlainTextEdit*>(obj))
             {
-                jsonString = ed->textCursor().selectedText();
-                if (jsonString.isEmpty())
-                    jsonString = ed->toPlainText();
+                stringValue = ed->textCursor().selectedText();
+                if (stringValue.isEmpty())
+                    stringValue = ed->toPlainText();
             }
             else
                 return QObject::eventFilter(obj, event);
 
-            QJsonDocument doc = QJsonDocument::fromJson(jsonString.toUtf8());
-            std::function<QJsonValue(QJsonValueRef)> fixNode;
-            fixNode = [&fixNode](QJsonValueRef node) -> QJsonValue {
+            QJsonParseError err;
+            QString preparedJsonString = stringValue.trimmed();
+            // remove line breaks because QJsonDocument::fromJson() doesn't parse formatted json
+            preparedJsonString.replace(QRegularExpression("\\R", QRegularExpression::UseUnicodePropertiesOption), "");
+            QJsonDocument doc = QJsonDocument::fromJson(preparedJsonString.toUtf8(), &err);
+
+            std::function<QJsonValue(const QJsonValue&)> expandJsonValue;
+            expandJsonValue = [&expandJsonValue](const QJsonValue &node) -> QJsonValue {
                 // extract json from textual escaped representation
                 if (node.isString())
                 {
@@ -73,31 +81,34 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                         return node;
 
                     QJsonDocument doc = QJsonDocument::fromJson(v.toUtf8());
-                    if (doc.isNull())
-                        return node;
-                    return doc.object();
+                    return doc.isObject() ? doc.object() : node;
                 }
-                else if (!node.isObject())
+
+                if (node.isArray())
+                {
+                    QJsonArray new_array;
+                    for (auto i: node.toArray())
+                    {
+                        QJsonValue v(expandJsonValue(i));
+                        if (i.isString() && v.isObject())
+                            new_array.append(i); // add previous value if it was changed
+                        new_array.append(v);
+                    }
+                    return new_array;
+                }
+
+                if (!node.isObject())
                     return node;
 
                 QJsonObject obj = node.toObject();
                 for (auto &k: obj.keys())
                 {
                     QJsonValueRef jv = obj[k];
-                    if (jv.isObject())
-                        obj.insert(k, fixNode(jv)); // replace
-                    else if (jv.isArray())
-                    {
-                        QJsonArray new_array;
-                        for (auto i: jv.toArray())
-                            new_array.append(fixNode(i));
-
-                        if (new_array != jv.toArray())
-                            obj.insert(k + "(nice)", new_array);
-                    }
+                    if (jv.isObject() || jv.isArray())
+                        obj.insert(k, expandJsonValue(jv)); // replace
                     else
                     {
-                        auto newValue = fixNode(jv);
+                        auto newValue = expandJsonValue(jv);
                         if (newValue.isObject())
                             obj.insert(k + "(nice)", newValue);
                     }
@@ -105,27 +116,36 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                 return obj;
             };
 
-            if (doc.isObject())
+            if (!doc.isNull())
             {
-                QJsonObject new_obj;
-                QJsonObject cur_obj = doc.object();
-                for (auto &k: cur_obj.keys())
-                    new_obj.insert(k, fixNode(cur_obj[k]));
-
-                doc.setObject(new_obj);
+                if (doc.isObject())
+                {
+                    QJsonValue rootValue(doc.object());
+                    doc.setObject(expandJsonValue(rootValue).toObject());
+                }
+                else if (doc.isArray())
+                {
+                    QJsonValue rootValue(doc.array());
+                    doc.setArray(expandJsonValue(rootValue).toArray());
+                }
+                stringValue = doc.toJson(QJsonDocument::Indented);
             }
 
+
             QDialog *dlg = new QDialog(QApplication::activeWindow());
-            dlg->setObjectName("_json_");
+            dlg->setObjectName("_viewer_");
             dlg->setAttribute(Qt::WA_DeleteOnClose);
             dlg->setWindowTitle(QObject::tr("json"));
 
             QVBoxLayout *layout = new QVBoxLayout();
             QPlainTextEdit *ed = new QPlainTextEdit(dlg);
+            ed->setObjectName("_def_wrap_");
             layout->addWidget(ed);
-            ed->setPlainText(doc.toJson(QJsonDocument::Indented));
+            ed->setPlainText(err.errorString() + '\n' + stringValue);
+
             JsonSyntaxHighlighter *hl = new JsonSyntaxHighlighter(ed);
             hl->setDocument(ed->document());
+
             QStatusBar *status = new QStatusBar(dlg);
             status->setMaximumHeight(QFontMetrics(QApplication::font()).height());
             layout->addWidget(status);
@@ -261,7 +281,7 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                 return true;
             }
             else if (keyEvent->matches(QKeySequence::ZoomIn) ||
-                     // to enable ctrl+shift+'=' on keyboards without numpad
+                     // to use ctrl+shift+'=' on keyboards without numpad
                      (keyCode == Qt::Key_Plus && keyEvent->modifiers().testFlag(Qt::ControlModifier)))
             {
                 edit->zoomIn();
@@ -278,14 +298,20 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
     {
         if (QPlainTextEdit *edit = qobject_cast<QPlainTextEdit*>(obj))
         {
+            // apply tab size
             int tabSize = SqtSettings::value("tabSize", 3).toInt();
             QTextOption textOption(edit->document()->defaultTextOption());
             // accurate tab size evaluation
             textOption.setTabStop(QFontMetrics(edit->font()).width(QString(tabSize * 100, ' ')) / 100.0);
-            if (edit->objectName() != "editCS")
+            if (edit->objectName() != "editCS" && edit->objectName() != "_def_wrap_")
                 textOption.setWrapMode(QTextOption::NoWrap);
             edit->document()->setDefaultTextOption(textOption);
             edit->setCursorWidth(2);
+        }
+        else if (QTableView *tv = qobject_cast<QTableView*>(obj))
+        {
+            // adjust grid line height
+            tv->verticalHeader()->setDefaultSectionSize(qRound(tv->fontMetrics().height() * 1.3));
         }
     }
     else if (event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut)

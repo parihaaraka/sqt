@@ -641,7 +641,7 @@ void PgConnection::noticeReceiver(void *arg, const PGresult *res)
     if (hint == "script" || hint == "html")
     {
         DataTable *t = new DataTable();
-        t->addColumn(hint, QMetaType::QString, TEXTOID, -1, -1, 1, Qt::AlignLeft);
+        t->addColumn(new DataColumn(hint, "", QMetaType::QString, TEXTOID, -1, -1, 1, Qt::AlignLeft));
         t->addRow()[0] = QString(PQresultErrorField(res, PG_DIAG_MESSAGE_PRIMARY));
         // synchronous usage only - no need to use _resultsetsGuard
         cn->_resultsets.push_back(t);

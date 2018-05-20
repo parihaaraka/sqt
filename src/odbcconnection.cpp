@@ -257,9 +257,7 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
 
         while (checkStmt(retcode, hstmt_local))
         {
-            SQLSMALLINT col_count, name_length, data_type, dec_digits, nullable_desc;
-            SQLULEN col_size;
-            SQLCHAR col_name[512];
+            SQLSMALLINT col_count;
             retcode = SQLNumResultCols(hstmt_local, &col_count);
             int rowcount = 0;
             if (checkStmt(retcode, hstmt_local) && col_count)
@@ -268,18 +266,56 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
                 QMutexLocker lk(&_resultsetsGuard);
                 _resultsets.append(table);
                 lk.unlock();
+
+                SQLULEN col_size;
+                SQLCHAR buf[512];
+                SQLSMALLINT buf_res_length, data_type, dec_digits, nullable_desc;
                 for (SQLUSMALLINT i = 0; i < col_count; ++i)
                 {
-                    SQLDescribeColA(hstmt_local, i + 1, col_name, sizeof(col_name), &name_length, &data_type, &col_size, &dec_digits, &nullable_desc);
-                    table->addColumn(
-                                QString::fromLocal8Bit(reinterpret_cast<char*>(col_name)),
-                                sqlTypeToVariant(data_type),
-                                data_type,
-                                col_size,
-                                dec_digits,
-                                int8_t(nullable_desc),
-                                isNumericType(data_type) ?
-                                    Qt::AlignRight : Qt::AlignLeft);
+                    SQLColAttributeA(hstmt_local, i + 1, SQL_DESC_TYPE_NAME, buf, sizeof(buf), &buf_res_length, nullptr);
+                    QString typeName = QString::fromLocal8Bit(reinterpret_cast<char*>(buf));
+                    SQLDescribeColA(hstmt_local, i + 1, buf, sizeof(buf), &buf_res_length, &data_type, &col_size, &dec_digits, &nullable_desc);
+                    switch (data_type)
+                    {
+                    case SQL_DECIMAL:
+                    case SQL_NUMERIC:
+                        typeName += '(' + QString::number(col_size) +
+                                (dec_digits > 0 ? ',' + QString::number(dec_digits) : "") +
+                                ')';
+                        break;
+                    case SQL_FLOAT:
+                    case SQL_REAL:
+                    case SQL_DOUBLE:
+                        if (col_size == 24 || col_size == 53)
+                        {
+                            typeName = (col_size == 24 ? "real" : "double precision");
+                            break;
+                        }
+                    case SQL_CHAR:
+                    case SQL_VARCHAR:
+                    case SQL_WCHAR:
+                    case SQL_WVARCHAR:
+                    case SQL_WLONGVARCHAR:
+                    case SQL_BINARY:
+                    case SQL_VARBINARY:
+                        if (col_size > 0)
+                            typeName += '(' +
+                                    (col_size == 536870911 || col_size == 1073741823 ?
+                                         "max" : QString::number(col_size)) +
+                                    ')';
+                        break;
+                    }
+                    table->addColumn(new DataColumn(
+                                         QString::fromLocal8Bit(reinterpret_cast<char*>(buf)),
+                                         typeName,
+                                         sqlTypeToVariant(data_type),
+                                         data_type,
+                                         col_size,
+                                         dec_digits,
+                                         int8_t(nullable_desc),
+                                         isNumericType(data_type) ?
+                                         Qt::AlignRight : Qt::AlignLeft)
+                                     );
                 }
 
                 while (/*(limit == -1 || rowcount < limit) &&*/ (retcode = SQLFetch(hstmt_local)) != SQL_NO_DATA)

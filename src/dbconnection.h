@@ -120,4 +120,6 @@ private:
     int _elapsed_ms = 0;
 };
 
+Q_DECLARE_METATYPE(DbConnection*)
+
 #endif // DBCONNECTION_H

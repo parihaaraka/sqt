@@ -57,13 +57,6 @@ DataRow& DataTable::getRow(int ind) const
     return *_rows.at(ind);
 }
 
-DataColumn& DataTable::addColumn(QString col_name, QMetaType::Type type, int sql_type, int size, int16_t dec_digits, int8_t nullable_desc, Qt::AlignmentFlag hAlignment)
-{
-    DataColumn* new_col = new DataColumn(col_name, type, sql_type, size, dec_digits, nullable_desc, hAlignment);
-    _columns.append(new_col);
-	return *new_col;
-}
-
 DataRow& DataTable::addRow()
 {
     DataRow* new_row = new DataRow(this);
@@ -149,8 +142,8 @@ QVariant& DataRow::operator [](int index)
     return _row[index];
 }
 
-DataColumn::DataColumn(const QString &name, QMetaType::Type type, int sqlType, int length, int16_t decDigits, int8_t nullableDesc, Qt::AlignmentFlag hAlignment, int arrayElementType) :
-    _name(name), _varType(type), _sqlType(sqlType), _length(length), _decDigits(decDigits), _nullableDesc(nullableDesc), _hAlignment(hAlignment), _arrayElementType(arrayElementType)
+DataColumn::DataColumn(const QString &name, const QString typeName, QMetaType::Type type, int sqlType, int length, int16_t decDigits, int8_t nullableDesc, Qt::AlignmentFlag hAlignment, int arrayElementType) :
+    _name(name), _typeName(typeName), _varType(type), _sqlType(sqlType), _length(length), _decDigits(decDigits), _nullableDesc(nullableDesc), _hAlignment(hAlignment), _arrayElementType(arrayElementType)
 {
 }
 
@@ -161,7 +154,7 @@ DataColumn::DataColumn(const QString &name, QMetaType::Type type, int sqlType, i
 
 void DataColumn::clarifyType(const QString &type, int length, int16_t decDigits, int arrayElementType)
 {
-    _type = type;
+    _typeName = type;
     _length = length;
     _decDigits = decDigits;
     _arrayElementType = arrayElementType;
