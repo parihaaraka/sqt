@@ -140,6 +140,10 @@ void CodeEditor::insertFromMimeData(const QMimeData *source)
 {
     if (!source->hasText())
         return;
+    insertPlainText(source->text());
+
+//  should be rethinked  :/
+/*
 
     // count distance from the beginning of the line to the insertion position (chars)
     QTextCursor c = textCursor();
@@ -161,6 +165,7 @@ void CodeEditor::insertFromMimeData(const QMimeData *source)
     // replacements before insertion
 
     insertPlainText(data);
+*/
 }
 
 void CodeEditor::updateLeftSideBarWidth()
