@@ -1,6 +1,7 @@
 select 
     'role' node_type,
     rolname ui_name,
+    rolname "name",
     oid id,
     case 
         when not rolcanlogin then 'users.png'

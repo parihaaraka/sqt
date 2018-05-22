@@ -940,7 +940,7 @@ void MainWindow::scriptSelectedObjects()
     QModelIndexList si = selectionModel->selectedIndexes();
 
     std::shared_ptr<DbConnection> con = _objectsModel->dbConnection(srcIndex);
-    if (!con || !con->isOpened())
+    if (!con || !con->open() /*open if not opened*/)
     {
         showContent(srcIndex, nullptr);
         return;

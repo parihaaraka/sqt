@@ -12,6 +12,7 @@ declare
 	_t record;
 	_inherits text;
 	_comment text := obj_description(_obj_id, 'pg_class');
+	_col_comments text;
 	_obj_type text;
 begin
 
@@ -229,7 +230,8 @@ begin
 	(
 		select 
 			row_number() over (order by a.attnum) rn,
-			quote_ident(a.attname) attname
+			quote_ident(a.attname) attname,
+			col_description(_obj_id, a.attnum) descr
 		from pg_catalog.pg_attribute a
 		where 
 			a.attnum > 0 and not a.attisdropped and
@@ -239,8 +241,12 @@ begin
 	select 
 		string_agg(attname, ', ' order by rn),
 		string_agg(E'\t' || attname || ' = $' || rn::text, E',\n' order by rn),
-		string_agg('$' || rn::text, ', ')
-	into _plain_list, _update_list, _values
+		string_agg('$' || rn::text, ', '),
+		string_agg(
+			format(E'COMMENT ON COLUMN %s.%s IS \n%s;', _obj_name, tmp.attname, quote_literal(descr)),
+			E'\n'
+		) filter (where tmp.descr is not null) || E'\n\n'
+	into _plain_list, _update_list, _values, _col_comments
 	from tmp;
 
    raise notice 
@@ -255,7 +261,7 @@ SET
 %
 WHERE
 ', 
-	_create_object, _plain_list, _obj_name,
+	_create_object || coalesce(_col_comments, ''), _plain_list, _obj_name,
 	_obj_name, _plain_list, _values, 
 	_obj_name, _update_list 
    using hint = 'script';

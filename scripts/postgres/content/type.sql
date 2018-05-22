@@ -5,6 +5,7 @@ declare
 	_obj_name text := '$schema.name$.$type.name$';
 	_obj_id oid := $type.id$;
 	_content text;
+	_comment text;
 begin
 
 	if _type = 'e' then -- enum
@@ -27,9 +28,13 @@ begin
 			join pg_attribute a on t.typrelid = a.attrelid and not a.attisdropped
 		where t.oid = _obj_id;
 	else
-		_content := 'not implemented';
+		_content := E'not implemented\n';
 	end if;
 	
-	raise notice '%', _content using hint = 'script';
+	_comment := format(E'COMMENT ON TYPE %s IS %s;\n', 
+						_obj_name, 
+						coalesce(E'\n' || quote_literal(obj_description(_obj_id, 'pg_type')), 'NULL'));
+	
+	raise notice E'%\n\n%', _content, _comment using hint = 'script';
 end
 $$
