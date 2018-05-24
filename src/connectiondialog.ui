@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>814</width>
-    <height>284</height>
+    <height>312</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -27,7 +27,7 @@
    <item>
     <widget class="QLabel" name="label_2">
      <property name="text">
-      <string>ODBC or PostgreSQL connection string</string>
+      <string>ODBC &lt;b&gt;or&lt;/b&gt; PostgreSQL connection string</string>
      </property>
     </widget>
    </item>

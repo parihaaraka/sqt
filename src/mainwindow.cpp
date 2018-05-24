@@ -940,7 +940,13 @@ void MainWindow::scriptSelectedObjects()
     QModelIndexList si = selectionModel->selectedIndexes();
 
     std::shared_ptr<DbConnection> con = _objectsModel->dbConnection(srcIndex);
-    if (!con || !con->open() /*open if not opened*/)
+    if  (
+            !con ||
+            // do not try to open closed top-level connection
+            (!con->isOpened() && srcIndex.data(DbObject::TypeRole).toString() == "connection") ||
+            // open if not opened (shoud be database-level connection - it is closed when the node is collapsed)
+            !con->open()
+        )
     {
         showContent(srcIndex, nullptr);
         return;

@@ -13,16 +13,30 @@ ConnectionDialog::ConnectionDialog(QWidget *parent, QString name, QString connec
 
     if (connectionString.isEmpty())
     {
-        connectionString =
-            #ifdef Q_OS_WIN32
-                    "Driver={SQL Server Native Client 11.0};Server=srv_name;Database=db_name;Trusted_Connection=yes;App=sqt;"
-            #else
-                    "Driver=FreeTDS;Server=mssql.local;TDS_Version=7.2;Port=1433;Database=master;UID=%user%;PWD=%pass%;ClientCharset=UTF-8;App=sqt;"
-            #endif
-                    "\n or\n"
-                    "host=127.0.0.1 port=5432 dbname=postgres user=%user% password=%pass% connect_timeout=5";
+        // i was forced to do this rainbow :/
+        // some people don't understand that odbc and pg connection string patterns are mutually exclusive
+        QTextCharFormat fmt = ui->editCS->currentCharFormat();
+        auto appendText = [this, &fmt](const QColor &color, const QString &text) {
+            fmt.setForeground(QBrush(color));
+            ui->editCS->mergeCurrentCharFormat(fmt);
+            ui->editCS->appendPlainText(text);
+        };
+        appendText(Qt::red, tr("make use of ONE of these two sample patterns:"));
+        appendText(Qt::darkGray, tr("   ↓ postgresql native"));
+        appendText("#507", "host=127.0.0.1 port=5432 dbname=postgres user=%user% password=%pass% connect_timeout=5");
+        appendText(Qt::darkGray, tr("   ↓ odbc"));
+        appendText("#116",
+           #ifdef Q_OS_WIN32
+                   "Driver={SQL Server Native Client 11.0};Server=srv_name;Database=db_name;Trusted_Connection=yes;App=sqt;"
+           #else
+                   "Driver=FreeTDS;Server=mssql.local;TDS_Version=7.2;Port=1433;Database=master;UID=%user%;PWD=%pass%;ClientCharset=UTF-8;App=sqt;"
+           #endif
+                   );
     }
-    ui->editCS->setPlainText(connectionString);
+    else
+    {
+        ui->editCS->setPlainText(connectionString);
+    }
     ui->editName->setText(name);
     QRect frect = frameGeometry();
     frect.moveCenter(QDesktopWidget().availableGeometry().center());
