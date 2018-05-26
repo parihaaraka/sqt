@@ -112,7 +112,7 @@ QString versionSpecificPart(const QString &script, int version)
     QRegularExpression re(R"((?=\/\*\s*V(\d+)\+\s*\*\/))");
     QRegularExpressionMatchIterator i = re.globalMatch(script);
 
-    // return whole script body if boundaries not found
+    // return whole script body if boundaries are not found
     if (!i.hasNext())
         return script;
 

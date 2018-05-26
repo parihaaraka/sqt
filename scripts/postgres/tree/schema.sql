@@ -32,9 +32,17 @@ select
 	'4'
 union all
 select
+	'domains',
+	null::text,
+	'Domains',
+	null,
+	'hard-hat.png',
+	'5'
+union all
+select
 	'views',
 	null::text,
 	'Views',
 	null,
 	'views.png',
-	'5'
+	'6'

@@ -147,6 +147,8 @@ void QueryWidget::setDbConnection(DbConnection *connection)
                 resultsetStructureColor.setAlphaF(0.6);
                 for (const auto res: _connection->_resultsets)
                 {
+                    if (!res->columnCount())
+                        continue;
                     QString structure;
                     for (int i = 0; i < res->columnCount(); ++i)
                     {

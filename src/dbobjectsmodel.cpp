@@ -2,7 +2,6 @@
 #include "dbobject.h"
 #include <QSettings>
 #include <QIcon>
-#include <QJSEngine>
 #include <QFile>
 #include <QDir>
 #include <QMap>
@@ -16,10 +15,6 @@
 #include <QUuid>
 #include "dbosortfilterproxymodel.h"
 #include "scripting.h"
-
-#include <QJSEngine>
-#include <QJSValueList>
-#include <QQmlEngine>
 
 DbObjectsModel::DbObjectsModel(QObject *parent) :
     QAbstractItemModel(parent)

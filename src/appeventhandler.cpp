@@ -311,7 +311,9 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
         else if (QTableView *tv = qobject_cast<QTableView*>(obj))
         {
             // adjust grid line height
-            tv->verticalHeader()->setDefaultSectionSize(qRound(tv->fontMetrics().height() * 1.35));
+            int minHeight = tv->verticalHeader()->minimumSectionSize();
+            int comfortableHeight = qRound(tv->fontMetrics().height() * 1.35);
+            tv->verticalHeader()->setDefaultSectionSize(qMax(minHeight, comfortableHeight));
         }
     }
     else if (event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut)
