@@ -136,8 +136,8 @@ void PgConnection::cancel() noexcept
     if (!_conn)
         return;
 
-    setQueryState(QueryState::Cancelling);
     emit message(tr("cancelling..."));
+    setQueryState(QueryState::Cancelling);
 
     char errbuf[256];
     PGcancel *cancel = PQgetCancel(_conn);
@@ -413,8 +413,8 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
     auto state_handler_connection = std::make_shared<QMetaObject::Connection>();
     connect(thread, &QThread::started, [this, run_query, thread, state_handler_connection]() {
         // stop event loop on inactive query state
-        *state_handler_connection = connect(this, &PgConnection::queryStateChanged, [this, thread]() {
-            if (_query_state == QueryState::Inactive)
+        *state_handler_connection = connect(this, &PgConnection::queryStateChanged, [this, thread](QueryState state) {
+            if (state == QueryState::Inactive)
             {
                 for (auto res: _resultsets)
                     clarifyTableStructure(*res);

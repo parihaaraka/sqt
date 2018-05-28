@@ -337,6 +337,16 @@ void MainWindow::activateEditorBlock(CodeBlockProperties *blockProperties)
     }
 }
 
+void MainWindow::queryStateChanged(QueryWidget *w, QueryState state)
+{
+    if (ui->tabWidget->currentWidget() != w)
+        return;
+
+    refreshActions();
+    if (state == QueryState::Inactive)
+        refreshContextInfo();
+}
+
 void MainWindow::closeEvent(QCloseEvent *event)
 {
     while (ui->tabWidget->count() > 0)
@@ -664,7 +674,13 @@ void MainWindow::on_actionNew_triggered()
     QModelIndex srcIndex = static_cast<QSortFilterProxyModel*>(ui->objectsView->model())->
             mapToSource(ui->objectsView->currentIndex());
     std::shared_ptr<DbConnection> con = _objectsModel->dbConnection(srcIndex);
-    if (!con)
+    if  (
+            !con ||
+            // do not try to open closed top-level connection
+            (!con->isOpened() && srcIndex.data(DbObject::TypeRole).toString() == "connection") ||
+            // open if not opened (shoud be database-level connection - it is closed when the node is collapsed)
+            !con->open()
+        )
     {
         onError("db connection unavailable");
         return;
@@ -676,12 +692,6 @@ void MainWindow::on_actionNew_triggered()
     {
         DbConnection *cn = con->clone();
         w = new QueryWidget(cn, ui->tabWidget);
-        connect(cn, &DbConnection::queryStateChanged, this, [this, cn, w]() {
-            refreshActions();
-            if (cn->queryState() == QueryState::Inactive && ui->tabWidget->currentWidget() == w)
-                refreshContextInfo();
-        }, Qt::QueuedConnection);
-
     }
     // create editor without query execution ability
     // (broken by previous opened connection check)

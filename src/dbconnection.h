@@ -106,7 +106,9 @@ signals:
     void message(const QString &msg) const;
     void error(const QString &msg) const;
     void fetched(DataTable *table);
-    void queryStateChanged();
+    // use QueryState as argument instead of _query_state due to queued connection
+    // (slot may have _query_state to be distinct from the state the signal was emitted with)
+    void queryStateChanged(QueryState);
 
 protected:
     std::atomic<QueryState> _query_state;

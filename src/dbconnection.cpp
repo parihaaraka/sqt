@@ -80,7 +80,7 @@ void DbConnection::setQueryState(QueryState state)
         _query_state = state;
         if (state == QueryState::Inactive)
             _elapsed_ms = _timer.elapsed();
-        emit queryStateChanged();
+        emit queryStateChanged(state);
     }
 }
 

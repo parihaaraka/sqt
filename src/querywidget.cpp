@@ -137,8 +137,10 @@ void QueryWidget::setDbConnection(DbConnection *connection)
         connect(connection, &DbConnection::fetched, this, &QueryWidget::fetched, Qt::QueuedConnection);
         connect(connection, &DbConnection::message, this, &QueryWidget::onMessage, Qt::QueuedConnection);
         connect(connection, &DbConnection::error, this, &QueryWidget::onError, Qt::QueuedConnection);
-        connect(connection, &DbConnection::queryStateChanged, this, [this]() {
-            if (_connection->queryState() == QueryState::Inactive)
+        connect(connection, &DbConnection::queryStateChanged, this, [this](QueryState queryState) {
+            if (MainWindow *mainWindow = qobject_cast<MainWindow*>(window()))
+                mainWindow->queryStateChanged(this, queryState);
+            if (queryState == QueryState::Inactive)
             {
                 onMessage(tr("%1: done in %2").arg(QTime::currentTime().toString("HH:mm:ss")).arg(_connection->elapsed()));
 

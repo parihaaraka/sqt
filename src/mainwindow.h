@@ -6,6 +6,7 @@
 #include <QItemSelection>
 #include <QLabel>
 #include <memory>
+#include "dbconnection.h"
 
 namespace Ui {
 class MainWindow;
@@ -20,8 +21,6 @@ class QueryWidget;
 class TableModel;
 class FindAndReplacePanel;
 class DbObjectsModel;
-class DbConnection;
-class DataTable;
 class CodeBlockProperties;
 
 class MainWindow : public QMainWindow
@@ -32,6 +31,7 @@ public:
 	explicit MainWindow(QWidget *parent = 0);
 	~MainWindow();
     void activateEditorBlock(CodeBlockProperties *blockProperties);
+    void queryStateChanged(QueryWidget *w, QueryState state);
 	
 protected:
     virtual void closeEvent(QCloseEvent *event) override;
