@@ -2,6 +2,7 @@
 #include <QGridLayout>
 #include <QLabel>
 #include <QComboBox>
+#include "settings.h"
 
 ExtFileDialog::ExtFileDialog(QWidget *parent) :
     QFileDialog(parent)
@@ -16,7 +17,10 @@ ExtFileDialog::ExtFileDialog(QWidget *parent) :
     {
         QHBoxLayout *hbl = new QHBoxLayout();
         _encodingCombo = new QComboBox(this);
-        _encodingCombo->addItems(tr("UTF-8,Windows-1251,UTF-16LE,cp866").split(','));
+        _encodingCombo->addItems(
+                    SqtSettings::value("encodings").
+                    toString().
+                    split(',', QString::SkipEmptyParts));
         _encodingCombo->setCurrentIndex(0);
         hbl->addStretch();
         hbl->addWidget(new QLabel(tr("Encoding")));

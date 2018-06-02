@@ -175,10 +175,17 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                     else
                         result.append(",");
 
-                    if (cur.data(Qt::TextAlignmentRole).toInt() & Qt::AlignRight)
-                        result += cur.data(Qt::EditRole).toString();
+                    QString value = cur.data(Qt::EditRole).toString();
+                    if (
+                            (cur.data(Qt::TextAlignmentRole).toInt() & Qt::AlignRight) ||
+                            // When single cell selected:
+                            //   copy plain text if clipboard's value is distinct from current selected value;
+                            //   copy quoted literal when clipboard contains it's plain value already.
+                            (indexes.size() == 1 && QApplication::clipboard()->text() != value)
+                       )
+                        result += value;
                     else
-                        result += "'" + cur.data(Qt::EditRole).toString().replace("'","''") + "'";
+                        result += "'" + value.replace("'","''") + "'";
                     prev = cur;
                 }
 

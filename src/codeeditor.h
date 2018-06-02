@@ -40,9 +40,14 @@ protected:
 private slots:
     void updateLeftSideBarWidth();
     void updateLeftSideBar(const QRect &rect, int dy);
+    void onHlTimerTimeout();
 
 private:
+    QList<QTextEdit::ExtraSelection> matchBracket(QString &docContent, const QTextCursor &selectedBracket, int darkerFactor = 100);
+    QList<QTextEdit::ExtraSelection> currentLineSelection();
+    bool isEnveloped(int pos);
     QWidget *_leftSideBar;
+    QTimer *_hlTimer;
 };
 
 #endif // CODEEDITOR_H

@@ -23,7 +23,7 @@ public:
     explicit QueryWidget(DbConnection *connection, QWidget *parent = 0);
     ~QueryWidget();
     const QString& fileName() { return _fn; }
-    void openFile(const QString &fileName, const QString &encoding);
+    bool openFile(const QString &fileName, const QString &encoding);
     bool saveFile(const QString &fileName, const QString &encoding = QString());
     QString encoding() { return _encoding; }
     DbConnection* dbConnection() { return _connection.get(); }
@@ -56,8 +56,6 @@ public slots:
     void clearResult();
     //void onCustomGridContextMenuRequested(const QPoint & pos);
     //void on_customEditorContextMenuRequested(const QPoint & pos);
-    //void onActionCopyTriggered();
-    void onCursorPositionChanged();
 
 private:
     QString _fn;
@@ -72,9 +70,6 @@ private:
     QMenu *_resultMenu;
     QAction *_actionCopy;
     bool eventFilter(QObject *object, QEvent *event);
-    QList<QTextEdit::ExtraSelection> matchBracket(const QTextCursor &selectedBracket, int darkerFactor = 100);
-    bool isEnveloped(const QTextCursor &c);
-    void setExtraSelections(const QList<QTextEdit::ExtraSelection> &selections);
     void log(const QString &text, QColor color);
 };
 

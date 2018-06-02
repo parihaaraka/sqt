@@ -12,11 +12,9 @@
 #include <QTextCodec>
 #include <QTextStream>
 #include <QMenu>
-#include <QClipboard>
 #include <QVBoxLayout>
 #include "findandreplacepanel.h"
 #include <QKeyEvent>
-#include <QMimeData>
 #include <memory>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -37,17 +35,6 @@ QueryWidget::QueryWidget(DbConnection *connection, QWidget *parent) :
 {
     _messages = nullptr;
     _highlighter = nullptr;
-
-    //_resultMenu = new QMenu(this);
-    //_actionCopy = new QAction(tr("Copy CSV"), this);
-    //_actionCopy->setShortcuts(QKeySequence::Copy);
-    //_resultMenu->addAction(_actionCopy);
-    //connect(_actionCopy, &QAction::triggered, this, &QueryWidget::onActionCopyTriggered);
-
-    /*_actionCopyHTML = new QAction(tr("Copy html"), this);
-    _resultMenu->addAction(_actionCopyHTML);
-    connect(_actionCopyHTML, &QAction::triggered, this, &QueryWidget::on_actionCopy_triggered);*/
-
     _editorLayout = new QVBoxLayout(this);
     _editorLayout->setSpacing(0);
     _editorLayout->setMargin(0);
@@ -74,13 +61,13 @@ QueryWidget::~QueryWidget()
     }
 }
 
-void QueryWidget::openFile(const QString &fileName, const QString &encoding)
+bool QueryWidget::openFile(const QString &fileName, const QString &encoding)
 {
     QFile f(fileName);
     if (!f.open(QIODevice::ReadOnly))
     {
-        QMessageBox::critical(this, tr("Error"), f.errorString());
-        return;
+        onError(tr("Unable to open %1: %2").arg(fileName).arg(f.errorString()));
+        return false;
     }
     _fn = fileName;
     _encoding = encoding;
@@ -93,6 +80,7 @@ void QueryWidget::openFile(const QString &fileName, const QString &encoding)
     setPlainText(read_stream.readAll());
     document()->setModified(false);
     f.close();
+    return true;
 }
 
 bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
@@ -100,7 +88,7 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
     QFile f(fileName);
     if (!f.open(QIODevice::WriteOnly))
     {
-        QMessageBox::critical(this, tr("Error"), f.errorString());
+        onError(tr("Unable to save %1: %2").arg(fileName).arg(f.errorString()));
         return false;
     }
     _fn = fileName;
@@ -347,10 +335,7 @@ T* initEditor(QWidget **textEdit, QueryWidget *parent)
 
     //_editor->setContextMenuPolicy(Qt::CustomContextMenu);
     //connect(_editor, &QTextEdit::customContextMenuRequested, this, &QueryWidget::on_customEditorContextMenuRequested);
-
     QObject::connect(editor->document(), &QTextDocument::contentsChanged, parent, &QueryWidget::sqlChanged);
-    QObject::connect(editor, &T::cursorPositionChanged, parent, &QueryWidget::onCursorPositionChanged);
-    QObject::connect(editor, &T::textChanged, parent, &QueryWidget::onCursorPositionChanged);
 
     if (MainWindow *mainWindow = qobject_cast<MainWindow*>(parent->window()))
         QObject::connect(editor, &T::cursorPositionChanged, mainWindow, &MainWindow::refreshCursorInfo);
@@ -498,173 +483,6 @@ void QueryWidget::on_customEditorContextMenuRequested(const QPoint &pos)
 }
 */
 
-/*
-void QueryWidget::onActionCopyTriggered()
-{
-    QTableView *tv = qobject_cast<QTableView*>(QApplication::focusWidget());
-    if (!tv)
-        return;
-    bool isHTML = false; //(sender() == _actionCopyHTML);
-    QString result = (isHTML ? "<table><tr>" : "");
-    TableModel *m = qobject_cast<TableModel*>(tv->model());
-
-    QModelIndexList indexes = tv->selectionModel()->selectedIndexes();
-    if(indexes.size() < 1)
-        return;
-    qSort(indexes);
-
-    QModelIndex prev;
-    for(QModelIndex &cur: indexes)
-    {
-        //QMetaType::Type t = (QMetaType::Type)m->data(cur).type();
-        QString val = m->data(cur).toString();
-        if (prev.isValid())
-        {
-            if (cur.row() != prev.row())
-                result.append(isHTML ? QString("</tr><tr>") : QString(QChar::CarriageReturn));
-            else if (!isHTML)
-                result.append(',');
-        }
-
-        if (isHTML)
-            result.append("<td>" + val.toHtmlEscaped() + "</td>");
-        else
-        {
-            int type = m->table()->getColumn(cur.column()).sqlType();
-            result.append(_connection->isUnquotedType(type) ? val : "\"" + val.replace("\"", "\"\"") + "\"");
-        }
-        prev = cur;
-    }
-    result.append(isHTML ? QString("</tr></table>") : QString(QChar::CarriageReturn));
-    if (isHTML)
-    {
-        QMimeData *data = new QMimeData;
-        data->setHtml(result);
-        QApplication::clipboard()->setMimeData(data);
-    }
-    else
-    {
-        QApplication::clipboard()->setText(result);
-    }
-}
-*/
-
-void QueryWidget::onCursorPositionChanged()
-{
-    QList<QTextEdit::ExtraSelection> left_bracket;
-    QList<QTextEdit::ExtraSelection> right_bracket_and_current_line;
-    setExtraSelections(left_bracket); // clear extra selections
-
-    /*  current line distinct background
-    if (!isReadOnly())
-    {
-        QTextEdit::ExtraSelection selection;
-        QColor lineColor = QColor("#efefef");
-        selection.format.setBackground(lineColor);
-        selection.format.setProperty(QTextFormat::FullWidthSelection, true);
-        selection.cursor = textCursor();
-        selection.cursor.clearSelection();
-        right_bracket_and_current_line.append(selection);
-    }*/
-
-    QTextCursor cursor = textCursor();
-    if (cursor.selectedText().length() > 1 || !_highlighter || !_highlighter->document())
-    {
-        setExtraSelections(right_bracket_and_current_line);
-        return;
-    }
-
-    QTextCursor c(cursor);
-    c.clearSelection();
-    if (c.movePosition(QTextCursor::PreviousCharacter, QTextCursor::KeepAnchor))
-    {
-        // get bracket to the left and matching one selected
-        left_bracket.append(matchBracket(c));
-        c.movePosition(QTextCursor::NextCharacter);
-    }
-    if (c.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor))
-    {
-        // get bracket to the right and matching one selected
-        right_bracket_and_current_line.append(matchBracket(c, left_bracket.empty() ? 100 : 115));
-    }
-    setExtraSelections(right_bracket_and_current_line + left_bracket);
-}
-
-bool QueryWidget::isEnveloped(const QTextCursor &c)
-{
-    int pos = c.positionInBlock();
-    if (c.hasSelection() && c.anchor() < c.position())
-        pos -= 1;
-    for (const QTextLayout::FormatRange &r: c.block().layout()->formats())
-    {
-        if (pos >= r.start && pos < r.start + r.length)
-        {
-            if (r.format.property(QTextFormat::UserProperty) == "envelope")
-                return true;
-            break;
-        }
-    }
-    return false;
-}
-
-void QueryWidget::setExtraSelections(const QList<QTextEdit::ExtraSelection> &selections)
-{
-    if (!_editor)
-        return;
-    if (QPlainTextEdit *plain = qobject_cast<QPlainTextEdit*>(_editor))
-        plain->setExtraSelections(selections);
-    else if (QTextEdit *rich = qobject_cast<QTextEdit*>(_editor))
-        rich->setExtraSelections(selections);
-}
-
-QList<QTextEdit::ExtraSelection> QueryWidget::matchBracket(const QTextCursor &selectedBracket, int darkerFactor)
-{
-    QList<QTextEdit::ExtraSelection> selections;
-
-    QChar c1 = selectedBracket.selectedText()[0];
-    QString brackets("([{)]}");
-    int c1pos = brackets.indexOf(c1, Qt::CaseInsensitive);
-    if (c1pos == -1 || isEnveloped(selectedBracket))
-        return selections;
-    QChar c2 = (c1pos < 3 ? brackets[c1pos + 3] : brackets[c1pos - 3]);
-
-    QTextEdit::ExtraSelection selection;
-    selection.format.setBackground(QColor(160,255,160).darker(darkerFactor));
-    selection.cursor = selectedBracket;
-    selections.append(selection);
-
-    QTextCursor match_cur(selectedBracket);
-    int counter = 1;
-    QRegularExpression pattern(QString("[\\%1\\%2]").arg(c1).arg(c2));
-    QTextDocument::FindFlags flags =
-            (c1pos < 3 ? QTextDocument::FindCaseSensitively :
-                         QTextDocument::FindBackward | QTextDocument::FindCaseSensitively);
-    do
-    {
-        if (c1pos < 3)
-            match_cur.movePosition(QTextCursor::NextCharacter);
-
-        match_cur = document()->find(pattern, match_cur, flags);
-        if (match_cur.isNull())
-            break;
-
-        if (isEnveloped(match_cur))
-            continue;
-
-        QChar tmp = match_cur.selectedText().at(0);
-        counter += (tmp == c1 ? 1 : -1);
-        if (counter == 0)
-        {
-            selection.cursor = match_cur;
-            selections.append(selection);
-        }
-    }
-    while (counter);
-    if (counter)
-        selections[0].format.setBackground(QColor(255,160,160).darker(darkerFactor));
-    return selections;
-}
-
 bool QueryWidget::eventFilter(QObject *object, QEvent *event)
 {
     switch (event->type())
@@ -683,19 +501,9 @@ bool QueryWidget::eventFilter(QObject *object, QEvent *event)
 
         if (keyEvent->key() == Qt::Key_F1)
         {
-            const QStringList &URIs =
-                    (QLocale::system().language() == QLocale::Russian ?
-                         QStringList {
-                         "https://postgrespro.ru/docs/postgresql/current/functions",
-                         "https://postgrespro.ru/docs/postgresql/current/sql-commands"
-                        } :
-                         QStringList {
-                         "https://www.postgresql.org/docs/current/static/functions.html",
-                         "https://www.postgresql.org/docs/current/static/sql-commands.html"
-                        }
-                    );
-            int ind = keyEvent->modifiers().testFlag(Qt::ShiftModifier) ? 0 : 1;
-            QDesktopServices::openUrl(QUrl(URIs[ind]));
+            QString url = SqtSettings::value(keyEvent->modifiers().testFlag(Qt::ShiftModifier) ?
+                                                 "shiftF1url" : "f1url").toString();
+            QDesktopServices::openUrl(QUrl(url));
             return true;
         }
 
@@ -748,7 +556,9 @@ bool QueryWidget::eventFilter(QObject *object, QEvent *event)
                 nextPos = c.block().position();
             else
                 nextPos = startOfText;
-            c.setPosition(nextPos, keyEvent->modifiers().testFlag(Qt::ShiftModifier) ? QTextCursor::KeepAnchor : QTextCursor::MoveAnchor);
+            c.setPosition(nextPos, keyEvent->modifiers().testFlag(Qt::ShiftModifier) ?
+                              QTextCursor::KeepAnchor :
+                              QTextCursor::MoveAnchor);
             e->setTextCursor(c);
             return true;
         }
@@ -774,6 +584,8 @@ bool QueryWidget::eventFilter(QObject *object, QEvent *event)
         }
         else if (keyEvent->key() == Qt::Key_Tab || keyEvent->key() == Qt::Key_Backtab)
         {
+            bool cursorToStart = (start == c.position());
+
             // do not indent if selection is within single block
             c.setPosition(end);
             int lastBlock = c.blockNumber();
@@ -846,8 +658,16 @@ bool QueryWidget::eventFilter(QObject *object, QEvent *event)
                 while (true);
             }
             c.endEditBlock();
-            c.setPosition(start < 0 ? 0 : start);
-            c.setPosition(end, QTextCursor::KeepAnchor);
+            if (cursorToStart)
+            {
+                c.setPosition(end);
+                c.setPosition(start < 0 ? 0 : start, QTextCursor::KeepAnchor);
+            }
+            else
+            {
+                c.setPosition(start < 0 ? 0 : start);
+                c.setPosition(end, QTextCursor::KeepAnchor);
+            }
             e->setTextCursor(c);
             return true;
         }

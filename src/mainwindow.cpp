@@ -1,19 +1,15 @@
-#include <QTextCodec>
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
-#include "sqlsyntaxhighlighter.h"
 #include "connectiondialog.h"
 #include "settings.h"
 #include <QMessageBox>
 #include "dbobject.h"
 #include "dbobjectsmodel.h"
 #include "logindialog.h"
-#include <QThread>
 #include <QTimer>
 #include "dbosortfilterproxymodel.h"
 #include "dbconnectionfactory.h"
 #include "dbconnection.h"
-#include <QTextStream>
 #include "querywidget.h"
 #include <QTextDocumentFragment>
 #include <QCloseEvent>
@@ -1258,9 +1254,11 @@ void MainWindow::openFile(const QString &fileName, const QString &encoding)
         QueryWidget *w = currentQueryWidget();
         QApplication::setOverrideCursor(Qt::WaitCursor);
         ScopeGuard<void(*)()> cursorGuard(QApplication::restoreOverrideCursor);
-        w->openFile(fileName, encoding);
-        ui->tabWidget->setTabText(ui->tabWidget->currentIndex(), QFileInfo(fileName).fileName());
-        ui->tabWidget->setTabToolTip(ui->tabWidget->currentIndex(), fileName);
+        if (w->openFile(fileName, encoding))
+        {
+            ui->tabWidget->setTabText(ui->tabWidget->currentIndex(), QFileInfo(fileName).fileName());
+            ui->tabWidget->setTabToolTip(ui->tabWidget->currentIndex(), fileName);
+        }
         _fileDialog.selectFile(fileName);
         _fileDialog.setEncoding(encoding);
         addMruFile();

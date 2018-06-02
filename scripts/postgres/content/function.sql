@@ -20,13 +20,24 @@ begin
 	else
 		with tmp as
 		(
-			select a.n, row_number() over () as i
+			select a.n, a.i, row_number() over () as rn
 			from pg_proc p
-				cross join unnest(p.proargnames) with ordinality a(n, i)
+				cross join lateral (
+					-- stuff to support functions with anonimous arguments
+					select a.n, coalesce(a.i, s.i) i
+					from generate_series(1, p.pronargs) s(i)
+						left join unnest(p.proargnames) with ordinality a(n, i) on s.i = a.i
+					) a
 			where p.oid = _fn_oid and a.i in ($children.ids$)
 		)
 		select 'SELECT * FROM ' || _fn_name || '(' ||
-			string_agg(n || '=>$' || i::text, ', ') || E');\n'
+			string_agg(
+					coalesce(n || '=>', 
+						case when rn = 1 then '/*you can''t use named notation with anon arguments*/' 
+						else '' 
+						end) || 
+				'$' || rn::text, 
+				', ' order by tmp.i) || E');\n'
 		into _tmp
 		from tmp;
 		

@@ -21,6 +21,11 @@ void load()
     for (const auto &k: settings.allKeys())
         _settings.insert(k, settings.value(k));
 
+    auto setDefault = [&settings](const QString &key, const QVariant &value) {
+        settings.setValue(key, value);
+        _settings.insert(key, value);
+    };
+
     QString appStyle = settings.value("appStyle").toString();
     if (appStyle.isEmpty())
     {
@@ -34,19 +39,30 @@ void load()
                     "   font-size: %3pt;\n"
                     "}").
                 arg(fontSize).arg(fontSize - 0.5).arg(fontSize + 1);
-        settings.setValue("appStyle", appStyle);
-        _settings.insert("appStyle", appStyle);
+        setDefault("appStyle", appStyle);
     }
+
+    if (settings.value("encodings").toString().isEmpty())
+        setDefault("encodings", "UTF-8,Windows-1251,UTF-16LE,cp866");
+
+    if (settings.value("f1url").toString().isEmpty())
+        setDefault("f1url", (QLocale::system().language() == QLocale::Russian ?
+                                 "https://postgrespro.ru/docs/postgresql/current/sql-commands" :
+                                 "https://www.postgresql.org/docs/current/static/sql-commands.html"
+                            ));
+
+    if (settings.value("shiftF1url").toString().isEmpty())
+        setDefault("shiftF1url", (QLocale::system().language() == QLocale::Russian ?
+                                 "https://postgrespro.ru/docs/postgresql/current/functions" :
+                                 "https://www.postgresql.org/docs/current/static/functions.html"
+                            ));
 
     bool ok;
     int tabSize = settings.value("tabSize", -1).toInt(&ok);
     if (!ok || tabSize <= 0)
-    {
-        settings.setValue("tabSize", 3);
-        _settings.insert("tabSize", 3);
-    }
-    locker.unlock();
+        setDefault("tabSize", 3);
 
+    locker.unlock();
     QApplication *app = qobject_cast<QApplication*>(QGuiApplication::instance());
     if (app)
         app->setStyleSheet(appStyle);

@@ -1,7 +1,10 @@
+#include <QtGlobal>
 #include "codeeditor.h"
 #include <QPainter>
 #include <QTextBlock>
 #include <QMimeData>
+#include <QRegularExpression>
+#include <QTimer>
 #include "settings.h"
 
 #define RIGHT_MARGIN 2
@@ -33,9 +36,28 @@ private:
 CodeEditor::CodeEditor(QWidget *parent) : QPlainTextEdit(parent)
 {
     _leftSideBar = new LeftSideBar(this);
+    _hlTimer = new QTimer(this);
+    _hlTimer->setInterval(100);
+    _hlTimer->setSingleShot(true);
+    connect(_hlTimer, &QTimer::timeout, this, &CodeEditor::onHlTimerTimeout);
     connect(this, &CodeEditor::blockCountChanged, this, &CodeEditor::updateLeftSideBarWidth);
     connect(this, &CodeEditor::updateRequest, this, &CodeEditor::updateLeftSideBar);
     connect(this, &CodeEditor::cursorPositionChanged, _leftSideBar, static_cast<void(QWidget::*)(void)>(&QWidget::update));
+
+    // immediate line indicator
+    connect(this, &CodeEditor::cursorPositionChanged, [this]() {
+        // keep existing extra selections except line indicator
+        auto selections = extraSelections();
+        if (!selections.isEmpty() && selections.back().format.property(QTextFormat::FullWidthSelection).toBool())
+            selections.pop_back();
+        selections += currentLineSelection();
+        setExtraSelections(selections);
+    });
+    // suspended highlighting
+    connect(this, &CodeEditor::cursorPositionChanged, _hlTimer, static_cast<void(QTimer::*)(void)>(&QTimer::start));
+    connect(this, &CodeEditor::textChanged, _hlTimer, static_cast<void(QTimer::*)(void)>(&QTimer::start));
+    connect(this, &CodeEditor::selectionChanged, _hlTimer, static_cast<void(QTimer::*)(void)>(&QTimer::start));
+
     updateLeftSideBarWidth();
 }
 
@@ -182,6 +204,183 @@ void CodeEditor::updateLeftSideBar(const QRect &rect, int dy)
 
     if (rect.contains(viewport()->rect()))
         updateLeftSideBarWidth();
+}
+
+bool operator == (QTextEdit::ExtraSelection &l, QTextEdit::ExtraSelection &r)
+{
+    return (l.cursor == r.cursor && l.format == r.format);
+}
+
+void CodeEditor::onHlTimerTimeout()
+{
+    // ------------ match selected word ------------
+    QTextCursor curCursor = textCursor();
+    QString selectedText = curCursor.selectedText();
+    QList<QTextEdit::ExtraSelection> selections;
+    QString content;
+    if (!selectedText.isEmpty())
+    {
+        int curPos = curCursor.selectionStart();
+        QTextCursor testCursor = textCursor();
+        testCursor.setPosition(curPos);
+        testCursor.select(QTextCursor::WordUnderCursor);
+        if (selectedText == testCursor.selectedText())
+        {
+#if QT_VERSION >= 0x050900
+            content = document()->toRawText();
+#else
+            content = document()->toPlainText();
+#endif
+            int pos = 0;
+            QColor selectionColor(Qt::yellow);
+            selectionColor.setAlphaF(0.7);
+            while (true)
+            {
+                pos = content.indexOf(selectedText, pos);
+                if (pos < 0)
+                    break;
+                if (curPos != pos)
+                {
+                    QTextCursor testCursor = textCursor();
+                    testCursor.setPosition(pos);
+                    testCursor.select(QTextCursor::WordUnderCursor);
+                    if (selectedText == testCursor.selectedText())
+                    {
+                        QTextEdit::ExtraSelection s;
+                        s.format.setBackground(selectionColor);
+                        s.cursor = testCursor;
+                        selections.append(s);
+                    }
+                }
+                pos += selectedText.length();
+            }
+        }
+    }
+
+    // ---------- match brackets ------------
+
+    QList<QTextEdit::ExtraSelection> left_bracket_selections;
+    QList<QTextEdit::ExtraSelection> right_bracket_selections;
+
+    QTextCursor cursor = textCursor();
+    //if (cursor.selectedText().length() < 2)
+    {
+        QTextCursor c(cursor);
+        c.clearSelection();
+        if (c.movePosition(QTextCursor::PreviousCharacter, QTextCursor::KeepAnchor))
+        {
+            // get bracket to the left and matching one selected
+            left_bracket_selections.append(matchBracket(content, c));
+            c.movePosition(QTextCursor::NextCharacter);
+        }
+
+        if (c.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor))
+        {
+            // get bracket to the right and matching one selected
+            right_bracket_selections.append(matchBracket(content, c, left_bracket_selections.empty() ? 100 : 115));
+        }
+    }
+
+    selections += right_bracket_selections + left_bracket_selections + currentLineSelection();
+    setExtraSelections(selections);
+}
+
+QList<QTextEdit::ExtraSelection> CodeEditor::matchBracket(QString &docContent, const QTextCursor &selectedBracket, int darkerFactor)
+{
+    QList<QTextEdit::ExtraSelection> selections;
+    QChar c1 = selectedBracket.selectedText()[0];
+    QString brackets("([{)]}");
+    int c1pos = brackets.indexOf(c1, Qt::CaseInsensitive);
+    // not a bracket or within commented text / string literal / so on
+    if (c1pos == -1 || isEnveloped(selectedBracket.selectionStart()))
+        return selections;
+
+    // find pair character
+    QChar c2 = (c1pos < 3 ? brackets[c1pos + 3] : brackets[c1pos - 3]);
+
+    // initial selection of current bracket
+    QTextEdit::ExtraSelection selection;
+    selection.format.setBackground(QColor(160,255,160).darker(darkerFactor));
+    selection.cursor = selectedBracket;
+    selections.append(selection);
+
+    if (docContent.isEmpty())
+#if QT_VERSION >= 0x050900
+        docContent = document()->toRawText();
+#else
+        docContent = document()->toPlainText();
+#endif
+
+    int depth = 1;
+    int distance = 0;
+    int delta = (c1pos < 3 ? 1 : -1);
+    int length = docContent.length();
+    int pos = selectedBracket.selectionStart();
+
+    // manual search to speed it up
+    do
+    {
+        pos += delta;
+        ++distance;
+        // prevent extremely far search
+        if (distance > 500000)
+        {
+            selections.clear();
+            return selections;
+        }
+
+        if (pos < 0 || pos == length)
+            break;
+        QCharRef c = docContent[pos];
+        if ((c != c1 && c != c2) || isEnveloped(pos))
+            continue;
+
+        depth += (c == c1 ? 1 : -1);
+    }
+    while (depth);
+
+    if (depth) // pair is not matched - change color of initial character
+        selections[0].format.setBackground(QColor(255,160,160).darker(darkerFactor));
+    else
+    {
+        selection.cursor = textCursor();
+        selection.cursor.setPosition(pos);
+        selection.cursor.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+        selections.append(selection);
+    }
+
+    return selections;
+}
+
+QList<QTextEdit::ExtraSelection> CodeEditor::currentLineSelection()
+{
+    if (isReadOnly() || !SqtSettings::value("highlightCurrentLine", false).toBool())
+        return QList<QTextEdit::ExtraSelection>();
+
+    QTextEdit::ExtraSelection s;
+    QColor lineColor(palette().windowText().color());
+    lineColor.setAlphaF(0.05);
+    s.format.setBackground(lineColor);
+    s.format.setProperty(QTextFormat::FullWidthSelection, true);
+    s.cursor = textCursor();
+    s.cursor.clearSelection();
+    return QList<QTextEdit::ExtraSelection> {s};
+}
+
+bool CodeEditor::isEnveloped(int pos)
+{
+    QTextBlock b = this->document()->findBlock(pos);
+    int posInBlock = pos - b.position();
+    for (const QTextLayout::FormatRange &r: b.layout()->formats())
+    {
+        if (posInBlock >= r.start && posInBlock < r.start + r.length)
+        {
+            if (r.format.property(QTextFormat::UserProperty) == "envelope")
+                return true;
+            break;
+        }
+    }
+    return false;
 }
 
 CodeBlockProperties::CodeBlockProperties(QueryWidget *w) : QTextBlockUserData(), _w(w)

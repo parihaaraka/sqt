@@ -1,7 +1,7 @@
 select
 	'fn_argument' node_type,
 	arg.i id,
-	arg.n || '&nbsp;&nbsp;<span class="light">' || 
+	coalesce(arg.n || '&nbsp;&nbsp;', '') || '<span class="light">' || 
 		format_type(arg.t, null) ||
 		'</span>' ui_name,
 	quote_ident(arg.n) "name",
