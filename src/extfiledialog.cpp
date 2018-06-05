@@ -17,11 +17,6 @@ ExtFileDialog::ExtFileDialog(QWidget *parent) :
     {
         QHBoxLayout *hbl = new QHBoxLayout();
         _encodingCombo = new QComboBox(this);
-        _encodingCombo->addItems(
-                    SqtSettings::value("encodings").
-                    toString().
-                    split(',', QString::SkipEmptyParts));
-        _encodingCombo->setCurrentIndex(0);
         hbl->addStretch();
         hbl->addWidget(new QLabel(tr("Encoding")));
         hbl->addWidget(_encodingCombo);
@@ -38,6 +33,20 @@ QString ExtFileDialog::encoding()
 void ExtFileDialog::setEncoding(const QString &encoding)
 {
     int ind = _encodingCombo->findData(encoding, Qt::DisplayRole);
-    if (ind != -1)
-        _encodingCombo->setCurrentIndex(ind);
+    if (ind == -1)
+    {
+        _encodingCombo->addItem(encoding);
+        ind = _encodingCombo->count() - 1;
+    }
+    _encodingCombo->setCurrentIndex(ind);
+}
+
+void ExtFileDialog::fillEncodings()
+{
+    _encodingCombo->clear();
+    _encodingCombo->addItems(
+                SqtSettings::value("encodings").toString().
+                split(',', QString::SkipEmptyParts));
+    if (!_encodingCombo->count())
+        _encodingCombo->setCurrentIndex(0);
 }

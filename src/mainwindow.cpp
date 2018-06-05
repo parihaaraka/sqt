@@ -746,6 +746,7 @@ void MainWindow::on_actionOpen_triggered()
     _fileDialog.setWindowTitle(tr("Open script"));
     _fileDialog.setNameFilters(QStringList() << tr("Script files (*.sql)") << tr("All files (*.*)"));
     _fileDialog.setHistory(_mruDirs);
+    _fileDialog.fillEncodings();
     if (!_fileDialog.exec())
         return;
     QString fn = _fileDialog.selectedFiles().at(0);
@@ -800,6 +801,7 @@ bool MainWindow::ensureSaved(int index, bool ask_name, bool forceWarning)
                 _fileDialog.setFileMode(QFileDialog::AnyFile);
                 _fileDialog.setWindowTitle(tr("Save script"));
                 _fileDialog.setNameFilters(QStringList() << tr("Script files (*.sql)") << tr("All files (*.*)"));
+                _fileDialog.fillEncodings();
                 _fileDialog.setEncoding(w->encoding());
                 _fileDialog.setHistory(_mruDirs);
                 if (!_fileDialog.exec())

@@ -4,6 +4,8 @@
 ## Overview
 The subject was aimed to provide fast and convenient MS SQL query tool under linux. The only existing ODBC interface lead to support of any other ODBC data source. As a result of pgAdmin3 deprecation `sqt` was modified to have a native PostgreSQL support via libpq. Due to my current needs PostgreSQL support is in priority.
 The main target audience are db programmers.
+#### Binaries
+Standalone [sqt for windows x64](https://drive.google.com/open?id=1pD-twf3N0svQv-UzolVLlaUl3PZ1GK8U) (~12Mb)
 
 ## Feature highlights
 * Customizable objects tree and textual/tabular content view (see [scripts/README.md](https://github.com/parihaaraka/sqt/blob/master/scripts/README.md)) let you build you own tree with application-specific nodes;

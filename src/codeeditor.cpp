@@ -37,25 +37,26 @@ CodeEditor::CodeEditor(QWidget *parent) : QPlainTextEdit(parent)
 {
     _leftSideBar = new LeftSideBar(this);
     _hlTimer = new QTimer(this);
-    _hlTimer->setInterval(100);
+    _hlTimer->setInterval(20);
     _hlTimer->setSingleShot(true);
     connect(_hlTimer, &QTimer::timeout, this, &CodeEditor::onHlTimerTimeout);
     connect(this, &CodeEditor::blockCountChanged, this, &CodeEditor::updateLeftSideBarWidth);
     connect(this, &CodeEditor::updateRequest, this, &CodeEditor::updateLeftSideBar);
-    connect(this, &CodeEditor::cursorPositionChanged, _leftSideBar, static_cast<void(QWidget::*)(void)>(&QWidget::update));
-
-    // immediate line indicator
     connect(this, &CodeEditor::cursorPositionChanged, [this]() {
-        // keep existing extra selections except line indicator
+        _leftSideBar->update();
         auto selections = extraSelections();
+        // remove old line indicator
         if (!selections.isEmpty() && selections.back().format.property(QTextFormat::FullWidthSelection).toBool())
             selections.pop_back();
+        // add new line indicator
         selections += currentLineSelection();
         setExtraSelections(selections);
+        _hlTimer->start();
     });
-    // suspended highlighting
-    connect(this, &CodeEditor::cursorPositionChanged, _hlTimer, static_cast<void(QTimer::*)(void)>(&QTimer::start));
-    connect(this, &CodeEditor::textChanged, _hlTimer, static_cast<void(QTimer::*)(void)>(&QTimer::start));
+    connect(this, &CodeEditor::textChanged, [this]() {
+        setExtraSelections(currentLineSelection());
+        _hlTimer->start();
+    });
     connect(this, &CodeEditor::selectionChanged, _hlTimer, static_cast<void(QTimer::*)(void)>(&QTimer::start));
 
     updateLeftSideBarWidth();

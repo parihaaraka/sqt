@@ -12,6 +12,7 @@ public:
     explicit ExtFileDialog(QWidget *parent = 0);
     QString encoding();
     void setEncoding(const QString &encoding);
+    void fillEncodings();
 
 private:
     QComboBox *_encodingCombo;

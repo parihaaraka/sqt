@@ -157,13 +157,14 @@ begin
 					case
 						when length(definition) + length(description) > 110 then
 							-- comment above column definition
-							coalesce(E'\t\t--\u2193 ' || replace(description, E'\n', E'\n\t\t-- ') || E'\n', '') ||
+							--coalesce(E'\t\t--\u2193 ' || replace(description, E'\n', E'\n\t\t-- ') || E'\n', '') ||
 							-- column
 							E'\t' ||	definition || 
 								case 
 									when attnum = (select max(attnum) from to_show where attislocal) then '' 
 									else ',' 
-								end
+								end ||
+							coalesce(E'\n' || E'\t\t--\u2191 ' || replace(description, E'\n', E'\n\t\t-- '), '')
 						else
 							-- column
 							E'\t' ||	definition ||
