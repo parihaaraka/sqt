@@ -79,11 +79,11 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->objectsView->setItemDelegateForColumn(0, new DbTreeItemDelegate(this));
     ui->objectsView->setStyle(new MyProxyStyle);
     connect(ui->objectsView, &QTreeView::expanded, this, &MainWindow::objectsViewAdjustColumnWidth);
-    connect(ui->objectsView, &QTreeView::collapsed, this, &MainWindow::objectsViewAdjustColumnWidth);
     connect(ui->objectsView, &QTreeView::collapsed, [this](const QModelIndex &index) {
-        const QModelIndex currentNodeIndex =
-                qobject_cast<const QSortFilterProxyModel*>(index.model())->
-                mapToSource(index);
+        auto model = (index.isValid() ? qobject_cast<const QSortFilterProxyModel*>(index.model()) : nullptr);
+        if (!model) // i saw index being invalid on windows (wtf?)
+            return;
+        const QModelIndex currentNodeIndex = model->mapToSource(index);
         DbObject *obj = static_cast<DbObject*>(currentNodeIndex.internalPointer());
         // close db connection on database node collapse
         if (obj && obj->data(DbObject::TypeRole).toString() == "database")
