@@ -70,6 +70,12 @@ QVariant DbObjectsModel::data(const QModelIndex &index, int role) const
     if (!index.isValid())
         return QVariant();
     DbObject *item = static_cast<DbObject*>(index.internalPointer());
+    if (role == Qt::DisplayRole)
+    {
+        QVariant childCount = item->data(DbObject::ChildObjectsCountRole);
+        return item->data(role).toString() + (childCount.isValid() ?
+                                                  " (" + QString::number(childCount.toInt()) + ")" : "");
+    }
     return item->data(role);
 }
 
@@ -181,6 +187,7 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
     ScopeGuard<void(*)()> cursorGuard(QApplication::restoreOverrideCursor);
 
     int insertPosition = parentNode->childCount();
+    int childObjectsCount = 0;
     try
     {
         std::shared_ptr<DbConnection> con = dbConnection(parent);
@@ -223,7 +230,10 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
             std::unique_ptr<DbObject> newItem(new DbObject(parentNode));
             newItem->setData(r[textInd].toString(), Qt::DisplayRole);
             if (idInd >= 0 && !r[idInd].isNull())
+            {
                 newItem->setData(r[idInd].toString(), DbObject::IdRole);
+                ++childObjectsCount;
+            }
             if (nameInd >= 0 && !r[nameInd].isNull())
                 newItem->setData(r[nameInd].toString(), DbObject::NameRole);
             if (iconInd >= 0 && !r[iconInd].isNull())
@@ -278,6 +288,10 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
     }
 
     parentNode->setData(parentNode->childCount() > 0, DbObject::ParentRole);
+    QVariant parentDbId = parentNode->data(DbObject::IdRole);
+    // to show number of db objects if parent is folder or counter > 5 (it's about function.arguments, table.columns, etc)
+    if (childObjectsCount && (!parentDbId.isValid() || childObjectsCount > 5))
+        parentNode->setData(childObjectsCount, DbObject::ChildObjectsCountRole);
     return true;
 }
 

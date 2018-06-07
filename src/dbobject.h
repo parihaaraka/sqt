@@ -21,6 +21,7 @@ public:
         ContentTypeRole,            ///< content type [script | text | html | table]
         FavouriteRole,              ///< marked as favourite
         ParentRole,                 ///< if node may have children
+        ChildObjectsCountRole,      ///< number of child items with id
         DataRole,
         CurrentSortRole,
         MultiselectRole,
