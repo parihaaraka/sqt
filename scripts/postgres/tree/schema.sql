@@ -46,3 +46,11 @@ select
 	null,
 	'views.png',
 	'6'
+union all
+select
+	'operators_related',
+	null::text,
+	'Ops',
+	null,
+	'operators-related.png',
+	'7'

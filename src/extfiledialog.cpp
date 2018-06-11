@@ -35,8 +35,17 @@ void ExtFileDialog::setEncoding(const QString &encoding)
     int ind = _encodingCombo->findData(encoding, Qt::DisplayRole);
     if (ind == -1)
     {
-        _encodingCombo->addItem(encoding);
-        ind = _encodingCombo->count() - 1;
+        if (encoding.isEmpty())
+        {
+            if (!_encodingCombo->count())
+                _encodingCombo->addItem("UTF-8");
+            ind = 0;
+        }
+        else
+        {
+            _encodingCombo->addItem(encoding);
+            ind = _encodingCombo->count() - 1;
+        }
     }
     _encodingCombo->setCurrentIndex(ind);
 }

@@ -23,6 +23,13 @@ Standalone [sqt for windows x64](https://drive.google.com/open?id=1pD-twf3N0svQv
 
 ![screenshot](https://github.com/parihaaraka/sqt/wiki/img/screenshot1.png)
 
+## Build instruction
+You may build the project by means of QtCreator or execute this sequence of commands from the project's root directory:
+```
+mkdir build && cd build && qmake ../src/sqt.pro && make
+```
+Qt toolchain must be installed and be available via PATH.
+
 ## Todo
 * Code completion;
 * executing of JavaScript along with SQL to run automation tasks;

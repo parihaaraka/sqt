@@ -651,12 +651,12 @@ bool MainWindow::closeTab(int index)
     {
         QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(index));
 
-        // let it close while query is executing (?!)
-        /*
         DbConnection *con = w->dbConnection();
         if (con && con->queryState() != QueryState::Inactive)
+        {
+            onError(tr("connection is in use"));
             return false;
-        */
+        }
 
         ui->tabWidget->removeTab(index);
         delete w;
@@ -678,7 +678,7 @@ void MainWindow::on_actionNew_triggered()
             !con->open()
         )
     {
-        onError("db connection unavailable");
+        onError(tr("db connection unavailable"));
         return;
     }
 
