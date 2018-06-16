@@ -642,26 +642,34 @@ void QueryWidget::onCompleterRequest()
         }
     };
 
-    if (words.count() < 3)
+    auto cmpl = completer();
+    std::unique_ptr<TableModel> m(new TableModel(cmpl));
+
+    switch (words.count())
     {
+    case 1:
+        exec("objects");
+        break;
+    case 2:
+        // previous word may be both table and schema, so we should support both of them
         exec("columns");
-        if (!c || c->resultsets.isEmpty())
-            exec("objects");
-    }
-    else // 3 words
-    {
+        if (c && !c->resultsets.isEmpty())
+            m->take(c->resultsets.last());
+        exec("objects");
+        break;
+    case 3:
         exec("columns");
     }
 
-    if (!c || c->resultsets.isEmpty())
+    if (c && !c->resultsets.isEmpty())
+        m->take(c->resultsets.last());
+
+    if (!m->rowCount())
         return;
 
-    auto cmpl = completer();
-    TableModel *m = new TableModel(cmpl);
-    m->take(c->resultsets.last());
     ed->setCompleter(cmpl);
     cmpl->setModelSorting(QCompleter::CaseSensitivelySortedModel);
-    cmpl->setModel(m);
+    cmpl->setModel(m.release());
     cmpl->setCompletionPrefix(words.last());
     int cmplCount = cmpl->completionCount();
     if (!cmplCount)
