@@ -310,8 +310,21 @@ void MainWindow::activateEditorBlock(CodeBlockProperties *blockProperties)
     if (!blockProperties)
         return;
 
-    QTextDocument *doc = qobject_cast<QTextDocument*>(blockProperties->queryWidget()->document());
-    QPlainTextEdit *ed = qobject_cast<QPlainTextEdit*>(blockProperties->queryWidget()->editor());
+    // extract useful knowledge from CodeBlockProperties context
+    QueryWidget *w = nullptr;
+    QObject *object = blockProperties->editor();
+    while (object)
+    {
+        w = qobject_cast<QueryWidget*>(object);
+        if (w)
+            break;
+        object = object->parent();
+    }
+    if (!w)
+        return;
+
+    QTextDocument *doc = qobject_cast<QTextDocument*>(w->document());
+    QPlainTextEdit *ed = qobject_cast<QPlainTextEdit*>(w->editor());
     if (!doc || !ed)
         return;
 
@@ -322,10 +335,10 @@ void MainWindow::activateEditorBlock(CodeBlockProperties *blockProperties)
         {
             if (ui->tabWidget->isHidden())
                 ui->actionQuery_editor->trigger();
-            ui->tabWidget->setCurrentWidget(blockProperties->queryWidget());
+            ui->tabWidget->setCurrentWidget(w);
 
             QTextCursor cursor(block);
-            blockProperties->queryWidget()->setTextCursor(cursor);
+            w->setTextCursor(cursor);
             ed->centerCursor();
             break;
         }
@@ -514,6 +527,7 @@ void MainWindow::on_actionRefresh_triggered()
     Scripting::refresh(cn, Scripting::Context::Root);
     Scripting::refresh(cn, Scripting::Context::Content);
     Scripting::refresh(cn, Scripting::Context::Preview);
+    Scripting::refresh(cn, Scripting::Context::Autocomplete);
 
     Scripting::refresh(cn, Scripting::Context::Tree);
 
@@ -642,7 +656,7 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event)
         break;
     default: ; // to avoid a bunch of warnigs
     }
-    return QObject::eventFilter(object, event);
+    return QMainWindow::eventFilter(object, event);
 }
 
 bool MainWindow::closeTab(int index)

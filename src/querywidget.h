@@ -14,6 +14,8 @@ class QMenu;
 class FindAndReplacePanel;
 class QVBoxLayout;
 class DataTable;
+class CodeEditor;
+class QCompleter;
 
 class QueryWidget : public QSplitter
 {
@@ -54,6 +56,7 @@ public slots:
     void onError(const QString &text);
     void fetched(DataTable *table);
     void clearResult();
+    void onCompleterRequest();
     //void onCustomGridContextMenuRequested(const QPoint & pos);
     //void on_customEditorContextMenuRequested(const QPoint & pos);
 
@@ -69,8 +72,8 @@ private:
     QList<TableModel*> _tables;
     QMenu *_resultMenu;
     QAction *_actionCopy;
-    bool eventFilter(QObject *object, QEvent *event);
     void log(const QString &text, QColor color);
+    static QCompleter *completer();
 };
 
 #endif // QUERYWIDGET_H

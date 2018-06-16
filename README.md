@@ -15,7 +15,8 @@ Standalone [sqt for windows x64](https://drive.google.com/open?id=1pD-twf3N0svQv
 * convenient (Qt Creator-like) search/replace panel;
 * multiple resultsets support;
 * bookmarks (mark: `Ctrl+M`, previous: `Ctrl+,`, next: `Ctrl+.`, last: `Ctrl+L`);
-* json viewer with highlighting and extracting json as text value (`Ctrl+J`);
+* initial code completion support (`Ctrl+Space`);
+* json viewer with highlighting and extracting json from it's nested text value (`Ctrl+J`);
 * totalling selected cells (`F6`);
 * resultsets structure textual output;
 * pg: client-side COPY to file or log widget, COPY from file;
@@ -31,10 +32,10 @@ mkdir build && cd build && qmake ../src/sqt.pro && make
 Qt toolchain must be installed and be available via PATH.
 
 ## Todo
-* Code completion;
+* Improve code completion, prepare scripts to fetch metadata from not-postgresql data sources;
 * executing of JavaScript along with SQL to run automation tasks;
 * new script types to extend objects tree interaction (modifying, administration tasks);
-* enhance scripts to make `sqt` as useful as possible (+provide scripts for different dbms, versions, common odbc data source);
+* enhance scripts to make `sqt` as useful as possible (+provide scripts for different dbms, versions, generic odbc data source);
 * batch mode;
 * reports.
 

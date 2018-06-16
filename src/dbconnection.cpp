@@ -29,7 +29,7 @@ QString DbConnection::escapeIdentifier(const QString &identifier)
     return identifier;
 }
 
-QPair<QString, int> DbConnection::typeInfo(int sqlType)
+QPair<QString, int> DbConnection::typeInfo(int /*sqlType*/)
 {
     // TODO
     return {"unknown", -1};

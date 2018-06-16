@@ -51,7 +51,7 @@ public slots:
     void clear();
 };
 
-enum class Context { Root = 0, Tree, Content, Preview };
+enum class Context { Root = 0, Tree, Content, Preview, Autocomplete };
 struct Script
 {
     enum class Type { SQL, QS };

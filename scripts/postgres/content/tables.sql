@@ -1,4 +1,6 @@
-select c.oid, c.relname as "name",
+select 
+	c.relname as "name",
+	c.oid,
 	case
 		when c.relnamespace = pg_my_temp_schema() then 'local temporary'
 		when c.relkind = any (array['r'::"char", 'p'::"char"]) then 'base table'

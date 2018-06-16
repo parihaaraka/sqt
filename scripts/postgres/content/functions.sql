@@ -1,5 +1,6 @@
 select 
-	p.proname || '(' || oidvectortypes(p.proargtypes) || ')' "function",
+	p.proname || ' (' || oidvectortypes(p.proargtypes) || ')' "function",
+	p.oid, 
 	case when p.proisagg then 'aggregate' when t.oid is not null then ' trigger' end "type",
 	p.proowner::regrole "owner",
 	obj_description(p.oid, 'pg_proc') "comment"

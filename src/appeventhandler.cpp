@@ -330,5 +330,5 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
             return w->eventFilter(obj, event); // handle actions state if needed
     }
 
-    return false;
+    return QObject::eventFilter(obj, event);
 }

@@ -29,6 +29,8 @@ QString context2str(Context context)
         return "content";
     case Context::Preview:
         return "preview";
+    case Context::Autocomplete:
+        return "autocomplete";
     default: // root
         return "";
     }

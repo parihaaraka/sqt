@@ -91,6 +91,9 @@ Qt::ItemFlags TableModel::flags(const QModelIndex &index) const
 
 QVariant TableModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
+    if (section < 0)
+        return QVariant();
+
     if (orientation == Qt::Horizontal)
     {
         if (role == Qt::ToolTipRole)

@@ -1,4 +1,6 @@
-select f.opfname || coalesce(' (' || m.amname || ')', '') "opfamily",
+select 
+	f.opfname || coalesce(' (' || m.amname || ')', '') "opfamily",
+	f.oid,
 	f.opfowner::regrole "owner",
 	obj_description(f.oid, 'pg_opfamily') "comment"
 from pg_catalog.pg_opfamily f

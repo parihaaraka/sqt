@@ -18,6 +18,7 @@
 #include <memory>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include "dbobjectsmodel.h"
 #include "mainwindow.h"
 #include "scripting.h"
@@ -25,6 +26,9 @@
 #include "codeeditor.h"
 #include "settings.h"
 #include <QTextBrowser>
+#include <QCompleter>
+#include <QScrollBar>
+#include <QToolTip>
 
 QueryWidget::QueryWidget(QWidget *parent) : QueryWidget(nullptr, parent)
 {
@@ -106,7 +110,9 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
 
 void QueryWidget::setDbConnection(DbConnection *connection)
 {
-    _connection.reset(connection);
+    if (_connection.get() != connection)
+        _connection.reset(connection);
+
     if (connection)
     {
         if (!findChild<QTabWidget*>("results"))
@@ -330,7 +336,6 @@ T* initEditor(QWidget **textEdit, QueryWidget *parent)
 
     editor = new T(parent);
     editor->setObjectName("sql");
-    editor->installEventFilter(parent);
     editor->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard | Qt::LinksAccessibleByMouse);
 
     //_editor->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -353,6 +358,7 @@ T* initEditor(QWidget **textEdit, QueryWidget *parent)
 void QueryWidget::setPlainText(const QString &text)
 {
     CodeEditor *editor = initEditor<CodeEditor>(&_editor, this);
+    connect(editor, &CodeEditor::completerRequest, this, &QueryWidget::onCompleterRequest);
     editor->setPlainText(text);
 }
 
@@ -373,6 +379,64 @@ void QueryWidget::log(const QString &text, QColor color)
     _messages->appendPlainText(text.trimmed());
     if (!text.isEmpty() && widget(1)->height() == 0)
         setSizes(QList<int>() << 400 << 100);
+}
+
+QCompleter* QueryWidget::completer()
+{
+    static bool initialized = false;
+    static QCompleter c;
+    if (!initialized)
+    {
+        initialized = true;
+        connect(c.popup()->selectionModel(), &QItemSelectionModel::currentChanged,
+                [](const QModelIndex &current, const QModelIndex &) {
+            if (current.isValid())
+            {
+                auto m = current.model();
+                if (m->columnCount() < 2)
+                    return;
+                QJsonDocument doc = QJsonDocument::fromJson(m->index(current.row(), 1).data().toString().toUtf8());
+                QJsonArray arr;
+                if (doc.isObject())
+                    arr += doc.object();
+                else if (doc.isArray())
+                    arr = doc.array();
+
+                QString tooltip;
+                for (auto i: arr)
+                {
+                    if (!i.isObject())
+                        continue;
+
+                    auto obj = i.toObject();
+                    QString name = obj["n"].toString();
+                    QString info = obj["d"].toString();
+                    if (name.isEmpty() && info.isEmpty())
+                        continue;
+
+                    if (!tooltip.isEmpty())
+                        tooltip += "<br/><br/>";
+
+                    tooltip +=
+                            (name.isEmpty() ?
+                                "" :
+                                "<b>" + name.toHtmlEscaped().replace(' ', "&nbsp;") + "</b>")
+                            + (info.isEmpty() ?
+                                "" :
+                                (name.isEmpty() ? "" : "<br/>") + info.toHtmlEscaped());
+                }
+
+                if (!tooltip.isEmpty())
+                {
+                    auto v = QueryWidget::completer()->popup();
+                    QToolTip::showText(v->mapToGlobal(v->rect().bottomLeft()), tooltip);
+                    return;
+                }
+            }
+            QToolTip::hideText();
+        });
+    }
+    return &c;
 }
 
 void QueryWidget::onMessage(const QString &text)
@@ -457,6 +521,165 @@ void QueryWidget::clearResult()
     _tables.clear();
 }
 
+void QueryWidget::onCompleterRequest()
+{
+    // TODO  cache and much, much more :)
+
+    CodeEditor *ed = qobject_cast<CodeEditor*>(sender());
+    /*
+     Possible positions on current word:
+     cur_word (standalone)
+        Schema/table/function and so on.
+        Do not gather all columns of all available tables (for a while),
+        but it may be useful in all parts of a query except FROM.
+     p0.cur_word
+        p0
+            SELECT:     schema/alias/cte/table (fall through records and composite values)
+            FROM/JOIN:  schema/cte/table (alias within parentheses only)
+            join ON:    schema(to be followed by table.column)/alias/cte/table
+        cur_word
+            p0 is table/view ? columns of p0 : schema objects
+     p0.p1.cur_word
+        p0: schema only
+        p1: table
+        cur_word: column
+    */
+
+    if (!_connection || ed->textCursor().hasSelection())
+        return;
+
+    // Temporary parser of just the current identifier.
+    // Last word is the word under cursor (may me empty).
+
+    int pos = ed->textCursor().position();
+    QString content = ed->text();
+    QStringList words;
+    QString word;
+    bool identifierStarted = false;
+    auto pushWord = [&words, &identifierStarted](QString &word) ->bool {
+        if (!word.isEmpty())
+        {
+            if (!identifierStarted && word[0].isDigit())
+                return false;
+            words.push_front(word);
+            word.clear();
+        }
+        else if (identifierStarted)
+            return false;
+        else if (words.isEmpty()) // always have current word (may be empty)
+        {
+            words.push_front(word);
+            word.clear();
+        }
+        return true;
+    };
+
+    QChar prevChar;
+    while (pos)
+    {
+        QChar c = content[--pos];
+        if (c == '"')
+        {
+            if (!identifierStarted && prevChar != '.')
+                return;
+            pushWord(word);
+            identifierStarted = !identifierStarted;
+        }
+        else if (identifierStarted || c.isLetterOrNumber() || c == '_')
+        {
+            word = c + word;
+            if (!pos && (identifierStarted || prevChar == '"' || !pushWord(word)))
+                return;
+        }
+        else
+        {
+            if (!pushWord(word))
+                return;
+            if (c != '.')
+                break;
+        }
+        prevChar = c;
+    }
+
+    if (words.isEmpty() || words.count() > 3 || !_connection || !_connection->open())
+        return;
+
+    auto env = [this, &words](const QString &macro) -> QVariant
+    {
+        // last word is completion prefix only
+        if (words.count() == 1)
+            return QVariant();
+
+        if (macro == "schema.name")
+            return words[0];
+
+        if (macro == "table.name")
+            return words.count() > 2 ? words[1] : words[0];
+
+        return QVariant();
+    };
+
+    std::unique_ptr<Scripting::CppConductor> c;
+    auto exec = [this, &c, &env](const QString &objectType)
+    {
+
+        if (_connection->queryState() == QueryState::Inactive)
+        {
+            // disconnect all slots
+            disconnect(_connection.get(), 0, 0, 0);
+            auto localErrHandler = connect(_connection.get(), &DbConnection::error, this, &QueryWidget::onError);
+            c = Scripting::execute(_connection.get(), Scripting::Context::Autocomplete, objectType, env);
+            disconnect(localErrHandler);
+            setDbConnection(_connection.get());
+        }
+        else
+        {
+            // this option does not use current search_path, so you'd better avoid using
+            // autocompletion while query is being executed
+
+            std::unique_ptr<DbConnection> tmp_cn(_connection->clone());
+            c = Scripting::execute(tmp_cn.get(), Scripting::Context::Autocomplete, objectType, env);
+        }
+    };
+
+    if (words.count() < 3)
+    {
+        exec("columns");
+        if (!c || c->resultsets.isEmpty())
+            exec("objects");
+    }
+    else // 3 words
+    {
+        exec("columns");
+    }
+
+    if (!c || c->resultsets.isEmpty())
+        return;
+
+    auto cmpl = completer();
+    TableModel *m = new TableModel(cmpl);
+    m->take(c->resultsets.last());
+    ed->setCompleter(cmpl);
+    cmpl->setModelSorting(QCompleter::CaseSensitivelySortedModel);
+    cmpl->setModel(m);
+    cmpl->setCompletionPrefix(words.last());
+    int cmplCount = cmpl->completionCount();
+    if (!cmplCount)
+        return;
+    if (cmplCount == 1)
+        cmpl->activated(cmpl->currentCompletion());
+    else
+    {
+        QRect cr = ed->cursorRect();
+        cr.setWidth(cmpl->popup()->sizeHintForColumn(0)
+                    + cmpl->popup()->verticalScrollBar()->sizeHint().width());
+        cmpl->complete(cr);
+        cmpl->popup()->selectionModel()->setCurrentIndex(
+                    cmpl->popup()->model()->index(0, 0),
+                    QItemSelectionModel::SelectCurrent);
+    }
+}
+
 /*
 void QueryWidget::onCustomGridContextMenuRequested(const QPoint &pos)
 {
@@ -482,199 +705,3 @@ void QueryWidget::on_customEditorContextMenuRequested(const QPoint &pos)
     delete menu;
 }
 */
-
-bool QueryWidget::eventFilter(QObject *object, QEvent *event)
-{
-    switch (event->type())
-    {
-    case QEvent::KeyPress:
-    {
-        QKeyEvent *keyEvent = static_cast<QKeyEvent*>(event);
-        QPlainTextEdit *e = qobject_cast<QPlainTextEdit*>(object);
-        if (!e || e->isReadOnly())
-            break;
-        if (keyEvent->key() == Qt::Key_Insert && keyEvent->modifiers() == Qt::NoModifier)
-        {
-            e->setOverwriteMode(!e->overwriteMode());
-            return true;
-        }
-
-        if (keyEvent->key() == Qt::Key_F1)
-        {
-            QString url = SqtSettings::value(keyEvent->modifiers().testFlag(Qt::ShiftModifier) ?
-                                                 "shiftF1url" : "f1url").toString();
-            QDesktopServices::openUrl(QUrl(url));
-            return true;
-        }
-
-        QTextCursor c = e->textCursor();
-
-        if (keyEvent->key() == Qt::Key_M && keyEvent->modifiers().testFlag(Qt::ControlModifier))
-        {
-            CodeBlockProperties *prop = static_cast<CodeBlockProperties*>(c.block().userData());
-            c.block().setUserData(prop ? nullptr : new CodeBlockProperties(this));
-        }
-
-        if (keyEvent->key() == Qt::Key_Return)
-        {
-            // previous indentation
-            c.removeSelectedText();
-            QRegularExpression indent_regex("(^\\s*)(?=[^\\s\\r\\n]+)");
-            QTextCursor prev_c = e->document()->find(indent_regex, c, QTextDocument::FindBackward);
-
-            if (!prev_c.isNull())
-            {
-                // all leading characters are \s => shift start search point up
-                if (prev_c.selectionEnd() >= c.position())
-                {
-                    QTextCursor upper(e->document());
-                    upper.setPosition(prev_c.selectionStart());
-                    prev_c = e->document()->find(indent_regex, upper, QTextDocument::FindBackward);
-                }
-
-                if (!prev_c.isNull())
-                {
-                    // remove subsequent \s
-                    QTextCursor next_c = e->document()->find(QRegularExpression("(\\s+)(?=\\S+)"), c);
-                    if (next_c.selectionStart() == c.selectionStart())
-                        next_c.removeSelectedText();
-                }
-            }
-            // insert indentation
-            c.insertText("\n" + prev_c.selectedText());
-            return true;
-        }
-
-        if (keyEvent->key() == Qt::Key_Home && !keyEvent->modifiers().testFlag(Qt::ControlModifier))
-        {
-            int startOfText = c.block().position();
-            QTextCursor notSpace = e->document()->find(QRegularExpression("\\S"), startOfText);
-            if (!notSpace.isNull() && notSpace.block() == c.block() && notSpace.position() - 1 > startOfText)
-                startOfText = notSpace.position() - 1;
-            int nextPos = startOfText;
-            if (c.position() <= startOfText && c.position() > c.block().position())
-                nextPos = c.block().position();
-            else
-                nextPos = startOfText;
-            c.setPosition(nextPos, keyEvent->modifiers().testFlag(Qt::ShiftModifier) ?
-                              QTextCursor::KeepAnchor :
-                              QTextCursor::MoveAnchor);
-            e->setTextCursor(c);
-            return true;
-        }
-
-        if (!c.hasSelection())
-            break;
-        int start = c.selectionStart();
-        int end = c.selectionEnd();
-        if (keyEvent->key() == Qt::Key_U)
-        {
-            if (keyEvent->modifiers().testFlag(Qt::ControlModifier))
-            {
-                if (keyEvent->modifiers().testFlag(Qt::ShiftModifier))
-                    c.insertText(c.selectedText().toLower());
-                else
-                    c.insertText(c.selectedText().toUpper());
-            }
-            else break;
-            c.setPosition(start);
-            c.setPosition(end, QTextCursor::KeepAnchor);
-            e->setTextCursor(c);
-            return true;
-        }
-        else if (keyEvent->key() == Qt::Key_Tab || keyEvent->key() == Qt::Key_Backtab)
-        {
-            bool cursorToStart = (start == c.position());
-
-            // do not indent if selection is within single block
-            c.setPosition(end);
-            int lastBlock = c.blockNumber();
-            c.setPosition(start);
-            if (c.blockNumber() == lastBlock)
-                break;
-
-            c.movePosition(QTextCursor::StartOfBlock);
-            int startOfFirstBlock = c.position();
-            c.beginEditBlock();
-            bool firstPass = true;
-            if (keyEvent->key() == Qt::Key_Backtab)
-            {
-                int tabSize = SqtSettings::value("tabSize", 3).toInt();
-                do
-                {
-                    if (!firstPass)
-                    {
-                        if (!c.movePosition(QTextCursor::NextBlock))
-                            break;
-                    }
-                    else
-                        firstPass = false;
-
-                    if (c.position() >= end)
-                        break;
-
-                    int tab = tabSize;
-                    while (tab > 0)
-                    {
-                        QChar curChar = e->document()->characterAt(c.position());
-                        if (QString(" \t").contains(curChar))
-                        {
-                            c.setPosition(c.position() + 1, QTextCursor::KeepAnchor);
-                            c.removeSelectedText();
-                            --end;
-                            if (start > startOfFirstBlock && c.position() <= start)
-                                --start;
-                            tab -= (curChar == '\t' ? tabSize : 1);
-                        }
-                        else
-                            break;
-                    }
-                    /*if (tabSize < 0)
-                    {
-                        c.insertText(QString(' ').repeated(-tabSize));
-                        end -= tabSize;
-                    }*/
-                }
-                while (true);
-            }
-            else
-            {
-                do
-                {
-                    if (!firstPass)
-                    {
-                        if (!c.movePosition(QTextCursor::NextBlock))
-                            break;
-                    }
-                    else
-                        firstPass = false;
-                    if (c.position() >= end)
-                        break;
-                    if (c.position() <= start)
-                        ++start;
-                    c.insertText("\t");
-                    ++end;
-                }
-                while (true);
-            }
-            c.endEditBlock();
-            if (cursorToStart)
-            {
-                c.setPosition(end);
-                c.setPosition(start < 0 ? 0 : start, QTextCursor::KeepAnchor);
-            }
-            else
-            {
-                c.setPosition(start < 0 ? 0 : start);
-                c.setPosition(end, QTextCursor::KeepAnchor);
-            }
-            e->setTextCursor(c);
-            return true;
-        }
-        break;
-    }
-    default:
-        break;
-    }
-    return QObject::eventFilter(object, event);
-}

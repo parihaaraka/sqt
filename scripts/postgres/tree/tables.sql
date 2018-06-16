@@ -17,11 +17,10 @@ select
 	'table.png' icon,
 	c.relname sort1,
 	c.relkind::text || c.relname sort2
-from pg_namespace nc
-	join pg_class c on nc.oid = c.relnamespace
-where nc.oid = $schema.id$ and
+from pg_class c
+where c.relnamespace = $schema.id$ and
 	(c.relkind = any (array['r'::"char", 'f'::"char", 'p'::"char"])) and 
-	not pg_is_other_temp_schema(nc.oid) and 
+	not pg_is_other_temp_schema(c.relnamespace) and 
 	(
 		pg_has_role(c.relowner, 'usage'::text) or 
 		has_table_privilege(c.oid, 'select, insert, update, delete, truncate, references, trigger'::text) or 
