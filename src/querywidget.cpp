@@ -29,6 +29,7 @@
 #include <QCompleter>
 #include <QScrollBar>
 #include <QToolTip>
+#include <QTimer>
 
 QueryWidget::QueryWidget(QWidget *parent) : QueryWidget(nullptr, parent)
 {
@@ -110,8 +111,12 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
 
 void QueryWidget::setDbConnection(DbConnection *connection)
 {
+    bool dbConnectionChanged = false;
     if (_connection.get() != connection)
+    {
+        dbConnectionChanged = true;
         _connection.reset(connection);
+    }
 
     if (connection)
     {
@@ -167,7 +172,9 @@ void QueryWidget::setDbConnection(DbConnection *connection)
         }, Qt::QueuedConnection);
         connection->open();
     }
-    highlight(_connection);
+
+    if (dbConnectionChanged)
+        highlight(_connection);
 }
 
 void QueryWidget::ShowFindPanel(FindAndReplacePanel *panel)
@@ -358,7 +365,7 @@ T* initEditor(QWidget **textEdit, QueryWidget *parent)
 void QueryWidget::setPlainText(const QString &text)
 {
     CodeEditor *editor = initEditor<CodeEditor>(&_editor, this);
-    connect(editor, &CodeEditor::completerRequest, this, &QueryWidget::onCompleterRequest);
+    connect(editor, &CodeEditor::completerRequest, this, &QueryWidget::onCompleterRequest, Qt::UniqueConnection);
     editor->setPlainText(text);
 }
 
@@ -392,9 +399,11 @@ QCompleter* QueryWidget::completer()
                 [](const QModelIndex &current, const QModelIndex &) {
             if (current.isValid())
             {
+                auto popup = c.popup();
                 auto m = current.model();
-                if (m->columnCount() < 2)
+                if (!popup->isVisible() || m->columnCount() < 2)
                     return;
+
                 QJsonDocument doc = QJsonDocument::fromJson(m->index(current.row(), 1).data().toString().toUtf8());
                 QJsonArray arr;
                 if (doc.isObject())
@@ -428,8 +437,7 @@ QCompleter* QueryWidget::completer()
 
                 if (!tooltip.isEmpty())
                 {
-                    auto v = QueryWidget::completer()->popup();
-                    QToolTip::showText(v->mapToGlobal(v->rect().bottomLeft()), tooltip);
+                    QToolTip::showText(popup->mapToGlobal(popup->rect().bottomLeft()), tooltip);
                     return;
                 }
             }
@@ -551,8 +559,8 @@ void QueryWidget::onCompleterRequest()
     // Temporary parser of just the current identifier.
     // Last word is the word under cursor (may me empty).
 
-    int pos = ed->textCursor().position();
-    QString content = ed->text();
+    int pos = ed->textCursor().positionInBlock();
+    QString content = ed->textCursor().block().text();
     QStringList words;
     QString word;
     bool identifierStarted = false;
@@ -604,24 +612,23 @@ void QueryWidget::onCompleterRequest()
     if (words.isEmpty() || words.count() > 3 || !_connection || !_connection->open())
         return;
 
-    auto env = [this, &words](const QString &macro) -> QVariant
-    {
-        // last word is completion prefix only
-        if (words.count() == 1)
-            return QVariant();
-
-        if (macro == "schema.name")
-            return words[0];
-
-        if (macro == "table.name")
-            return words.count() > 2 ? words[1] : words[0];
-
-        return QVariant();
-    };
-
     std::unique_ptr<Scripting::CppConductor> c;
-    auto exec = [this, &c, &env](const QString &objectType)
+    auto exec = [this, &c, &words](const QString &objectType)
     {
+        auto env = [this, &words, &objectType](const QString &macro) -> QVariant
+        {
+            // last word is completion prefix only
+            if (words.count() == 1)
+                return QVariant();
+
+            if (macro == "schema.name")
+                return words.count() > 2 || objectType == "objects" ? words[0] : QVariant();
+
+            if (macro == "table.name")
+                return words.count() > 2 ? words[1] : words[0];
+
+            return QVariant();
+        };
 
         if (_connection->queryState() == QueryState::Inactive)
         {
@@ -679,12 +686,15 @@ void QueryWidget::onCompleterRequest()
     else
     {
         QRect cr = ed->cursorRect();
-        cr.setWidth(cmpl->popup()->sizeHintForColumn(0)
-                    + cmpl->popup()->verticalScrollBar()->sizeHint().width());
+        auto popup = cmpl->popup();
+        cr.setWidth(popup->sizeHintForColumn(0)
+                    + popup->verticalScrollBar()->sizeHint().width());
         cmpl->complete(cr);
-        cmpl->popup()->selectionModel()->setCurrentIndex(
-                    cmpl->popup()->model()->index(0, 0),
-                    QItemSelectionModel::SelectCurrent);
+        QTimer::singleShot(100, []() {
+            completer()->popup()->selectionModel()->setCurrentIndex(
+                        completer()->popup()->model()->index(0, 0),
+                        QItemSelectionModel::SelectCurrent);
+        });
     }
 }
 

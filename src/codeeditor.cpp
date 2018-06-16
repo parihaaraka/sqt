@@ -421,11 +421,12 @@ void CodeEditor::keyPressEvent(QKeyEvent *e)
     // adjust completer
     if (_completer && _completer->popup()->isVisible())
     {
+        auto popup = _completer->popup();
         if (newPos < prevPos)
         {
             if (!_completer->completionPrefix().length())
             {
-                _completer->popup()->hide();
+                popup->hide();
                 return;
             }
             int len = _completer->completionPrefix().length() - prevPos + newPos;
@@ -438,9 +439,11 @@ void CodeEditor::keyPressEvent(QKeyEvent *e)
             _completer->setCompletionPrefix(_completer->completionPrefix() + c.selectedText());
         }
         if (_completer->completionCount())
-            _completer->popup()->setCurrentIndex(_completer->popup()->model()->index(0, 0));
+            popup->selectionModel()->setCurrentIndex(
+                        popup->model()->index(0, 0),
+                        QItemSelectionModel::SelectCurrent);
         else
-            _completer->popup()->hide();
+            popup->hide();
     }
 }
 
@@ -573,9 +576,18 @@ void CodeEditor::insertCompletion(const QString &completion)
         return;
     QTextCursor tc = textCursor();
     int extra = completion.length() - _completer->completionPrefix().length();
-    tc.movePosition(QTextCursor::EndOfWord, QTextCursor::KeepAnchor);
+    QString text = tc.block().text();
+    int bpos = tc.positionInBlock();
+    // clear the rest of current word
+    while (bpos < text.length())
+    {
+        QChar c = text[bpos];
+        if (!c.isLetterOrNumber() && c != '_')
+            break;
+        tc.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+        ++bpos;
+    }
     tc.insertText(completion.right(extra));
-    setTextCursor(tc);
 }
 
 QList<QTextEdit::ExtraSelection> CodeEditor::matchBracket(QString &docContent, const QTextCursor &selectedBracket, int darkerFactor) const
