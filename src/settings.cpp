@@ -10,8 +10,8 @@
 namespace SqtSettings
 {
 
-QMutex _m;
-QHash<QString, QVariant> _settings;
+static QMutex _m;
+static QHash<QString, QVariant> _settings;
 
 void load()
 {

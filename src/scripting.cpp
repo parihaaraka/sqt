@@ -16,9 +16,9 @@ namespace Scripting
 {
 
 // key = dbms_scripting_id, value = root scripts path
-QHash<QString, QString> _dbms_paths;
+static QHash<QString, QString> _dbms_paths;
 // key = dbms_scripting_id/context/, value = { type, script }
-QHash<QString, QHash<QString, Script>> _scripts;
+static QHash<QString, QHash<QString, Script>> _scripts;
 
 QString context2str(Context context)
 {

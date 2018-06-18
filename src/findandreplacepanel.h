@@ -18,7 +18,7 @@ class FindAndReplacePanel : public QWidget
     Q_OBJECT
     
 public:
-    explicit FindAndReplacePanel(QWidget *parent = 0);
+    explicit FindAndReplacePanel(QWidget *parent = nullptr);
     ~FindAndReplacePanel();
     QList<QAction*> actions();
     void setEditor(QueryWidget *qw);
@@ -35,7 +35,7 @@ private:
     enum FindMode {Forward, Backward, Check};
     Ui::FindAndReplacePanel *ui;
     QueryWidget *_queryWidget;
-    QTextCursor find(const QTextCursor &cursor = QTextCursor(), bool *nextPass = 0, FindMode mode = Forward);
+    QTextCursor find(const QTextCursor &cursor = QTextCursor(), bool *nextPass = nullptr, FindMode mode = Forward);
     QRegularExpression::PatternOptions regexpOptions();
     QString unescape(QString ui_string, bool *err);
 

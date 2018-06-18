@@ -7,7 +7,7 @@ class JsonSyntaxHighlighter : public QSyntaxHighlighter
 {
     Q_OBJECT
 public:
-    explicit JsonSyntaxHighlighter(QObject *parent = 0);
+    explicit JsonSyntaxHighlighter(QObject *parent = nullptr);
 
 protected:
     virtual void highlightBlock(const QString &text);

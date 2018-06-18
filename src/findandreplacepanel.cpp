@@ -6,7 +6,7 @@
 
 FindAndReplacePanel::FindAndReplacePanel(QWidget *parent) :
     QWidget(parent),
-    ui(new Ui::FindAndReplacePanel), _queryWidget(0)
+    ui(new Ui::FindAndReplacePanel), _queryWidget(nullptr)
 {
     ui->setupUi(this);
     setContentsMargins(1, 1, 1, 1);
@@ -59,7 +59,7 @@ void FindAndReplacePanel::refreshActions()
 
 void FindAndReplacePanel::findTriggered()
 {
-    QTextCursor c = find(_queryWidget->textCursor(), 0, sender() == ui->actionFind_previous ? Backward : Forward);
+    QTextCursor c = find(_queryWidget->textCursor(), nullptr, sender() == ui->actionFind_previous ? Backward : Forward);
     if (!c.isNull())
     {
         _queryWidget->setTextCursor(c);
@@ -156,7 +156,7 @@ QTextCursor FindAndReplacePanel::find(const QTextCursor &cursor, bool *nextPass,
     }
     else
     {
-        QTextDocument::FindFlags searchFlags = 0;
+        QTextDocument::FindFlags searchFlags;
         if (mode == Backward)
             searchFlags |= QTextDocument::FindBackward;
         if (ui->cbCaseSensitive->checkState() == Qt::Checked)
@@ -280,7 +280,7 @@ void FindAndReplacePanel::on_btnReplace_clicked()
     if (!prev.hasSelection())
         return;
 
-    QTextCursor c = find(prev, 0, Check);
+    QTextCursor c = find(prev, nullptr, Check);
     if (c.isNull())
         return;
 

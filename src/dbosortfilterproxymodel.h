@@ -7,7 +7,7 @@ class DboSortFilterProxyModel : public QSortFilterProxyModel
 {
     Q_OBJECT
 public:
-    explicit DboSortFilterProxyModel(QObject *parent = 0);
+    explicit DboSortFilterProxyModel(QObject *parent = nullptr);
     bool compare(const QVariant &varl, const QVariant &varr) const;
 
 protected:

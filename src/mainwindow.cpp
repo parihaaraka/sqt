@@ -214,7 +214,7 @@ MainWindow::MainWindow(QWidget *parent) :
     QToolButton *dbBtn = new QToolButton(ui->tabWidget);
     dbBtn->setAutoRaise(true);
     QMenu *dbBtnMenu = new QMenu(dbBtn);
-    connect(dbBtnMenu, &QMenu::aboutToShow, [this, dbBtn, dbBtnMenu](){
+    connect(dbBtnMenu, &QMenu::aboutToShow, [this, dbBtnMenu](){
         dbBtnMenu->clear();
         QueryWidget *qw = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
         DbConnection *currentConnection = (qw ? qw->dbConnection() : nullptr);
@@ -771,7 +771,7 @@ void MainWindow::on_actionOpen_triggered()
 QueryWidget *MainWindow::currentQueryWidget()
 {
     if (!ui->tabWidget->count())
-        return 0;
+        return nullptr;
     QWidget *w = ui->tabWidget->widget(ui->tabWidget->currentIndex());
     return qobject_cast<QueryWidget*>(w);
 }
@@ -1167,7 +1167,7 @@ void MainWindow::refreshContextInfo()
     if (!ui)
         return;
 
-    DbConnection *con = 0;
+    DbConnection *con = nullptr;
     if (QApplication::focusWidget() != ui->objectsView && ui->tabWidget->count())
     {
         QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());

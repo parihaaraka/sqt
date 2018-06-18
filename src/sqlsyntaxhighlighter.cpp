@@ -106,8 +106,6 @@ SqlSyntaxHighlighter::SqlSyntaxHighlighter(const QJsonObject &settings, QObject 
     }
 }
 
-
-
 void SqlSyntaxHighlighter::highlightBlock(const QString &text)
 {
     int firstWordStartPos = -1;
@@ -339,4 +337,3 @@ void SqlSyntaxHighlighter::highlightBlock(const QString &text)
         setCurrentBlockState(mode);
 
 }
-

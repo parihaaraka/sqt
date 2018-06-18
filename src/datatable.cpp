@@ -142,7 +142,7 @@ QVariant& DataRow::operator [](int index)
     return _row[index];
 }
 
-DataColumn::DataColumn(const QString &name, const QString typeName, QMetaType::Type type, int sqlType, int length, int16_t decDigits, int8_t nullableDesc, Qt::AlignmentFlag hAlignment, int arrayElementType) :
+DataColumn::DataColumn(const QString &name, const QString &typeName, QMetaType::Type type, int sqlType, int length, int16_t decDigits, int8_t nullableDesc, Qt::AlignmentFlag hAlignment, int arrayElementType) :
     _name(name), _typeName(typeName), _varType(type), _sqlType(sqlType), _length(length), _decDigits(decDigits), _nullableDesc(nullableDesc), _hAlignment(hAlignment), _arrayElementType(arrayElementType)
 {
 }

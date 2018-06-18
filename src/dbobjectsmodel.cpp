@@ -93,7 +93,7 @@ bool DbObjectsModel::setData(const QModelIndex &index, const QVariant &value, in
 Qt::ItemFlags DbObjectsModel::flags(const QModelIndex &index) const
 {
     if (!index.isValid())
-        return 0;
+        return Qt::NoItemFlags;
 
     return QAbstractItemModel::flags(index);
 }

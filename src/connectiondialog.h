@@ -14,7 +14,7 @@ class ConnectionDialog : public QDialog
 	Q_OBJECT
 	
 public:
-    explicit ConnectionDialog(QWidget *parent = 0, QString name = QString(), QString connectionString = QString());
+    explicit ConnectionDialog(QWidget *parent = nullptr, QString name = QString(), QString connectionString = QString());
     ~ConnectionDialog();
     QString name();
     QString connectionString();

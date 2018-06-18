@@ -10,7 +10,7 @@ namespace Ui {
 class LoginDialog : public QDialog {
     Q_OBJECT
 public:
-    LoginDialog(QWidget *parent = 0, QString user = QString());
+    LoginDialog(QWidget *parent = nullptr, QString user = QString());
     ~LoginDialog();
 	QString user();
 	QString password();

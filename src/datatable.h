@@ -14,7 +14,15 @@ class DataColumn
 {
 public:
     DataColumn(const DataColumn &column) = default;
-    DataColumn(const QString &name, const QString typeName, QMetaType::Type type, int sqlType, int length, int16_t decDigits, int8_t nullableDesc, Qt::AlignmentFlag hAlignment, int arrayElementType = -1);
+    DataColumn(const QString &name = "",
+               const QString &typeName = "",
+               QMetaType::Type type = QMetaType::QString,
+               int sqlType = 0,
+               int length = -1,
+               int16_t decDigits = -1,
+               int8_t nullableDesc = 1,
+               Qt::AlignmentFlag hAlignment = Qt::AlignLeft,
+               int arrayElementType = -1);
 
     // ctor for postgres only for delayed column type specification (it's about arrays)
     DataColumn(const QString &name, QMetaType::Type type, int sqlType, int modifier, int8_t nullableDesc, Qt::AlignmentFlag hAlignment);

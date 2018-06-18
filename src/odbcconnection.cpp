@@ -15,8 +15,8 @@ OdbcConnection::OdbcConnection() :
     DbConnection()
 {
     RETCODE retcode;
-    _henv = 0;
-    _hstmt = 0;
+    _henv = nullptr;
+    _hstmt = nullptr;
     _query_state = QueryState::Inactive;
 
     retcode = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &_henv);
@@ -33,8 +33,8 @@ OdbcConnection::OdbcConnection() :
         }
         SQLFreeHandle(SQL_HANDLE_ENV, _henv);
     }
-    _hdbc = 0;
-    _henv = 0;
+    _hdbc = nullptr;
+    _henv = nullptr;
 }
 
 OdbcConnection::~OdbcConnection()
@@ -233,7 +233,7 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
 
     std::unique_ptr<SQLHSTMT, std::function<void(SQLHSTMT*)>> hstmt_guard(&hstmt_local, [this](SQLHSTMT *hstmt)
     {
-        _hstmt = 0;
+        _hstmt = nullptr;
         SQLFreeHandle(SQL_HANDLE_STMT, *hstmt);
         setQueryState(QueryState::Inactive);
     });
@@ -534,7 +534,7 @@ void OdbcConnection::executeAsync(const QString &query, const QVector<QVariant> 
         execute(query, params);
         thread->quit();
     });
-    connect(thread, &QThread::finished, [this, thread]() {
+    connect(thread, &QThread::finished, [thread]() {
         thread->deleteLater();
     });
     thread->start();
@@ -555,7 +555,7 @@ bool OdbcConnection::open()
 
     SQLSetConnectAttrA(_hdbc, SQL_ATTR_CONNECTION_TIMEOUT, timeout, SQL_IS_UINTEGER);
     SQLSetConnectAttrA(_hdbc, SQL_ATTR_LOGIN_TIMEOUT, timeout, SQL_IS_UINTEGER);
-    retcode = SQLDriverConnectA(_hdbc, 0, const_cast<SQLCHAR*>(reinterpret_cast<const SQLCHAR*>(cs.c_str())),
+    retcode = SQLDriverConnectA(_hdbc, nullptr, const_cast<SQLCHAR*>(reinterpret_cast<const SQLCHAR*>(cs.c_str())),
                                 SQL_NTS, szConnStrOut,
                                 1024, &swStrLen, SQL_DRIVER_NOPROMPT);
     if (check(retcode, _hdbc, SQL_HANDLE_DBC))
@@ -718,10 +718,10 @@ void OdbcConnection::cancel() noexcept
         emit message(tr("cancelling..."));
 
         QThread* thread = new QThread;
-        connect(thread, &QThread::started, [this, thread, hstmt_local]() {
+        connect(thread, &QThread::started, [this, hstmt_local]() {
             checkStmt(SQLCancel(hstmt_local), hstmt_local);
         });
-        connect(thread, &QThread::finished, [this, thread]() {
+        connect(thread, &QThread::finished, [thread]() {
             thread->deleteLater();
         });
         thread->start();

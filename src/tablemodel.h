@@ -8,8 +8,8 @@ class TableModel : public QAbstractItemModel
 {
     Q_OBJECT
 public:
-    explicit TableModel(QObject *parent = 0);
-    ~TableModel();
+    explicit TableModel(QObject *parent = nullptr);
+    virtual ~TableModel() override;
 
     virtual QModelIndex parent(const QModelIndex &) const override;
     virtual int rowCount(const QModelIndex & = QModelIndex()) const override;
@@ -20,7 +20,7 @@ public:
     virtual QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
     void take(DataTable *srcTable);
     void clear();
-    const DataTable* table() const { return _table; }
+    DataTable* table() const { return _table; }
 
 private:
     DataTable *_table;

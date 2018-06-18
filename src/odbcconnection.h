@@ -25,7 +25,7 @@ class OdbcConnection : public DbConnection
     Q_OBJECT
 public:
     OdbcConnection();
-    ~OdbcConnection();
+    virtual ~OdbcConnection() override;
     virtual DbConnection* clone() override;
 
     virtual bool open() override;

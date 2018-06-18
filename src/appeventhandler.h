@@ -7,7 +7,7 @@ class AppEventHandler : public QObject
 {
     Q_OBJECT
 public:
-    explicit AppEventHandler(QObject *parent = 0);
+    explicit AppEventHandler(QObject *parent = nullptr);
 
 protected:
     bool eventFilter(QObject *obj, QEvent *event);

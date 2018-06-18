@@ -15,7 +15,7 @@ class PgConnection : public DbConnection
     Q_OBJECT
 public:
     PgConnection();
-    ~PgConnection();
+    virtual ~PgConnection() override;
     virtual DbConnection* clone() override;
 
     virtual bool open() override;

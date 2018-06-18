@@ -79,9 +79,12 @@ void DbTreeItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
     prepareDocToDrawDbTreeNode(option, index, doc);
 
     painter->save();
-    painter->translate(option.rect.topLeft() + QPoint(
+    painter->translate(option.rect.topLeft() +
+                       QPoint(
                            style.features & QStyleOptionViewItem::HasDecoration ? 24 : 4,
-                           (option.rect.height() - doc.size().height()) / 2));
+                           (option.rect.height() - doc.size().height()) / 2
+                           )
+                       );
     doc.drawContents(painter, QRect(QPoint(0,0), option.rect.size()));
     painter->restore();
 }
@@ -93,8 +96,8 @@ QSize DbTreeItemDelegate::sizeHint(const QStyleOptionViewItem &option, const QMo
     prepareDocToDrawDbTreeNode(option, index, doc);
     sz.setWidth(option.rect.x() +
                 (option.features & QStyleOptionViewItem::HasDecoration ? 24 : 4) +
-                doc.documentLayout()->documentSize().width() + 1);
-    sz.setHeight(doc.documentLayout()->documentSize().height() + 4);
+                int(doc.documentLayout()->documentSize().width()) + 1);
+    sz.setHeight(int(doc.documentLayout()->documentSize().height()) + 4);
     return sz;
 }
 
@@ -109,4 +112,40 @@ void DbTreeItemDelegate::prepareDocToDrawDbTreeNode(const QStyleOptionViewItem &
     //doc.setTextWidth(option.rect.width());   default = -1
 
     doc.setHtml(QString("<span class=\"regular\">%1</span>").arg(index.data().toString()));
+}
+
+MyProxyStyle::MyProxyStyle(QStyle *style) : QProxyStyle(style)
+{
+    Q_UNUSED(style)
+
+    QFileInfo fi_c(QApplication::applicationDirPath() + "/decor/branch-closed.png");
+    QFileInfo fi_o(QApplication::applicationDirPath() + "/decor/branch-open.png");
+    if (fi_c.exists() && fi_o.exists())
+    {
+        _closed = QIcon(fi_c.absoluteFilePath());
+        _open = QIcon(fi_o.absoluteFilePath());
+    }
+}
+
+void MyProxyStyle::drawPrimitive(QStyle::PrimitiveElement element, const QStyleOption *option, QPainter *painter, const QWidget *widget) const
+{
+    if (element == QStyle::PE_IndicatorBranch)
+    {
+        painter->save();
+        painter->fillRect(option->rect.adjusted(0, 0, 1, 1), painter->background());
+        if (_closed.isNull() || _open.isNull())
+            QProxyStyle::drawPrimitive(element, option, painter, widget);
+        else
+        {
+            if (option->state & QStyle::State_Children)
+            {
+                if (option->state & QStyle::State_Open)
+                    _open.paint(painter, option->rect, Qt::AlignCenter | Qt::AlignVCenter);
+                else
+                    _closed.paint(painter, option->rect, Qt::AlignCenter | Qt::AlignVCenter);
+            }
+        }
+        painter->restore();
+    }
+    else QProxyStyle::drawPrimitive(element, option, painter, widget);
 }

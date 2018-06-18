@@ -22,14 +22,15 @@
 #include "dbobjectsmodel.h"
 #include "mainwindow.h"
 #include "scripting.h"
-#include <QDesktopServices>
 #include "codeeditor.h"
 #include "settings.h"
 #include <QTextBrowser>
-#include <QCompleter>
 #include <QScrollBar>
+#include <QCompleter>
 #include <QToolTip>
 #include <QTimer>
+#include "sqlparser.h"
+#include "datatable.h"
 
 QueryWidget::QueryWidget(QWidget *parent) : QueryWidget(nullptr, parent)
 {
@@ -56,11 +57,11 @@ QueryWidget::~QueryWidget()
     {
         QWidget *w = _editorLayout->itemAt(1)->widget();
         _editorLayout->removeWidget(w);
-        w->setParent(0);
+        w->setParent(nullptr);
     }
     if (_highlighter)
     {
-        _highlighter->setDocument(0);
+        _highlighter->setDocument(nullptr);
         delete _highlighter;
         _highlighter = nullptr;
     }
@@ -223,7 +224,7 @@ void QueryWidget::highlight(std::shared_ptr<DbConnection> con)
 
         if (_highlighter)
         {
-            _highlighter->setDocument(0);
+            _highlighter->setDocument(nullptr);
             delete _highlighter;
             _highlighter = nullptr;
         }
@@ -239,7 +240,7 @@ void QueryWidget::highlight(std::shared_ptr<DbConnection> con)
 void QueryWidget::dehighlight()
 {
     if (_highlighter)
-        _highlighter->setDocument(0);
+        _highlighter->setDocument(nullptr);
 }
 
 void QueryWidget::setReadOnly(bool ro)
@@ -615,7 +616,7 @@ void QueryWidget::onCompleterRequest()
     std::unique_ptr<Scripting::CppConductor> c;
     auto exec = [this, &c, &words](const QString &objectType)
     {
-        auto env = [this, &words, &objectType](const QString &macro) -> QVariant
+        auto env = [&words, &objectType](const QString &macro) -> QVariant
         {
             // last word is completion prefix only
             if (words.count() == 1)
@@ -633,7 +634,7 @@ void QueryWidget::onCompleterRequest()
         if (_connection->queryState() == QueryState::Inactive)
         {
             // disconnect all slots
-            disconnect(_connection.get(), 0, 0, 0);
+            disconnect(_connection.get(), nullptr, nullptr, nullptr);
             auto localErrHandler = connect(_connection.get(), &DbConnection::error, this, &QueryWidget::onError);
             c = Scripting::execute(_connection.get(), Scripting::Context::Autocomplete, objectType, env);
             disconnect(localErrHandler);
@@ -658,12 +659,35 @@ void QueryWidget::onCompleterRequest()
         exec("objects");
         break;
     case 2:
-        // previous word may be both table and schema, so we should support both of them
-        exec("columns");
-        if (c && !c->resultsets.isEmpty())
-            m->take(c->resultsets.last());
-        exec("objects");
+    {
+        auto expl = SqlParser::explainAlias(words[0], ed->text(), ed->textCursor().position());
+        switch (expl.first)
+        {
+        case SqlParser::AliasSearchStatus::NotParsed:
+            return;
+        case SqlParser::AliasSearchStatus::NotFound:
+            // previous word may be both table and schema, so we should support both of them
+            exec("columns");
+            if (c && !c->resultsets.isEmpty())
+                m->take(c->resultsets.last());
+            exec("objects");
+            break;
+        case SqlParser::AliasSearchStatus::Name:
+        {
+            QString prefix = words.last();
+            words.swap(expl.second);
+            words.append(prefix);
+            exec("columns");
+            break;
+        }
+        case SqlParser::AliasSearchStatus::Fields:
+            // model does not have a view yet, so no need to use model api
+            m->table()->addColumn(new DataColumn());
+            for (auto &w: expl.second)
+                m->table()->addRow()[0] = w;
+        }
         break;
+    }
     case 3:
         exec("columns");
     }

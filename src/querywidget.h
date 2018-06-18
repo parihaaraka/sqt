@@ -21,8 +21,8 @@ class QueryWidget : public QSplitter
 {
     Q_OBJECT
 public:
-    explicit QueryWidget(QWidget *parent = 0);
-    explicit QueryWidget(DbConnection *connection, QWidget *parent = 0);
+    explicit QueryWidget(QWidget *parent = nullptr);
+    explicit QueryWidget(DbConnection *connection, QWidget *parent = nullptr);
     ~QueryWidget();
     const QString& fileName() { return _fn; }
     bool openFile(const QString &fileName, const QString &encoding);

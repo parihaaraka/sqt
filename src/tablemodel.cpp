@@ -58,15 +58,16 @@ QVariant TableModel::data(const QModelIndex &index, int role) const
     case Qt::DisplayRole:
     {
         QVariant &res = _table->getRow(index.row())[index.column()];
-        if ((QMetaType::Type)res.type() == QMetaType::QTime)
+        QMetaType::Type type = QMetaType::Type(res.type());
+        if (type == QMetaType::QTime)
         {
             return qvariant_cast<QTime>(res).toString("hh:mm:ss.zzz");
         }
-        else if ((QMetaType::Type)res.type() == QMetaType::QDate)
+        else if (type == QMetaType::QDate)
         {
             return qvariant_cast<QDate>(res).toString("yyyy-MM-dd");
         }
-        else if ((QMetaType::Type)res.type() == QMetaType::QDateTime)
+        else if (type == QMetaType::QDateTime)
         {
             QDateTime dt = qvariant_cast<QDateTime>(res);
             if (dt.time().msecsTo(QTime(0, 0)) == 0)
@@ -74,7 +75,7 @@ QVariant TableModel::data(const QModelIndex &index, int role) const
             return dt.toString("yyyy-MM-dd hh:mm:ss.zzz");
         }
     }
-    //[[clang::fallthrough]];
+    //[[fallthrough]];
     case Qt::EditRole:
         return _table->getRow(index.row())[index.column()];
     }
@@ -84,7 +85,7 @@ QVariant TableModel::data(const QModelIndex &index, int role) const
 Qt::ItemFlags TableModel::flags(const QModelIndex &index) const
 {
     if (!index.isValid())
-        return 0;
+        return Qt::NoItemFlags;
 
     return QAbstractItemModel::flags(index);
 }

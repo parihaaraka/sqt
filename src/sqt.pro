@@ -32,7 +32,8 @@ SOURCES += main.cpp\
     codeeditor.cpp \
     settings.cpp \
     settingsdialog.cpp \
-    jsonsyntaxhighlighter.cpp
+    jsonsyntaxhighlighter.cpp \
+    sqlparser.cpp
 
 HEADERS  += mainwindow.h \
     dbobjectsmodel.h \
@@ -59,7 +60,8 @@ HEADERS  += mainwindow.h \
     codeeditor.h \
     settings.h \
     settingsdialog.h \
-    jsonsyntaxhighlighter.h
+    jsonsyntaxhighlighter.h \
+    sqlparser.h
 
 FORMS    += mainwindow.ui \
     logindialog.ui \

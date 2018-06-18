@@ -11,7 +11,7 @@ with t as
 	where 
 		c.relname = '$table.name$' and
 		(
-			('$schema.name$' = 'NULL' and cs.ord is not null) or -- on search patch
+			('$schema.name$' = 'NULL' and cs.ord is not null) or -- on search path
 			ns.nspname = '$schema.name$' -- exact namespace
 		) and
 		c.relkind in ('r'::"char", 'p'::"char", 'f'::"char", 'v'::"char", 'm'::"char")

@@ -13,28 +13,29 @@
 #define RIGHT_MARGIN 2
 #define ICON_PLACE_WIDTH 13
 
-QList<CodeBlockProperties*> _bookmarks;
-float _lastUsedBookmarkPos = 0;
+static QList<CodeBlockProperties*> _bookmarks;
+static float _lastUsedBookmarkPos = 0;
 
 class LeftSideBar : public QWidget
 {
 public:
-    LeftSideBar(CodeEditor *editor) : QWidget(editor) {
-        _codeEditor = editor;
-    }
-
-    QSize sizeHint() const override {
-        return QSize(_codeEditor->leftSideBarWidth(), 0);
-    }
+    LeftSideBar(CodeEditor *editor) : QWidget(editor), _codeEditor(editor) {}
+    QSize sizeHint() const override;
 
 protected:
-    void paintEvent(QPaintEvent *event) override {
-        _codeEditor->leftSideBarPaintEvent(event);
-    }
+    void paintEvent(QPaintEvent *event) override;
 
 private:
     CodeEditor *_codeEditor;
 };
+
+QSize LeftSideBar::sizeHint() const {
+    return QSize(_codeEditor->leftSideBarWidth(), 0);
+}
+
+void LeftSideBar::paintEvent(QPaintEvent *event) {
+    _codeEditor->leftSideBarPaintEvent(event);
+}
 
 CodeEditor::CodeEditor(QWidget *parent) : QPlainTextEdit(parent)
 {
@@ -81,8 +82,8 @@ void CodeEditor::leftSideBarPaintEvent(QPaintEvent *event)
 
     QTextBlock block = firstVisibleBlock();
     int blockNumber = block.blockNumber();
-    int top = (int) blockBoundingGeometry(block).translated(contentOffset()).top();
-    int bottom = top + (int) blockBoundingRect(block).height();
+    int top = int(blockBoundingGeometry(block).translated(contentOffset()).top());
+    int bottom = int(top + blockBoundingRect(block).height());
 
     QFont curFont(font());
     int bCount = blockCount();
@@ -134,7 +135,7 @@ void CodeEditor::leftSideBarPaintEvent(QPaintEvent *event)
 
         block = block.next();
         top = bottom;
-        bottom = top + (int) blockBoundingRect(block).height();
+        bottom = top + int(blockBoundingRect(block).height());
         ++blockNumber;
     }
 }
@@ -157,7 +158,7 @@ QString CodeEditor::text() const
 void CodeEditor::setCompleter(QCompleter *completer)
 {
     if (_completer)
-        disconnect(_completer, 0, this, 0);
+        disconnect(_completer, nullptr, this, nullptr);
 
     _completer = completer;
 
@@ -365,6 +366,7 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
             setTextCursor(c);
             return true;
         }
+        break;
     }
     default:
         break;
@@ -392,6 +394,7 @@ void CodeEditor::keyPressEvent(QKeyEvent *e)
         case Qt::Key_Home:
         case Qt::Key_End:
             _completer->popup()->hide();
+            break;
         default:
             break;
         }
@@ -407,7 +410,8 @@ void CodeEditor::keyPressEvent(QKeyEvent *e)
         }
         else if (e->key() == Qt::Key_Space && e->modifiers().testFlag(Qt::ControlModifier))
         {
-            emit completerRequest();
+            if (!isEnveloped(textCursor().position()))
+                emit completerRequest();
             return;
         }
     }
@@ -695,7 +699,7 @@ CodeBlockProperties::~CodeBlockProperties()
     _lastUsedBookmarkPos = _bookmarks.indexOf(this);
     _bookmarks.removeOne(this);
     if (!_lastUsedBookmarkPos)
-        _lastUsedBookmarkPos = _bookmarks.size() - 0.5;
+        _lastUsedBookmarkPos = _bookmarks.size() - 0.5f;
     else
         _lastUsedBookmarkPos -= 0.5;
 }
@@ -718,7 +722,7 @@ CodeBlockProperties *Bookmarks::next()
 
     _lastUsedBookmarkPos = (_bookmarks.size() - 1 > _lastUsedBookmarkPos ?
                                 _lastUsedBookmarkPos + 1 : 0);
-    return _bookmarks[_lastUsedBookmarkPos];
+    return _bookmarks[int(_lastUsedBookmarkPos)];
 }
 
 CodeBlockProperties *Bookmarks::previous()
@@ -730,11 +734,11 @@ CodeBlockProperties *Bookmarks::previous()
         return _bookmarks[0];
 
     // use current position (if not deleted) or jump to next existing one before search previous
-    _lastUsedBookmarkPos = static_cast<int>(_lastUsedBookmarkPos + 0.5);
+    _lastUsedBookmarkPos = static_cast<int>(_lastUsedBookmarkPos + 0.5f);
 
     _lastUsedBookmarkPos = (_lastUsedBookmarkPos > 0 ?
                                 _lastUsedBookmarkPos - 1 : _bookmarks.size() - 1);
-    return _bookmarks[_lastUsedBookmarkPos];
+    return _bookmarks[int(_lastUsedBookmarkPos)];
 }
 
 CodeBlockProperties *Bookmarks::last()
@@ -745,5 +749,5 @@ CodeBlockProperties *Bookmarks::last()
     if (_lastUsedBookmarkPos != static_cast<int>(_lastUsedBookmarkPos))
         return _bookmarks[_bookmarks.size() - 1];
 
-    return _bookmarks[_lastUsedBookmarkPos];
+    return _bookmarks[int(_lastUsedBookmarkPos)];
 }

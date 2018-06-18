@@ -22,7 +22,7 @@ class DbObjectsModel : public QAbstractItemModel
 {
     Q_OBJECT
 public:
-    explicit DbObjectsModel(QObject *parent = 0);
+    explicit DbObjectsModel(QObject *parent = nullptr);
     ~DbObjectsModel();
 
     virtual QModelIndex parent(const QModelIndex &index) const;

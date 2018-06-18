@@ -8,7 +8,7 @@
 class DbObject
 {
 public:
-    DbObject(DbObject *parent = 0);
+    DbObject(DbObject *parent = nullptr);
     DbObject(DbObject *parent, QString text, QString type, QFont font = QFont());
     ~DbObject();
 
@@ -33,7 +33,7 @@ public:
     void setData(const QVariant &value, int role = Qt::DisplayRole);
     void appendChild(DbObject *item);
     void setParent(DbObject *parent) { _parent = parent; }
-    DbObject *child(int row) const { return _children.value(row, 0); }
+    DbObject *child(int row) const { return _children.value(row, nullptr); }
     DbObject *parent() const { return _parent; }
     int childCount() const { return _children.count(); }
     QVariant data(int role = Qt::DisplayRole) const;

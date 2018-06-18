@@ -28,8 +28,8 @@ class MainWindow : public QMainWindow
 	Q_OBJECT
 	
 public:
-	explicit MainWindow(QWidget *parent = 0);
-	~MainWindow();
+    explicit MainWindow(QWidget *parent = nullptr);
+    virtual ~MainWindow() override;
     void activateEditorBlock(CodeBlockProperties *blockProperties);
     void queryStateChanged(QueryWidget *w, QueryState state);
 	
