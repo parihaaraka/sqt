@@ -36,44 +36,36 @@ struct Entity
 
 AliasSearchResult test(const QString &alias, const QList<Entity> &entities, int level = 0) noexcept
 {
-    qDebug() << alias << ": ";
+    //qDebug() << alias << ": ";
     int count = entities.count();
     for (int i = 0; i < count; ++i)
     {
         const Entity &e = entities[i];
-        qDebug() << "\t(" << level << ", " << e.separator << ") " << e.items;
+        //qDebug() << "\t(" << level << ", " << e.separator << ") " << e.items;
 
         if (e.separator == '.' && e.items.front() == alias)
             continue;
+
         if (e.items.back() == alias)
         {
-            if (e.items.count() == 1) // alias or table name
+            if (e.items.count() == 1) // standalone alias or table name (non-multipart)
             {
-                if (i > 0)
+                if (i > 0) // check backward
                 {
                     if (entities[i - 1].ieq("as") && i > count - 1)
                         return { AliasSearchStatus::Name, level, entities[i - 2].items };
                     return { AliasSearchStatus::Name, level, entities[i - 1].items };
                 }
-                else
-                {
-                    /* could be a problem:
-                    select t.*
-                    from schema.t tmp, schema.xyz t
-                    */
-                    return { AliasSearchStatus::Name, level, e.items };
-                }
             }
-            else // table name (may be followed by alias - check it)
+
+            if (i < count - 1) // check forward
             {
-                if (i < count - 1)
-                {
-                     if (entities[i + 1].ieq("as") && i < count - 2 && entities[i + 2].eq(alias))
-                         return { AliasSearchStatus::Name, level, e.items };
-                }
-                else
-                    return { AliasSearchStatus::Name, level, e.items };
+                 if ((entities[i + 1].ieq("as") && i < count - 2 && entities[i + 2].eq(alias)) ||
+                         entities[i + 1].eq(alias))
+                     return { AliasSearchStatus::Name, level, e.items };
             }
+            else
+                return { AliasSearchStatus::Name, level, e.items };
         }
     }
     return {};
@@ -101,9 +93,9 @@ AliasSearchResult explainAlias(const QString &alias, const QString &text, int po
                           "and", "not", "or"}; // just to narrow down
 
     uint8_t mode = 0xFF;
-    int8_t comment_nest_level = 0;
-    int8_t scope_level = 0;
-    int8_t result_level = 0;
+    int8_t commentNestLevel = 0;
+    int8_t scopeLevel = 0;
+    int8_t resultLevel = 0;
     QChar c, prevChar;
     QString word;
     int last_pos = backward ? -1 : text.length();
@@ -116,13 +108,13 @@ AliasSearchResult explainAlias(const QString &alias, const QString &text, int po
 
     auto applyWord = [&]() -> AliasSearchResult
     {
-        if (!scope_level)
+        if (!scopeLevel)
         {
             if (mode == 1 && dividers.contains(word.toLower()))
             {
                 if (addEntity())
                 {
-                    auto res = test(alias, entities, result_level);
+                    auto res = test(alias, entities, resultLevel);
                     if (res.status != AliasSearchStatus::NotFound)
                         return res;
                     entities.clear();
@@ -222,7 +214,7 @@ AliasSearchResult explainAlias(const QString &alias, const QString &text, int po
             else if (c == '*' && prevChar == '/')
             {
                 mode = 4;
-                comment_nest_level = 1;
+                commentNestLevel = 1;
             }
             else if (c == '-' && prevChar == '-')
                 mode = 5;
@@ -232,7 +224,7 @@ AliasSearchResult explainAlias(const QString &alias, const QString &text, int po
                 {
                     if (addEntity())
                     {
-                        auto res = test(alias, entities, result_level);
+                        auto res = test(alias, entities, resultLevel);
                         if (res.status != AliasSearchStatus::NotFound)
                             return res;
                         entities.clear();
@@ -240,14 +232,14 @@ AliasSearchResult explainAlias(const QString &alias, const QString &text, int po
                     entity.clear();
 
                     if (c == (backward ? ')' : '('))
-                        ++scope_level;
+                        ++scopeLevel;
                     else if (c == (backward ? '(' : ')'))
                     {
-                        --scope_level;
-                        if (scope_level < 0)
+                        --scopeLevel;
+                        if (scopeLevel < 0)
                         {
-                            scope_level = 0;
-                            --result_level;
+                            scopeLevel = 0;
+                            --resultLevel;
                         }
                     }
                 }
@@ -264,11 +256,11 @@ AliasSearchResult explainAlias(const QString &alias, const QString &text, int po
         case 4:
             /* multiline comments may be nested */
             if (c == '*' && prevChar == '/')
-                ++comment_nest_level;
+                ++commentNestLevel;
             else if (c == '/' && prevChar == '*')
-                --comment_nest_level;
+                --commentNestLevel;
 
-            if (!comment_nest_level)
+            if (!commentNestLevel)
                 mode = 0xFF;
             break;
         case 5:
@@ -293,12 +285,14 @@ AliasSearchResult explainAlias(const QString &alias, const QString &text, int po
     }
 
     if (addEntity())
-        return test(alias, entities, result_level);
+        return test(alias, entities, resultLevel);
     return {};
 }
 
 QPair<AliasSearchStatus, QStringList> explainAlias(const QString &alias, const QString &text, int pos) noexcept
 {
+    // TODO advance one by one to both directions
+
     //qDebug() << "--- DOWN ---";
     auto resDown = explainAlias(alias, text, pos, false);
     //qDebug() << "--- UP ---";

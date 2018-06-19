@@ -6,6 +6,8 @@
 #include <QApplication>
 #include <QGuiApplication>
 #include <QScreen>
+#include <QRegularExpression>
+#include <QFont>
 
 namespace SqtSettings
 {
@@ -65,7 +67,40 @@ void load()
     locker.unlock();
     QApplication *app = qobject_cast<QApplication*>(QGuiApplication::instance());
     if (app)
+    {
+        // QApplication does not support font styling via setStyleSheet(),
+        // so lets do it manually
+        QRegularExpression re(R"(QApplication\s*{([^}]+))");
+        QRegularExpressionMatch match = re.match(appStyle);
+        if (match.hasMatch())
+        {
+            QFont f;
+            f.setFamily(f.defaultFamily()); // restore system font if font-family is not specified
+            QString qAppStyle = match.captured(1);
+            re.setPattern(R"(([\w-]+)\s*:\s*([^;}]+))");
+            QRegularExpressionMatchIterator i = re.globalMatch(qAppStyle);
+            while (i.hasNext())
+            {
+                QRegularExpressionMatch match = i.next();
+                if (match.captured(1) == "font-family")
+                    f.setFamily(match.captured(2).trimmed());
+                else if (match.captured(1) == "font-size")
+                {
+                    QString val = match.captured(2).trimmed();
+                    double size = strtod(val.toStdString().c_str(), nullptr);
+                    if (size)
+                    {
+                        if (val.endsWith("px"))
+                            f.setPixelSize(int(size));
+                        else
+                            f.setPointSizeF(size);
+                    }
+                }
+            }
+            app->setFont(f);
+        }
         app->setStyleSheet(appStyle);
+    }
 }
 
 QVariant value(const QString &name, const QVariant &defaultValue)
