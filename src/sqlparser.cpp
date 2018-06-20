@@ -138,6 +138,9 @@ AliasSearchResult explainAlias(const QString &alias, const QString &text, int po
         return {};
     };
 
+    QString eols("\n");
+    eols += QChar::ParagraphSeparator;
+    eols += QChar::LineSeparator;
     while (pos != last_pos)
     {
         c = text[pos];
@@ -218,7 +221,26 @@ AliasSearchResult explainAlias(const QString &alias, const QString &text, int po
             }
             else if (c == '-' && prevChar == '-')
                 mode = 5;
-            else if (!c.isSpace() && c != QChar::ParagraphSeparator && c != QChar::LineSeparator)
+            else if (eols.contains(c))
+            {
+                if (backward)
+                {
+                    // search for first '--' within current line
+                    int i = pos;
+                    int commentStart = pos;
+                    while (--i)
+                    {
+                        if (text[i] == '-' && text[i + 1] == '-')
+                            commentStart = i;
+                        else if (eols.contains(text[i])) // start of line found
+                        {
+                            pos = commentStart;
+                            break;
+                        }
+                    }
+                }
+            }
+            else if (!c.isSpace())
             {
                 if (c != '.')
                 {
@@ -264,13 +286,13 @@ AliasSearchResult explainAlias(const QString &alias, const QString &text, int po
                 mode = 0xFF;
             break;
         case 5:
-            if (c == '\n' || c == QChar::ParagraphSeparator || c == QChar::LineSeparator)
+            if (eols.contains(c))
                 mode = 0xFF;
         }
 
         if (c == ';')
             break;
-        if (mode != 2 && mode != 3 && !c.isSpace() && c != QChar::ParagraphSeparator && c != QChar::LineSeparator)
+        if (mode != 2 && mode != 3 && !c.isSpace() && !eols.contains(c))
             prevChar = c;
         pos += delta;
     }

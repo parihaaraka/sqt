@@ -68,14 +68,15 @@ void load()
     QApplication *app = qobject_cast<QApplication*>(QGuiApplication::instance());
     if (app)
     {
+        QFont f;
+        f.setFamily(f.defaultFamily()); // restore system font if font-family is not specified
+
         // QApplication does not support font styling via setStyleSheet(),
         // so lets do it manually
         QRegularExpression re(R"(QApplication\s*{([^}]+))");
         QRegularExpressionMatch match = re.match(appStyle);
         if (match.hasMatch())
         {
-            QFont f;
-            f.setFamily(f.defaultFamily()); // restore system font if font-family is not specified
             QString qAppStyle = match.captured(1);
             re.setPattern(R"(([\w-]+)\s*:\s*([^;}]+))");
             QRegularExpressionMatchIterator i = re.globalMatch(qAppStyle);

@@ -184,7 +184,7 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                             (indexes.size() == 1 && QApplication::clipboard()->text() != value)
                        )
                         result += value;
-                    else
+                    else if (cur.data(Qt::EditRole).isValid())
                         result += "'" + value.replace("'","''") + "'";
                     prev = cur;
                 }

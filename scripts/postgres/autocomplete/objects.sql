@@ -30,7 +30,7 @@ select * from (
 	select distinct on (c.relname) -- first found in search path or specified schema
 		c.relname, 
 		jsonb_build_object(
-			'n',  -- n means name
+			'n',  -- name
 			case c.relkind 
 				when 'r'::"char" then 'table'
 				when 'p'::"char" then 'table'
@@ -41,7 +41,7 @@ select * from (
 				when 'S'::"char" then 'sequence' 
 				else null
 			end,
-			'd', 	-- d means description
+			'd', 	-- description
 			obj_description(c.oid, 'pg_class')
 		)
 	from target_ns ns
