@@ -210,38 +210,29 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                     {
                         QString tmp = i.data(Qt::EditRole).toString();
                         int dotPos = tmp.indexOf('.');
-                        if (dotPos == -1 && val != static_cast<qlonglong>(val)) // floating point exponential form
+                        if (tmp.indexOf('e') != -1 || (dotPos == -1 && val != static_cast<qlonglong>(val))) // floating point exponential form
                         {
                             sumDouble += val;
                             maxScale = std::max(maxScale, 6);
                         }
                         else if (dotPos == -1) // integer
+                        {
                             sumInt += val;
+                        }
                         else    // decimal
                         {
-                            sumInt += tmp.mid(0, dotPos).toLongLong();
                             maxScale = std::max(maxScale, tmp.length() - dotPos - 1);
-                            qlonglong frac = (tmp + "000000000000000000").mid(dotPos + 1, 18).toLongLong();
-                            if (val < 0)
-                            {
-                                sumFrac -= frac;
-                                if (sumFrac < 0)
-                                {
-                                    --sumInt;
-                                    sumFrac = 1000000000000000000LL + sumFrac;
-                                }
-                            }
-                            else
-                            {
-                                sumFrac += frac;
-                                if (sumFrac >= 1000000000000000000LL)
-                                {
-                                    ++sumInt;
-                                    sumFrac = sumFrac - 1000000000000000000LL;
-                                }
-                            }
-                        }
+                            qlonglong frac = (tmp + "000000000000000000").mid(dotPos + 1, 18).toLongLong() * (val < 0 ? -1 : 1);
 
+                            sumInt += tmp.mid(0, dotPos).toLongLong();
+                            sumFrac += frac;
+                            if (llabs(sumFrac) >= 1000000000000000000LL)
+                            {
+                                sumInt += (sumFrac < 0 ? -1 : 1);
+                                sumFrac = sumFrac - 1000000000000000000LL * (sumFrac < 0 ? -1 : 1);
+                            }
+
+                        }
                         ++count;
                         res += (res.isEmpty() ? "" : " + ") + tmp;
                     }
@@ -256,9 +247,22 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                 }
                 else
                 {
-                    totalAmount = locale.toString(sumInt);
+                    if ((sumInt > 0 && sumFrac < 0) || (sumInt < 0 && sumFrac > 0))
+                    {
+                        sumInt += (sumFrac < 0 ? -1 : 1);
+                        sumFrac = sumFrac - 1000000000000000000LL * (sumFrac < 0 ? -1 : 1);
+                    }
+
+                    if (sumInt < 0 || sumFrac < 0)
+                        totalAmount = '-';
+
+                    totalAmount += locale.toString(llabs(sumInt));
                     if (maxScale)
-                        totalAmount += locale.decimalPoint() + QString::number(sumFrac).mid(0, maxScale);
+                    {
+                        totalAmount +=
+                                locale.decimalPoint() +
+                                ("000000000000000000" + QString::number(llabs(sumFrac))).right(18).mid(0, maxScale);
+                    }
                 }
 
                 if (count)
