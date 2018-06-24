@@ -105,8 +105,9 @@ QString DbConnection::elapsed() const noexcept
                          "HH:mm:ss");
 }
 
-void DbConnection::clearResultsets()
+void DbConnection::clearResultsets() noexcept
 {
+    QMutexLocker lk(&_resultsetsGuard);
     qDeleteAll(_resultsets);
     _resultsets.clear();
 }

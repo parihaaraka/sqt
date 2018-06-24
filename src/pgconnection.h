@@ -81,9 +81,14 @@ private:
     void putCopyData();
     void readyReadSocket();
     void readyWriteSocket();
-    void watchSocket(int mode);
     int appendRawDataToTable(DataTable &dst, PGresult *src) noexcept;
     std::string finalConnectionString() const noexcept;
+
+private slots:
+    void watchSocket(int mode);
+
+signals:
+    void closeConnectionWanted();
 };
 
 #endif // PGCONNECTION_H

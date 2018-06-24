@@ -76,6 +76,7 @@ bool PgConnection::open()
 
 void PgConnection::openAsync() noexcept
 {
+    QMutexLocker lk(&_connectionGuard);
     if (_async_stage != async_stage::none || !isIdle())
     {
         int status = PQtransactionStatus(_conn);
@@ -109,6 +110,7 @@ void PgConnection::openAsync() noexcept
         return;
     }
     _async_stage = async_stage::connecting;
+    lk.unlock();
     asyncConnectionProceed();
 }
 
@@ -116,11 +118,11 @@ void PgConnection::close() noexcept
 {
     _dbmsScriptingID.clear();
     clearResultsets();
+
+    // the caller must lock _connectionGuard when needed
+    watchSocket(SocketWatchMode::None);
     if (!_conn)
         return;
-
-    // stop socket watcher
-    watchSocket(SocketWatchMode::None);
 
     PQfinish(_conn);
     _conn = nullptr;
@@ -133,21 +135,40 @@ bool PgConnection::isOpened() const noexcept
 
 void PgConnection::cancel() noexcept
 {
+    QMutexLocker lk(&_connectionGuard);
     if (!_conn)
         return;
 
-    emit message(tr("cancelling..."));
-    setQueryState(QueryState::Cancelling);
+    // the reason to call cancel() again is to detect broken connection and close/deallocate it
+    // 1) executeAsync()
+    // 2) cancel()
+    // 3) conection is boken (link disappeared)
+    // 4) server unable to notify client of cancellation
+    // 5) => query may execute forever
+    if (queryState() == QueryState::Cancelling || QApplication::keyboardModifiers().testFlag(Qt::ShiftModifier))
+    {
+        emit closeConnectionWanted();
+        return;
+    }
 
     char errbuf[256];
-    PGcancel *cancel = PQgetCancel(_conn);
-    if (!PQcancel(cancel, errbuf, sizeof(errbuf)))
-        emit message(errbuf);
-    PQfreeCancel(cancel);
+    std::unique_ptr<PGcancel,decltype(&PQfreeCancel)> cancel(PQgetCancel(_conn), PQfreeCancel);
+    int cancelResult = PQcancel(cancel.get(), errbuf, sizeof(errbuf));
+    lk.unlock();
+    if (cancelResult)
+    {
+        emit message(tr("cancelling..."));
+        setQueryState(QueryState::Cancelling);
+    }
+    else
+    {
+        emit error(errbuf);
+    }
 }
 
 QString PgConnection::context() const noexcept
 {
+    QMutexLocker lk(&_connectionGuard);
     if (!isOpened())
         return QString();
     QString user = PQuser(_conn);
@@ -165,6 +186,7 @@ QString PgConnection::database() const noexcept
 
 QString PgConnection::dbmsInfo() const noexcept
 {
+    // synchronous usage only
     QString res;
     if (!isOpened())
         return res;
@@ -192,11 +214,13 @@ QString PgConnection::dbmsInfo() const noexcept
 
 QString PgConnection::dbmsName() const noexcept
 {
+    // synchronous usage only
     return "PostgreSQL";
 }
 
 QString PgConnection::dbmsVersion() const noexcept
 {
+    // synchronous usage only
     QString res;
     if (!isOpened())
         return res;
@@ -206,6 +230,7 @@ QString PgConnection::dbmsVersion() const noexcept
 
 QString PgConnection::transactionStatus() const noexcept
 {
+    QMutexLocker lk(&_connectionGuard);
     switch (PQtransactionStatus(_conn))
     {
     case PQTRANS_ACTIVE:
@@ -221,6 +246,7 @@ QString PgConnection::transactionStatus() const noexcept
 
 int PgConnection::dbmsComparableVersion()
 {
+    // synchronous usage only
     int res = PQserverVersion(_conn);
     // use queries for the the most recent server version in case of error
     return res ? res : 0x7fffffff;
@@ -310,7 +336,9 @@ QMetaType::Type PgConnection::sqlTypeToVariant(int sqlType) const noexcept
 void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *params) noexcept
 {
     // save transaction status to avoid reconnects within transaction
+    _connectionGuard.lock();
     PGTransactionStatusType initial_state = PQtransactionStatus(_conn);
+    _connectionGuard.unlock();
     if (initial_state == PQTRANS_ACTIVE)
     {
         emit error(tr("another command is already in progress"));
@@ -319,6 +347,7 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
 
     auto run_query = [this, query, params]()
     {
+        QMutexLocker lk(&_connectionGuard);
         bool was_in_transaction = (PQtransactionStatus(_conn) == PQTRANS_INTRANS);
         _async_stage = async_stage::sending_query;
         setQueryState(QueryState::Running);
@@ -358,8 +387,12 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
         // disconnected or connection broken => reconnect and try again
         if (PQstatus(_conn) == CONNECTION_BAD)
         {
-            emit error(PQerrorMessage(_conn));
-            close();
+            if (_conn) // to avoid "connection pointer is NULL"
+            {
+                emit error(PQerrorMessage(_conn));
+                close();
+            }
+            lk.unlock();
             _async_stage = async_stage::none;
             // do not try to excute the query again if there was an opened transaction
             if (!was_in_transaction)
@@ -402,25 +435,37 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
         return;
     }
 
-    QMutexLocker lk(&_resultsetsGuard);
     clearResultsets();
-    lk.unlock();
+    // delete listeners before switch to another thread
+    watchSocket(SocketWatchMode::None);
 
     // Massively data fetching query freezes ui, so we want to run it in
     // separate thread. Asynchronous libpq API is used for the sake of
     // opportunities it provides.
     QThread* thread = new QThread();
-    auto state_handler_connection = std::make_shared<QMetaObject::Connection>();
-    connect(thread, &QThread::started, [this, run_query, thread, state_handler_connection]() {
+    connect(thread, &QThread::started, thread, [this, run_query, thread]() {
+        // kill query by means of appropriate signal
+        connect(this, &PgConnection::closeConnectionWanted, thread, [this]() {
+            QMutexLocker lk(&_connectionGuard);
+            if (!_conn)
+                return;
+            close();
+            emit error(tr("connection closed"));
+            setQueryState(QueryState::Inactive);
+        }, Qt::QueuedConnection);
+
         // stop event loop on inactive query state
-        *state_handler_connection = connect(this, &PgConnection::queryStateChanged, [this, thread](QueryState state) {
+        connect(this, &PgConnection::queryStateChanged, thread, [this, thread](QueryState state) {
             if (state == QueryState::Inactive)
             {
                 for (auto res: _resultsets)
                     clarifyTableStructure(*res);
+                // delete listeners before switch to another thread
+                QMutexLocker lk(&_connectionGuard);
+                watchSocket(SocketWatchMode::None);
                 thread->quit();
             }
-        });
+        }, Qt::QueuedConnection);
 
         run_query();
 
@@ -430,14 +475,15 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
             // (next to this handler Qt will call exec())
             thread->exit();
     });
-    connect(thread, &QThread::finished, [this, thread, state_handler_connection]() {
+    connect(thread, &QThread::finished, [this, thread]() {
         thread->deleteLater();
-        // disconnect queryStateChanged handler
-        disconnect(*state_handler_connection);
-
         // autorollback
+        QMutexLocker lk(&_connectionGuard);
         if (PQtransactionStatus(_conn) == PQTRANS_INERROR)
             PQclear(PQexec(_conn, "rollback"));
+        // read socket on gui thread to receive notifications
+        // TODO immediate acquire of notification being sent during pg_sleep()
+        QMetaObject::invokeMethod(this, "watchSocket", Qt::QueuedConnection, Q_ARG(int, SocketWatchMode::Read));
     });
     _timer.start();
     thread->start();
@@ -454,9 +500,7 @@ bool PgConnection::execute(const QString &query, const QVector<QVariant> *params
     }
 
     bool was_in_transaction = (initial_state == PQTRANS_INTRANS);
-    QMutexLocker lk(&_resultsetsGuard);
     clearResultsets();
-    lk.unlock();
     _temp_result_rowcount = 0;
     // suspend external socket watcher
     watchSocket(SocketWatchMode::None);
@@ -627,6 +671,7 @@ void PgConnection::clarifyTableStructure(DataTable &table)
 
 bool PgConnection::isIdle() const noexcept
 {
+    // the caller must lock _connectionGuard when needed
     int status = PQtransactionStatus(_conn);
     return !_conn || status == PQTRANS_IDLE || status == PQTRANS_UNKNOWN;
 }
@@ -652,6 +697,7 @@ void PgConnection::noticeReceiver(void *arg, const PGresult *res)
 
 void PgConnection::fetchNotifications()
 {
+    // the caller must lock _connectionGuard when needed
     PGnotify *notify;
     while ((notify = PQnotifies(_conn)) != nullptr)
     {
@@ -663,9 +709,12 @@ void PgConnection::fetchNotifications()
 
 void PgConnection::fetch() noexcept
 {
+    _connectionGuard.lock();
     bool is_notification = isIdle();
+    _connectionGuard.unlock();
     do
     {
+        QMutexLocker lk(&_connectionGuard);
         //_last_action_moment = chrono::system_clock::now();
         if (!PQconsumeInput(_conn))
         {
@@ -683,6 +732,7 @@ void PgConnection::fetch() noexcept
 
         if (_async_stage == async_stage::copy_out)
         {
+            lk.unlock();
             getCopyData();
             return;
         }
@@ -692,14 +742,12 @@ void PgConnection::fetch() noexcept
             break;
 
         std::unique_ptr<PGresult,decltype(&PQclear)> tmp_res(PQgetResult(_conn), PQclear);
+        lk.unlock();
 
         if (!tmp_res)   // query processing finished
         {
             _copy_context.clear();
             _async_stage = async_stage::none;
-            // restore watching socket to receive notifications
-            watchSocket(SocketWatchMode::Read);
-
             setQueryState(QueryState::Inactive);
             break;
         }
@@ -790,6 +838,7 @@ void PgConnection::fetch() noexcept
 
 void PgConnection::asyncConnectionProceed()
 {
+    QMutexLocker lk(&_connectionGuard);
     PostgresPollingStatusType state = PQconnectPoll(_conn);
     switch (state)
     {
@@ -804,6 +853,7 @@ void PgConnection::asyncConnectionProceed()
         _async_stage = async_stage::none;
         watchSocket(SocketWatchMode::None);
         emit error(PQerrorMessage(_conn));
+        setQueryState(QueryState::Inactive);
         // do not release _conn here to avoid error "connection pointer is NULL"
         break;
     default:    // PGRES_POLLING_OK
@@ -819,7 +869,10 @@ void PgConnection::asyncConnectionProceed()
 
         // connection restored during query execution
         if (queryState() == QueryState::Running)
+        {
+            lk.unlock();
             executeAsync("");
+        }
         else
             watchSocket(SocketWatchMode::None);
     }
@@ -830,7 +883,9 @@ void PgConnection::getCopyData()
     do
     {
         char *buf;
+        QMutexLocker lk(&_connectionGuard);
         int len = PQgetCopyData(_conn, &buf, true);
+        lk.unlock();
         std::unique_ptr<char, void(*)(void*)> buf_guard(buf, PQfreemem);
 
         if (len > 0) // row fetched
@@ -850,6 +905,7 @@ void PgConnection::getCopyData()
         }
         else if (len == -2) // error
         {
+            lk.relock();
             emit error(PQerrorMessage(_conn));
         }
 
@@ -872,6 +928,7 @@ void PgConnection::putCopyData()
             continue;
         }
 
+        QMutexLocker lk(&_connectionGuard);
         if (!_copy_in_buf.size()) // eof
         {
             int end_res = PQputCopyEnd(_conn, nullptr);
@@ -915,27 +972,27 @@ void PgConnection::readyReadSocket()
 {
     switch (_async_stage)
     {
-    case async_stage::wait_ready_read:
-    case async_stage::copy_out:
-    case async_stage::copy_in: // is it possible?
-        fetch();
-        break;
     case async_stage::connecting:
         asyncConnectionProceed();
         break;
     case async_stage::flush:  // sending query to a server
+    {
+        QMutexLocker lk(&_connectionGuard);
         if (PQconsumeInput(_conn))
         {
+            lk.unlock();
             readyWriteSocket();
             return;
         }
         emit error(PQerrorMessage(_conn));
+        setQueryState(QueryState::Inactive);
         _async_stage = async_stage::none;
         watchSocket(SocketWatchMode::Read);
         break;
+    }
     default:
-        if (isIdle())
-            fetch();
+        fetch();
+        break;
     }
 }
 
@@ -947,9 +1004,11 @@ void PgConnection::readyWriteSocket()
         return;
     }
 
+    QMutexLocker lk(&_connectionGuard);
     if (_async_stage == async_stage::copy_in)
     {
         watchSocket(SocketWatchMode::Read); // may we get something here?
+        lk.unlock();
         putCopyData();
         return;
     }
@@ -972,11 +1031,13 @@ void PgConnection::readyWriteSocket()
         emit error(PQerrorMessage(_conn));
         _async_stage = async_stage::none;
     }
+
     watchSocket(SocketWatchMode::Read);
 }
 
 void PgConnection::watchSocket(int mode)
 {
+    // the caller must lock _connectionGuard when needed
     int socket_handle = (_conn ? PQsocket(_conn) : -1);
     // force disabling socket watcher in case of incorrect handle
     if (socket_handle == -1)
@@ -1015,7 +1076,7 @@ void PgConnection::watchSocket(int mode)
 
             if (!sn)
             {
-                sn = new QSocketNotifier(socket_handle, type, this);
+                sn = new QSocketNotifier(socket_handle, type);
                 connect(sn, &QSocketNotifier::activated, this,
                         type == QSocketNotifier::Read ?
                             &PgConnection::readyReadSocket :

@@ -45,8 +45,6 @@ public:
     virtual ~DbConnection();
     virtual DbConnection* clone() = 0;
 
-    virtual bool open() = 0;
-    virtual void close() noexcept = 0;
     virtual bool isOpened() const noexcept = 0;
     virtual void cancel() noexcept = 0;
 
@@ -100,7 +98,9 @@ public:
 
 public slots: // to use from QJSEngine
     virtual DataTable* execute(const QString &query, const QVariantList &params);
-    void clearResultsets();
+    void clearResultsets() noexcept;
+    virtual bool open() = 0;
+    virtual void close() noexcept = 0;
 
 signals:
     void message(const QString &msg) const;
@@ -112,9 +112,11 @@ signals:
 
 protected:
     std::atomic<QueryState> _query_state;
-    QString _database, _connection_string;
     QTime _timer;
-    QMutex _resultsetsGuard; // TODO needs refactoring
+    QString _database;
+    QString _connection_string;
+    QMutex _resultsetsGuard;
+    mutable QMutex _connectionGuard;
     QString _dbmsScriptingID;
     void setQueryState(QueryState queryState);
 

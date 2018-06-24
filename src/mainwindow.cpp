@@ -619,11 +619,12 @@ void MainWindow::on_actionExecute_query_triggered()
     DbConnection *con = q->dbConnection();
     if (!con)
         return;
-    if (con->queryState() == QueryState::Running)
+    auto qState = con->queryState();
+    if (qState == QueryState::Running || qState == QueryState::Cancelling)
     {
         con->cancel();
     }
-    else if (con->queryState() == QueryState::Inactive)
+    else if (qState == QueryState::Inactive)
     {
         q->clearResult();
         QString query = (q->textCursor().hasSelection() ?
