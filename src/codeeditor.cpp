@@ -519,30 +519,60 @@ void CodeEditor::onHlTimerTimeout()
         testCursor.select(QTextCursor::WordUnderCursor);
         if (selectedText == testCursor.selectedText())
         {
+            int pos_backward = testCursor.selectionStart() - 1;
+            int pos_forward = testCursor.selectionEnd();
+            int forward_counter = 0;
+            int backward_counter = 0;
+            int total_hits = 0;
             content = text();
-            int pos = 0;
             QColor selectionColor(Qt::yellow);
             selectionColor.setAlphaF(0.7);
-            while (true)
+            auto verifyPos = [this, &selections, &selectedText, &selectionColor](int pos, int &counter)
             {
-                pos = content.indexOf(selectedText, pos);
-                if (pos < 0)
-                    break;
-                if (curPos != pos)
+                QTextCursor testCursor = textCursor();
+                testCursor.setPosition(pos);
+                testCursor.select(QTextCursor::WordUnderCursor);
+                if (selectedText == testCursor.selectedText())
                 {
-                    QTextCursor testCursor = textCursor();
-                    testCursor.setPosition(pos);
-                    testCursor.select(QTextCursor::WordUnderCursor);
-                    if (selectedText == testCursor.selectedText())
-                    {
-                        QTextEdit::ExtraSelection s;
-                        s.format.setBackground(selectionColor);
-                        s.cursor = testCursor;
-                        selections.append(s);
-                    }
+                    QTextEdit::ExtraSelection s;
+                    s.format.setBackground(selectionColor);
+                    s.cursor = testCursor;
+                    selections.append(s);
+                    ++counter;
                 }
-                pos += selectedText.length();
+            };
+
+            // search current word in both directions
+            // * max word matches in every direction: 100
+            // * max total matches (including partial): 1000
+            do
+            {
+                if (pos_forward >= 0)
+                    pos_forward = content.indexOf(selectedText, pos_forward);
+                if (pos_backward >= 0)
+                    pos_backward = content.lastIndexOf(selectedText, pos_backward);
+
+                if (pos_forward >= 0)
+                {
+                    ++total_hits;
+                    verifyPos(pos_forward, forward_counter);
+                    if (forward_counter == 100)
+                        pos_forward = -1;
+                    else
+                        pos_forward += selectedText.length();
+                }
+
+                if (pos_backward >= 0)
+                {
+                    ++total_hits;
+                    verifyPos(pos_backward, backward_counter);
+                    if (backward_counter == 100)
+                        pos_backward = -1;
+                    else
+                        --pos_backward;
+                }
             }
+            while ((pos_backward >= 0 || pos_forward >= 0) && total_hits < 1000);
         }
     }
 
