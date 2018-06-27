@@ -575,7 +575,7 @@ void QueryWidget::onCompleterRequest()
         }
         else if (identifierStarted)
             return false;
-        else if (words.isEmpty()) // always have current word (may be empty)
+        else if (words.isEmpty()) // always have current word as a last list item (may be empty)
         {
             words.push_front(word);
             word.clear();

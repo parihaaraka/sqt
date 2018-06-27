@@ -513,29 +513,57 @@ void CodeEditor::onHlTimerTimeout()
     QString content;
     if (!selectedText.isEmpty())
     {
+        // prevent search for not a word
+        bool mayBeWord = true;
+        for (const QChar &c: selectedText)
+        {
+            if (!c.isLetterOrNumber() && c != '_')
+            {
+                mayBeWord = false;
+                break;
+            }
+        }
+
         int curPos = curCursor.selectionStart();
         QTextCursor testCursor = textCursor();
         testCursor.setPosition(curPos);
         testCursor.select(QTextCursor::WordUnderCursor);
-        if (selectedText == testCursor.selectedText())
+        if (mayBeWord && selectedText == testCursor.selectedText())
         {
             int pos_backward = testCursor.selectionStart() - 1;
             int pos_forward = testCursor.selectionEnd();
             int forward_counter = 0;
             int backward_counter = 0;
             int total_hits = 0;
+            int wordLength = selectedText.length();
             content = text();
             QColor selectionColor(Qt::yellow);
             selectionColor.setAlphaF(0.7);
-            auto verifyPos = [this, &selections, &selectedText, &selectionColor](int pos, int &counter)
+            QTextEdit::ExtraSelection s;
+            s.format.setBackground(selectionColor);
+
+            auto verifyPos = [this, &selections, wordLength, &s, &testCursor, &content, &total_hits](int &pos, int &counter)
             {
-                QTextCursor testCursor = textCursor();
-                testCursor.setPosition(pos);
-                testCursor.select(QTextCursor::WordUnderCursor);
-                if (selectedText == testCursor.selectedText())
+                ++total_hits;
+                bool left_ok = true;
+                bool right_ok = true;
+                if (pos)
                 {
-                    QTextEdit::ExtraSelection s;
-                    s.format.setBackground(selectionColor);
+                    QChar c = content[pos - 1];
+                    if (c.isLetterOrNumber() || c == '_')
+                        left_ok = false;
+                }
+                if (left_ok && pos < content.length() - wordLength)
+                {
+                    QChar c = content[pos + wordLength];
+                    if (c.isLetterOrNumber() || c == '_')
+                        right_ok = false;
+                }
+
+                if (left_ok && right_ok)
+                {
+                    testCursor.setPosition(pos);
+                    testCursor.setPosition(pos + wordLength, QTextCursor::KeepAnchor);
                     s.cursor = testCursor;
                     selections.append(s);
                     ++counter;
@@ -544,7 +572,7 @@ void CodeEditor::onHlTimerTimeout()
 
             // search current word in both directions
             // * max word matches in every direction: 100
-            // * max total matches (including partial): 1000
+            // * max total matches (including partial): 500
             do
             {
                 if (pos_forward >= 0)
@@ -554,25 +582,23 @@ void CodeEditor::onHlTimerTimeout()
 
                 if (pos_forward >= 0)
                 {
-                    ++total_hits;
                     verifyPos(pos_forward, forward_counter);
                     if (forward_counter == 100)
                         pos_forward = -1;
                     else
-                        pos_forward += selectedText.length();
+                        pos_forward += wordLength;
                 }
 
                 if (pos_backward >= 0)
                 {
-                    ++total_hits;
                     verifyPos(pos_backward, backward_counter);
                     if (backward_counter == 100)
                         pos_backward = -1;
                     else
-                        --pos_backward;
+                        pos_backward -= 1;
                 }
             }
-            while ((pos_backward >= 0 || pos_forward >= 0) && total_hits < 1000);
+            while ((pos_backward >= 0 || pos_forward >= 0) && total_hits < 500);
         }
     }
 
