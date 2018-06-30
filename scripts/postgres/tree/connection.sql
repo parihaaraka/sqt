@@ -3,6 +3,7 @@ select
       quote_ident(datname) "name",
       datname ui_name,
       oid::text id,
+      false allow_multiselect,
       'database-medium.png' icon,
       '00' || datname sort1
 from pg_database 
@@ -13,6 +14,7 @@ select
       null,
       '<i>Roles</i>',
       null,
+      true allow_multiselect,
       'fingerprint.png',
       '01'
 union all
@@ -21,6 +23,7 @@ select
       null,
       '<i>Cluster state</i>',
       null,
+      false,
       'information-white.png',
       '02'
 where $dbms.version$ > 90600
@@ -30,6 +33,7 @@ select
       null,
       '<i>Settings</i>',
       null,
+      false,
       'equalizer.png',
       '04'
 union all
@@ -38,6 +42,7 @@ select
       null,
       '<i>Tablespaces</i>',
       null,
+      false,
       null,
       '05'
 union all
@@ -46,6 +51,7 @@ select
       null,
       '<i>Current sessions</i>',
       null,
+      false,
       null,
       '06'
 union all
@@ -54,5 +60,6 @@ select
       null,
       '<i>Test HTML result</i>',
       null,
+      false,
       null,
       '10'

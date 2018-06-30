@@ -56,6 +56,7 @@ MainWindow::MainWindow(QWidget *parent) :
     ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    _proxyStyle = new MyProxyStyle();
 
     qRegisterMetaType<QueryState>();
     qRegisterMetaTypeStreamOperators<QList<RecentFile>>("RecentFile");
@@ -77,7 +78,7 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->contentSplitter->insertWidget(0, _objectScript);
     ui->objectsView->setContextMenuPolicy(Qt::CustomContextMenu);
     ui->objectsView->setItemDelegateForColumn(0, new DbTreeItemDelegate(this));
-    ui->objectsView->setStyle(new MyProxyStyle);
+    ui->objectsView->setStyle(_proxyStyle);
     connect(ui->objectsView, &QTreeView::expanded, this, &MainWindow::objectsViewAdjustColumnWidth);
     connect(ui->objectsView, &QTreeView::collapsed, [this](const QModelIndex &index) {
         auto model = (index.isValid() ? qobject_cast<const QSortFilterProxyModel*>(index.model()) : nullptr);
@@ -303,6 +304,7 @@ MainWindow::~MainWindow()
     delete _frPanel;
     delete _objectsModel;
     delete ui;
+    delete _proxyStyle;
 }
 
 void MainWindow::activateEditorBlock(CodeBlockProperties *blockProperties)
@@ -440,10 +442,11 @@ void MainWindow::on_objectsView_activated(const QModelIndex &index)
                 _objectsModel->saveConnectionSettings();
             }
             //con->disconnect(errConnection);
-            _objectsModel->setData(currentNodeIndex, true, DbObject::ParentRole);
             scriptSelectedObjects();
+            _objectsModel->setData(currentNodeIndex, true, DbObject::ParentRole);
         }
     }
+    // index belongs to proxy model
     ui->objectsView->expand(index);
 }
 
@@ -498,6 +501,9 @@ void MainWindow::on_objectsView_customContextMenuRequested(const QPoint &pos)
     {
         if (con && con->isOpened()) // disconnect
         {
+            // there are problems with expanding desolated node without the following line
+            ui->objectsView->collapse(index);
+
             DbObject *item = static_cast<DbObject*>(srcIndex.internalPointer());
             _objectsModel->removeRows(0, item->childCount(), srcIndex);
             con->close();

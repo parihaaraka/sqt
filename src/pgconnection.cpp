@@ -482,8 +482,10 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
         if (PQtransactionStatus(_conn) == PQTRANS_INERROR)
             PQclear(PQexec(_conn, "rollback"));
         // read socket on gui thread to receive notifications
-        // TODO immediate acquire of notification being sent during pg_sleep()
         QMetaObject::invokeMethod(this, "watchSocket", Qt::QueuedConnection, Q_ARG(int, SocketWatchMode::Read));
+
+        // TODO immediate acquire of notification being sent during pg_sleep()
+        // (still unable to find solution)
     });
     _timer.start();
     thread->start();
@@ -699,7 +701,7 @@ void PgConnection::fetchNotifications()
 {
     // the caller must lock _connectionGuard when needed
     PGnotify *notify;
-    while ((notify = PQnotifies(_conn)) != nullptr)
+    while ((notify = PQnotifies(_conn)))
     {
         std::unique_ptr<PGnotify, void(*)(void*)> n_guard(notify, PQfreemem);
         emit message(tr("* notification received:\n  server process id: %1\n  channel: %2\n  payload: %3").
@@ -737,11 +739,14 @@ void PgConnection::fetch() noexcept
             return;
         }
 
-        fetchNotifications();
         if (PQisBusy(_conn) || is_notification)
+        {
+            fetchNotifications();
             break;
+        }
 
         std::unique_ptr<PGresult,decltype(&PQclear)> tmp_res(PQgetResult(_conn), PQclear);
+        fetchNotifications();
         lk.unlock();
 
         if (!tmp_res)   // query processing finished

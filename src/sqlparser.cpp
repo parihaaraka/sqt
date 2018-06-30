@@ -1,5 +1,6 @@
 #include "sqlparser.h"
-#include <QDebug>
+//#include <QDebug>
+
 namespace SqlParser
 {
 
@@ -228,16 +229,14 @@ AliasSearchResult explainAlias(const QString &alias, const QString &text, int po
                     // search for first '--' within current line
                     int i = pos;
                     int commentStart = pos;
-                    while (--i)
+                    while (i--)
                     {
                         if (text[i] == '-' && text[i + 1] == '-')
                             commentStart = i;
                         else if (eols.contains(text[i])) // start of line found
-                        {
-                            pos = commentStart;
                             break;
-                        }
                     }
+                    pos = commentStart;
                 }
             }
             else if (!c.isSpace())
@@ -313,11 +312,11 @@ AliasSearchResult explainAlias(const QString &alias, const QString &text, int po
 
 QPair<AliasSearchStatus, QStringList> explainAlias(const QString &alias, const QString &text, int pos) noexcept
 {
-    // TODO advance one by one to both directions
+    // Do not advance one by one (up and down), because we may
+    // find matches in both directions and should make a choice
+    // depending on depth (or scope level) of every match.
 
-    //qDebug() << "--- DOWN ---";
     auto resDown = explainAlias(alias, text, pos, false);
-    //qDebug() << "--- UP ---";
     auto resUp = explainAlias(alias, text, pos, true);
 
     if (resDown.status == AliasSearchStatus::NotFound)

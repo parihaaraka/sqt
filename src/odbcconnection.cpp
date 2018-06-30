@@ -531,7 +531,7 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
 void OdbcConnection::executeAsync(const QString &query, const QVector<QVariant> *params) noexcept
 {
     QThread* thread = new QThread();
-    connect(thread, &QThread::started, [this, query, thread, params]() {
+    connect(thread, &QThread::started, thread, [this, query, thread, params]() {
         execute(query, params);
         thread->quit();
     });

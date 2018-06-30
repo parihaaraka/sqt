@@ -22,6 +22,7 @@ class TableModel;
 class FindAndReplacePanel;
 class DbObjectsModel;
 class CodeBlockProperties;
+class MyProxyStyle;
 
 class MainWindow : public QMainWindow
 {
@@ -70,6 +71,7 @@ private:
     ExtFileDialog _fileDialog;
     QStringList _mruDirs; // QFileDialog::history() keeps unused directories :(
     Ui::MainWindow *ui;
+    MyProxyStyle *_proxyStyle;
     DbObjectsModel *_objectsModel;
     TableModel *_tableModel;
     QueryWidget* currentQueryWidget();
