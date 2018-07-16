@@ -33,6 +33,7 @@ public:
     virtual bool isOpened() const noexcept override;
     virtual void cancel() noexcept override;
     virtual QString context() const noexcept override;
+    virtual QString hostname() const noexcept override;
     virtual QString database() const noexcept override;
     virtual QString dbmsInfo() const noexcept override;
     virtual QString dbmsName() const noexcept override;

@@ -49,6 +49,7 @@ public:
     virtual void cancel() noexcept = 0;
 
     virtual QString context() const noexcept = 0;
+    virtual QString hostname() const noexcept = 0;
     virtual QString database() const noexcept = 0;
     virtual QString dbmsInfo() const noexcept = 0;
     virtual QString dbmsName() const noexcept = 0;

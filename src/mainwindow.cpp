@@ -14,7 +14,6 @@
 #include <QTextDocumentFragment>
 #include <QCloseEvent>
 #include <QTextEdit>
-#include <QToolButton>
 #include "tablemodel.h"
 #include "dbtreeitemdelegate.h"
 #include "findandreplacepanel.h"
@@ -23,6 +22,7 @@
 #include "codeeditor.h"
 #include <QScrollBar>
 #include "settingsdialog.h"
+#include <QShortcut>
 
 struct RecentFile
 {
@@ -174,9 +174,21 @@ MainWindow::MainWindow(QWidget *parent) :
     if (!_mruDirs.isEmpty())
         _fileDialog.setDirectory(_mruDirs.last());
 
+    // add a new tab page
+    QAction *tabWidgetAction = new QAction(tr("new"), ui->tabWidget);
+    tabWidgetAction->setShortcut(QKeySequence::New);
+    tabWidgetAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    tabWidgetAction->setShortcutVisibleInContextMenu(true);
+    connect(tabWidgetAction, &QAction::triggered, [this]()
+    {
+        emit on_actionNew_triggered();
+    });
+    ui->tabWidget->tabBar()->addAction(tabWidgetAction);
+
     // switch to next tab page
-    QAction *tabWidgetAction = new QAction(tr("next page"), ui->tabWidget);
+    tabWidgetAction = new QAction(tr("next page"), ui->tabWidget);
     tabWidgetAction->setShortcut(QKeySequence::Forward);
+    tabWidgetAction->setShortcutVisibleInContextMenu(true);
     connect(tabWidgetAction, &QAction::triggered, [this]()
     {
         if (ui->tabWidget->currentIndex() < ui->tabWidget->count() - 1)
@@ -187,6 +199,7 @@ MainWindow::MainWindow(QWidget *parent) :
     // switch to previous tab page
     tabWidgetAction = new QAction(tr("previous page"), ui->tabWidget);
     tabWidgetAction->setShortcut(QKeySequence::Back);
+    tabWidgetAction->setShortcutVisibleInContextMenu(true);
     connect(tabWidgetAction, &QAction::triggered, [this]()
     {
         if (ui->tabWidget->currentIndex() > 0)
@@ -194,9 +207,10 @@ MainWindow::MainWindow(QWidget *parent) :
     });
     ui->tabWidget->tabBar()->addAction(tabWidgetAction);
 
-    // switch to previous tab page
-    tabWidgetAction = new QAction(tr("close page"), ui->tabWidget);
+    // close tab page
+    tabWidgetAction = new QAction(tr("close"), ui->tabWidget);
     tabWidgetAction->setShortcut(QKeySequence::Close);
+    tabWidgetAction->setShortcutVisibleInContextMenu(true);
     connect(tabWidgetAction, &QAction::triggered, [this]()
     {
         if (ui->tabWidget->currentIndex() >= 0)
@@ -212,9 +226,9 @@ MainWindow::MainWindow(QWidget *parent) :
     QWidget *cornerWidget = new QWidget();
     QHBoxLayout *l = new QHBoxLayout();
     l->setContentsMargins(2, 0, 2, 4);
-    QToolButton *dbBtn = new QToolButton(ui->tabWidget);
-    dbBtn->setAutoRaise(true);
-    QMenu *dbBtnMenu = new QMenu(dbBtn);
+    _dbBtn = new QToolButton(ui->tabWidget);
+    _dbBtn->setAutoRaise(true);
+    QMenu *dbBtnMenu = new QMenu(_dbBtn);
     connect(dbBtnMenu, &QMenu::aboutToShow, [this, dbBtnMenu](){
         dbBtnMenu->clear();
         QueryWidget *qw = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
@@ -257,10 +271,11 @@ MainWindow::MainWindow(QWidget *parent) :
                         if (currentConnection->database() != databases[i])
                         {
                             QAction *a = new QAction(databases[i], dbBtnMenu);
-                            connect(a, &QAction::triggered, [this, a, currentConnection](){
+                            connect(a, &QAction::triggered, [this, qw, a, currentConnection](){
                                 currentConnection->setDatabase(a->text());
                                 currentConnection->open();
                                 refreshContextInfo();
+                                update_dbBtn_text(qw);
                             });
                             actions.append(a);
                         }
@@ -277,24 +292,22 @@ MainWindow::MainWindow(QWidget *parent) :
                             cn->setDatabase(db);
                             qw->setDbConnection(cn);
                             refreshContextInfo();
+                            update_dbBtn_text(qw);
                         });
                 }
             }
         }
     });
-    dbBtn->setMenu(dbBtnMenu);
-    // don't use QToolButton::InstantPopup to use QAction's shortcut
-    // scope Qt::WidgetWithChildrenShortcut instead of manual handling
-    QAction *dbBtnAction = new QAction(ui->tabWidget);
-    dbBtnAction->setIcon(QIcon(":img/databases.png"));
-    dbBtnAction->setShortcut({"Ctrl+D"});
-    dbBtnAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-    connect(dbBtnAction, &QAction::triggered, dbBtn, &QToolButton::showMenu);
-    dbBtn->setDefaultAction(dbBtnAction);
-    dbBtn->setToolTip(tr("switch to another accessible database") +
-                      "<br/><b>" + dbBtnAction->shortcut().toString() + "</b>");
-    ui->tabWidget->addAction(dbBtnAction);
-    l->addWidget(dbBtn);
+    _dbBtn->setMenu(dbBtnMenu);
+    _dbBtn->setIcon(QIcon(":img/databases.png"));
+    _dbBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    _dbBtn->setShortcut({"Ctrl+D"});
+    QShortcut *dbBtnShortcut = new QShortcut({"Ctrl+D"}, _dbBtn);
+    connect(dbBtnShortcut, &QShortcut::activated, _dbBtn, &QToolButton::showMenu);
+    _dbBtn->setToolTip(tr("switch to another accessible database") +
+                         "<br/><b>" + _dbBtn->shortcut().toString() + "</b>");
+    connect(_dbBtn, &QToolButton::clicked, _dbBtn, &QToolButton::showMenu);
+    l->addWidget(_dbBtn);
     cornerWidget->setLayout(l);
     ui->tabWidget->setCornerWidget(cornerWidget);//, Qt::TopLeftCorner);
 }
@@ -567,6 +580,8 @@ void MainWindow::on_actionChange_sort_mode_triggered()
 
 void MainWindow::selectionChanged(const QItemSelection &selected, const QItemSelection &deselected)
 {
+    ui->actionObject_content->trigger();
+
     Q_UNUSED(selected)
     Q_UNUSED(deselected)
     QItemSelectionModel *selectionModel = qobject_cast<QItemSelectionModel*>(sender());
@@ -733,6 +748,8 @@ void MainWindow::on_actionNew_triggered()
     if (ui->contentSplitter->isVisible())
         ui->actionQuery_editor->activate(QAction::Trigger);
     w->setFocus();
+
+    update_dbBtn_text(w);
 }
 
 void MainWindow::on_tabWidget_tabCloseRequested(int index)
@@ -1244,8 +1261,24 @@ void MainWindow::on_tabWidget_currentChanged(int index)
 {
     Q_UNUSED(index)
     QueryWidget *q = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
-    _frPanel->setEditor(q);
-    refreshConnectionState();
+    if (q != nullptr)
+    {
+        _frPanel->setEditor(q);
+        refreshConnectionState();
+        update_dbBtn_text(q);
+    }
+}
+
+void MainWindow::update_dbBtn_text(QueryWidget *qw)
+{
+    if (qw == nullptr)
+        qw = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
+
+    if (qw != nullptr)
+    {
+        if (_dbBtn != nullptr)
+            _dbBtn->setText(qw->dbConnection()->hostname() + "/" + qw->dbConnection()->database());
+    }
 }
 
 void MainWindow::onActionOpenFile()
@@ -1346,4 +1379,9 @@ void MainWindow::on_actionSettings_triggered()
 {
     SettingsDialog dlg(this);
     dlg.exec();
+}
+
+void MainWindow::on_objectsView_clicked(const QModelIndex &)
+{
+    ui->actionObject_content->trigger();
 }

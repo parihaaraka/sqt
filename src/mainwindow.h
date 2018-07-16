@@ -5,6 +5,7 @@
 #include "extfiledialog.h"
 #include <QItemSelection>
 #include <QLabel>
+#include <QToolButton>
 #include <memory>
 #include "dbconnection.h"
 
@@ -43,6 +44,7 @@ private slots:
     void on_actionAbout_triggered();
     void on_objectsView_activated(const QModelIndex &index);
     void on_objectsView_customContextMenuRequested(const QPoint &pos);
+    void on_objectsView_clicked(const QModelIndex &);
     void on_actionRefresh_triggered();
     void on_actionChange_sort_mode_triggered();
     void selectionChanged(const QItemSelection &selected, const QItemSelection &deselected);
@@ -84,6 +86,8 @@ private:
     void log(const QString &msg);
     void adjustMru();
     void addMruFile();
+    QToolButton* _dbBtn;
+    void update_dbBtn_text(QueryWidget *qw = nullptr);
 
 public slots:
     QVariant current(const QString &nodeType, const QString &field);

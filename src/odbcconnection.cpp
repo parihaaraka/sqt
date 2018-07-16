@@ -681,6 +681,23 @@ QString OdbcConnection::context() const noexcept
     return (user.isEmpty() ? "" : user + "@") + context;
 }
 
+QString OdbcConnection::hostname() const noexcept
+{
+    if (!_hdbc)
+        return "";
+
+    RETCODE retcode;
+    const SQLSMALLINT buf_size = 256;
+    SQLSMALLINT res_size;
+    char info_buf[buf_size];
+
+    retcode = SQLGetInfoA(_hdbc, SQL_SERVER_NAME, info_buf, buf_size, &res_size);
+    if (retcode != SQL_SUCCESS)
+        return "";
+
+    return QString::fromLocal8Bit(info_buf, SQL_NTS);
+}
+
 QString OdbcConnection::database() const noexcept
 {
     return _database;
