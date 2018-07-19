@@ -37,8 +37,7 @@ public:
 
     virtual QString escapeIdentifier(const QString &identifier) override;
     virtual QPair<QString,int> typeInfo(int sqlType) override;
-
-    void clarifyTableStructure(DataTable &table);
+    virtual void clarifyTableStructure(DataTable &table) override;
 
 private:
     enum class async_stage

@@ -528,6 +528,11 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
     return true;
 }
 
+void OdbcConnection::clarifyTableStructure(DataTable &)
+{
+    // TODO
+}
+
 void OdbcConnection::executeAsync(const QString &query, const QVector<QVariant> *params) noexcept
 {
     QThread* thread = new QThread();
@@ -535,8 +540,9 @@ void OdbcConnection::executeAsync(const QString &query, const QVector<QVariant> 
         execute(query, params);
         thread->quit();
     });
-    connect(thread, &QThread::finished, [thread]() {
+    connect(thread, &QThread::finished, [this, thread]() {
         thread->deleteLater();
+        emit queryFinished();
     });
     thread->start();
 }

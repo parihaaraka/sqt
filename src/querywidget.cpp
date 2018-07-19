@@ -137,40 +137,51 @@ void QueryWidget::setDbConnection(DbConnection *connection)
         connect(connection, &DbConnection::fetched, this, &QueryWidget::fetched, Qt::QueuedConnection);
         connect(connection, &DbConnection::message, this, &QueryWidget::onMessage, Qt::QueuedConnection);
         connect(connection, &DbConnection::error, this, &QueryWidget::onError, Qt::QueuedConnection);
+
         connect(connection, &DbConnection::queryStateChanged, this, [this](QueryState queryState) {
-            if (MainWindow *mainWindow = qobject_cast<MainWindow*>(window()))
-                mainWindow->queryStateChanged(this, queryState);
+            // actual query execution time before post-processing
             if (queryState == QueryState::Inactive)
-            {
                 onMessage(tr("%1: done in %2").arg(QTime::currentTime().toString("HH:mm:ss")).arg(_connection->elapsed()));
 
-                // print all resultsets structure ready to be used in 'create function returning table(...)'
-                QColor resultsetStructureColor = _messages->palette().text().color();
-                resultsetStructureColor.setAlphaF(0.6);
-                for (const auto res: _connection->_resultsets)
-                {
-                    if (!res->columnCount())
-                        continue;
-                    QString structure;
-                    for (int i = 0; i < res->columnCount(); ++i)
-                    {
-                        auto &c = res->getColumn(i);
-                        QString typeDescr = c.typeName();
-
-                        if (i)
-                            structure += ", ";
-                        structure += _connection->escapeIdentifier(c.name()) + ' ' + typeDescr;
-                    }
-                    log('(' + structure + ')', resultsetStructureColor);
-                }
-
-                // scroll down and left
-                auto cursor = _messages->textCursor();
-                cursor.movePosition(QTextCursor::End);
-                cursor.movePosition(QTextCursor::StartOfLine);
-                _messages->setTextCursor(cursor);
-            }
+            if (MainWindow *mainWindow = qobject_cast<MainWindow*>(window()))
+                mainWindow->queryStateChanged(this, queryState);
         }, Qt::QueuedConnection);
+
+        connect(connection, &DbConnection::queryFinished, this, [this]() {
+            // print all resultsets structure ready to be used in 'create function returning table(...)'
+            QColor resultsetStructureColor = _messages->palette().text().color();
+            resultsetStructureColor.setAlphaF(0.6);
+            for (const auto res: _connection->_resultsets)
+            {
+                if (!res->columnCount())
+                    continue;
+
+                // initially created models (while fetching data) have not acquired column types yet
+                // (unlike _connection->_resultsets)
+                TableModel *m = _resSplitter->findChild<TableModel*>("m" + QString::number(std::intptr_t(res)));
+                if (m)
+                    _connection->clarifyTableStructure(*m->table());
+
+                QString structure;
+                for (int i = 0; i < res->columnCount(); ++i)
+                {
+                    auto &c = res->getColumn(i);
+                    QString typeDescr = c.typeName();
+
+                    if (i)
+                        structure += ", ";
+                    structure += _connection->escapeIdentifier(c.name()) + ' ' + typeDescr;
+                }
+                log('(' + structure + ')', resultsetStructureColor);
+            }
+
+            // scroll down and left
+            auto cursor = _messages->textCursor();
+            cursor.movePosition(QTextCursor::End);
+            cursor.movePosition(QTextCursor::StartOfLine);
+            _messages->setTextCursor(cursor);
+        }, Qt::QueuedConnection);
+
         connection->open();
     }
 
@@ -490,6 +501,7 @@ void QueryWidget::fetched(DataTable *table)
         //tv->addAction(_actionCopy);
 
         m = new TableModel(_resSplitter);
+        m->setObjectName("m" + tname);
         _tables.append(m);
         tv->setModel(m);
         _resSplitter->addWidget(tv);

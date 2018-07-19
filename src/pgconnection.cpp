@@ -484,8 +484,9 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
         // read socket on gui thread to receive notifications
         QMetaObject::invokeMethod(this, "watchSocket", Qt::QueuedConnection, Q_ARG(int, SocketWatchMode::Read));
 
-        // TODO immediate acquire of notification being sent during pg_sleep()
-        // (still unable to find solution)
+        // https://www.postgresql.org/message-id/CAOYf6ec-TmRYjKBXLLaGaB-jrd=mjG1Hzn1a1wufUAR39PQYhw@mail.gmail.com
+
+        emit queryFinished();
     });
     _timer.start();
     thread->start();

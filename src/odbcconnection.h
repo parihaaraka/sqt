@@ -43,6 +43,7 @@ public:
     virtual QMetaType::Type sqlTypeToVariant(int sqlType) const noexcept override;
     virtual void executeAsync(const QString &query, const QVector<QVariant> *params = nullptr) noexcept override;
     virtual bool execute(const QString &query, const QVector<QVariant> *params = nullptr) override;
+    virtual void clarifyTableStructure(DataTable &table) override;
 
 private:
     SQLHENV _henv;

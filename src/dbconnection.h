@@ -89,6 +89,8 @@ public:
      */
     virtual QPair<QString, int> typeInfo(int sqlType);
 
+    virtual void clarifyTableStructure(DataTable &table) = 0;
+
     void setDatabase(const QString &database) noexcept;
     void setConnectionString(const QString &connectionString);
     QString connectionString() const noexcept;
@@ -109,6 +111,7 @@ signals:
     // use QueryState as argument instead of _query_state due to queued connection
     // (slot may have _query_state to be distinct from the state the signal was emitted with)
     void queryStateChanged(QueryState);
+    void queryFinished();
 
 protected:
     std::atomic<QueryState> _query_state;
