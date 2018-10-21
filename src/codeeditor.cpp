@@ -9,12 +9,15 @@
 #include <QCompleter>
 #include <QAbstractItemView>
 #include "settings.h"
+#include <QDebug>
 
 #define RIGHT_MARGIN 2
 #define ICON_PLACE_WIDTH 13
 
 static QList<CodeBlockProperties*> _bookmarks;
+static QSet<CodeBlockProperties*> _deletedBookmarks;
 static float _lastUsedBookmarkPos = 0;
+static bool _suspendBookmarks = false;
 
 class LeftSideBar : public QWidget
 {
@@ -126,9 +129,7 @@ void CodeEditor::leftSideBarPaintEvent(QPaintEvent *event)
             {
                 QPixmap imgBookmark(":/img/bookmark.png");
                 painter.drawPixmap((ICON_PLACE_WIDTH - imgBookmark.width())/2,
-                                   top,
-                                   imgBookmark.width(),
-                                   imgBookmark.height(),
+                                   top + (bottom - top - imgBookmark.height())/2,
                                    imgBookmark);
             }
         }
@@ -744,20 +745,31 @@ bool CodeEditor::isEnveloped(int pos) const
     return false;
 }
 
-CodeBlockProperties::CodeBlockProperties(CodeEditor *editor) : QTextBlockUserData(), _editor(editor)
+CodeBlockProperties::CodeBlockProperties(CodeEditor *editor) :
+    QTextBlockUserData(), _editor(editor)
 {
     _bookmarks.append(this);
     _lastUsedBookmarkPos = _bookmarks.size() - 1;
 }
 
+CodeBlockProperties::CodeBlockProperties(CodeEditor *editor, CodeBlockProperties *toReplace) :
+    QTextBlockUserData(), _editor(editor)
+{
+    int bookmarkPos = _bookmarks.indexOf(toReplace);
+    _bookmarks.replace(bookmarkPos, this);
+    // previously freed memory could be reused by new item
+    _deletedBookmarks.remove(this);
+}
+
 CodeBlockProperties::~CodeBlockProperties()
 {
-    _lastUsedBookmarkPos = _bookmarks.indexOf(this);
-    _bookmarks.removeOne(this);
-    if (!_lastUsedBookmarkPos)
-        _lastUsedBookmarkPos = _bookmarks.size() - 0.5f;
-    else
-        _lastUsedBookmarkPos -= 0.5;
+    // _bookmarks' item is dead and must be handled by code suspended this stuff
+    if (_suspendBookmarks)
+    {
+        _deletedBookmarks.insert(this);
+        return;
+    }
+    Bookmarks::remove(this);
 }
 
 CodeEditor *CodeBlockProperties::editor() const
@@ -806,4 +818,27 @@ CodeBlockProperties *Bookmarks::last()
         return _bookmarks[_bookmarks.size() - 1];
 
     return _bookmarks[int(_lastUsedBookmarkPos)];
+}
+
+void Bookmarks::remove(CodeBlockProperties *item)
+{
+    _lastUsedBookmarkPos = _bookmarks.indexOf(item);
+    _bookmarks.removeOne(item);
+    if (!_lastUsedBookmarkPos)
+        _lastUsedBookmarkPos = _bookmarks.size() - 0.5f;
+    else
+        _lastUsedBookmarkPos -= 0.5;
+}
+
+void Bookmarks::suspend()
+{
+    _suspendBookmarks = true;
+}
+
+void Bookmarks::resume()
+{
+    _suspendBookmarks = false;
+    for (CodeBlockProperties* bm: _deletedBookmarks)
+        Bookmarks::remove(bm);
+    _deletedBookmarks.clear();
 }

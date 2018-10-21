@@ -5,52 +5,61 @@ select
 	null::text id,
 	'function.png' icon,
 	--null::text icon,
-	'1' sort1
+	1 sort1
+union all
+select
+	'procedures',
+	null,
+	'Procedures',
+	null,
+	'procedure.png',
+	2
+where $dbms.version$ >= 100000
 union all
 select
 	'sequences',
-	null::text,
+	null,
 	'Sequences',
 	null,
 	'ui-paginator.png',
-	'2'
+	3
 union all
 select
 	'tables',
-	null::text,
+	null,
 	'Tables',
 	null,
 	'tables.png',
-	'3'
+	4
 union all
 select
 	'types',
-	null::text,
+	null,
 	'Types',
 	null,
 	'block.png',
-	'4'
+	5
 union all
 select
 	'domains',
-	null::text,
+	null,
 	'Domains',
 	null,
 	'hard-hat.png',
-	'5'
+	6
 union all
 select
 	'views',
-	null::text,
+	null,
 	'Views',
 	null,
 	'views.png',
-	'6'
+	7
 union all
 select
 	'operators_related',
-	null::text,
+	null,
 	'Ops',
 	null,
 	'operators-related.png',
-	'7'
+	8

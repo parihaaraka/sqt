@@ -13,6 +13,12 @@ namespace Ui {
 class FindAndReplacePanel;
 }
 
+struct ReplaceChunk
+{
+    int refNum;
+    QString value;
+};
+
 class FindAndReplacePanel : public QWidget
 {
     Q_OBJECT
@@ -37,7 +43,8 @@ private:
     QueryWidget *_queryWidget;
     QTextCursor find(const QTextCursor &cursor = QTextCursor(), bool *nextPass = nullptr, FindMode mode = Forward);
     QRegularExpression::PatternOptions regexpOptions();
-    QString unescape(QString ui_string, bool *err);
+    QVector<ReplaceChunk> unescape(QString ui_string, QString *err);
+    QString replaceMatch(const QRegularExpressionMatch &match, const QVector<ReplaceChunk> &repl);
 
 protected:
     bool eventFilter(QObject *target, QEvent *event);

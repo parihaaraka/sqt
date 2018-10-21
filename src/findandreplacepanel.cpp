@@ -3,6 +3,8 @@
 #include <QPlainTextEdit>
 #include <QToolTip>
 #include "querywidget.h"
+#include "codeeditor.h"
+#include "set"
 
 FindAndReplacePanel::FindAndReplacePanel(QWidget *parent) :
     QWidget(parent),
@@ -205,8 +207,12 @@ QRegularExpression::PatternOptions FindAndReplacePanel::regexpOptions()
     return opt;
 }
 
-QString FindAndReplacePanel::unescape(QString ui_string, bool *err)
+QVector<ReplaceChunk> FindAndReplacePanel::unescape(QString ui_string, QString *err)
 {
+    if (err)
+        err->clear();
+
+    QVector<ReplaceChunk> array;
     QString res;
     for (int i = 0; i < ui_string.length(); ++i)
     {
@@ -218,7 +224,9 @@ QString FindAndReplacePanel::unescape(QString ui_string, bool *err)
                 QChar nextChar = ui_string.at(i + 1);
                 if (nextChar.isDigit())
                 {
-                    res += currentChar;
+                    array.append(ReplaceChunk{nextChar.digitValue(), ""});
+                    ++i;
+                    res.clear();
                     continue;
                 }
                 switch (nextChar.toLatin1())
@@ -239,10 +247,37 @@ QString FindAndReplacePanel::unescape(QString ui_string, bool *err)
                     ++i;
                     res += '\t';
                     break;
+                case 'g':  //   \g{10} - backreference
+                {
+                    nextChar = ui_string.at(i + 1);
+                    int refNum = -1;
+                    if (nextChar == '{')
+                    {
+                        const char *num_ptr = ui_string.mid(i + 2).toStdString().c_str();
+                        char *end;
+                        refNum = static_cast<int>(strtol(num_ptr, &end, 10));
+                        if (end > num_ptr && *end == '}')
+                        {
+                            array.append(ReplaceChunk{refNum, ""});
+                            i += (end - num_ptr) + 3;
+                            res.clear();
+                        }
+                        else
+                            refNum = -1;
+                    }
+                    if (refNum == -1)
+                    {
+                        if (err)
+                            *err = tr("Incorrect backreference. Must be \\g{<group number>}.");
+                        return array;
+                    }
+                    break;
+                }
                 default:
-                    res = tr("Unknown character \\%1\nAvailable escaped characters are \\r, \\n, \\t, \\").arg(nextChar);
-                    if (err) *err = true;
-                    return res;
+                    if (err)
+                        *err = tr("Unknown character \\%1\nAvailable escaped characters are \\r, \\n, \\t, \\.\n"
+                                  "Backreferences: \\<1-digit group number> or \\g{<group number>}").arg(nextChar);
+                    return array;
                 }
             }
             else
@@ -251,8 +286,18 @@ QString FindAndReplacePanel::unescape(QString ui_string, bool *err)
         else
             res += currentChar;
     }
-    if (err)
-        *err = false;
+    if (!res.isEmpty())
+        array.append(ReplaceChunk{-1, res});
+    return array;
+}
+
+QString FindAndReplacePanel::replaceMatch(const QRegularExpressionMatch &match, const QVector<ReplaceChunk> &repl)
+{
+    QString res;
+    for (const auto &r: repl)
+    {
+        res.append(r.refNum == -1 ? r.value : match.captured(r.refNum));
+    }
     return res;
 }
 
@@ -288,41 +333,88 @@ void FindAndReplacePanel::on_btnReplace_clicked()
     {
         QRegularExpression exp(ui->lineFind->text(), regexpOptions());
         QString tmp = c.selectedText().replace(QChar::ParagraphSeparator, '\n');
-        bool err;
-        QString repl = unescape(ui->lineReplace->text(), &err);
-        if (err)
+        QString err;
+        auto repl = unescape(ui->lineReplace->text(), &err);
+        if (!err.isEmpty())
         {
-            QToolTip::showText(ui->lineReplace->mapToGlobal(QPoint(0, -ui->lineReplace->height() * 2)), repl);
+            QToolTip::showText(ui->lineReplace->mapToGlobal(QPoint(0, -ui->lineReplace->height() * 2)), err);
             return;
         }
-        tmp.replace(exp, repl);
-        c.insertText(tmp);
+
+        QRegularExpressionMatch m = exp.match(tmp);
+        if (m.hasMatch())
+        {
+            tmp = replaceMatch(m, repl);
+            c.insertText(tmp);
+        }
     }
-    else c.insertText(ui->lineReplace->text());
+    else
+        c.insertText(ui->lineReplace->text());
     _queryWidget->setTextCursor(c);
 }
 
 void FindAndReplacePanel::on_btnReplaceAll_clicked()
 {
+    // paragraph by paragraph replacement is very slow,
+    // so lets do replacement on solid textual buffer
+
     QTextCursor c = _queryWidget->textCursor();
     QString src_text = c.hasSelection() ?
-                c.selectedText() : _queryWidget->toPlainText();
+                c.selectedText() :
+                _queryWidget->toPlainText();
 
-    QString repl;
+    struct BookmarkInfo
+    {
+        int blockNumber;
+        CodeBlockProperties *prop;
+    };
+
+    // bookmarks by block position
+    int selectionPos = c.hasSelection() ? c.selectionStart() : 0;
+    QMap<int, BookmarkInfo> bookmarks;
+    {
+        QTextBlock block = c.hasSelection() ?
+                    _queryWidget->document()->findBlock(c.selectionStart()) :
+                    _queryWidget->document()->begin();
+        while (block.isValid())
+        {
+            // do not process bookmarks out of selection
+            if (c.hasSelection() && c.selectionEnd() <= block.position())
+                break;
+
+            if (block.userData())
+                bookmarks.insert(block.position(),
+                                 BookmarkInfo{
+                                     block.blockNumber(),
+                                     static_cast<CodeBlockProperties*>(block.userData())});
+            block = block.next();
+        }
+    }
+
+    // если при замене увеличилось количество блоков, то сдвигать
+    // закладки *ниже* исходного выделения (на следующих за ним блоках)
+    // на дельту блоков
+
+    // если при замене уменьшилось количество блоков, то:
+    // 1) очищать закладки на убавившихся блоках;
+    // 2) сдвигать закладки *ниже* исходного выделения
+    //    на дельту блоков
+
+    QVector<ReplaceChunk> replParts;
     QRegularExpression exp;
     if (ui->cbRegexp->isChecked())
     {
         exp.setPattern(ui->lineFind->text());
         exp.setPatternOptions(regexpOptions());
-        bool err;
-        repl = unescape(ui->lineReplace->text(), &err);
-        if (err)
+        QString err;
+        replParts = unescape(ui->lineReplace->text(), &err);
+        if (!err.isEmpty())
         {
-            QToolTip::showText(ui->lineReplace->mapToGlobal(QPoint(0, -ui->lineReplace->height() * 2)), repl);
+            QToolTip::showText(ui->lineReplace->mapToGlobal(QPoint(0, -ui->lineReplace->height() * 2)), err);
             return;
         }
-        //^(\w+)\,[^\n]\n
-        src_text = src_text.replace(QChar::ParagraphSeparator, '\n');
+        // make \n work
+        src_text.replace(QChar::ParagraphSeparator, '\n');
     }
     else
     {
@@ -331,31 +423,79 @@ void FindAndReplacePanel::on_btnReplaceAll_clicked()
         exp.setPatternOptions(ui->cbCaseSensitive->isChecked() ?
                                   QRegularExpression::NoPatternOption :
                                   QRegularExpression::CaseInsensitiveOption);
-        repl = ui->lineReplace->text();
+        replParts.append(ReplaceChunk{-1, ui->lineReplace->text()});
     }
 
-    // just count
     int count = 0;
+    int offset = c.hasSelection() ? c.selectionStart() : 0;
     QRegularExpressionMatchIterator i = exp.globalMatch(src_text);
-    while (i.hasNext())
+    QSet<int> bookmarksToRemove;
+    if (i.hasNext())
     {
-        i.next();
-        ++count;
-    }
+        QString dst;
+        int prevPos = 0;
+        dst.reserve(src_text.length());
+        while (i.hasNext())
+        {
+            ++count;
+            QRegularExpressionMatch match = i.next();
+            QString tmp = replaceMatch(match, replParts);
+            dst.append(src_text.mid(prevPos, match.capturedStart() - prevPos));
+            dst.append(tmp);
+            prevPos = match.capturedEnd();
 
-    // replace
-    if (count)
-    {
-        src_text.replace(exp, repl);
+            int prevLF = match.captured().count('\n');
+            int newLF = tmp.count('\n');
+            int deltaLF = newLF - prevLF;
 
+            // search for the first affected bookmark
+            auto bm_it = bookmarks.lowerBound(offset + match.capturedStart());
+            if (bm_it == bookmarks.end())
+                continue;
+
+            int matchBlockNumber = _queryWidget->document()->findBlock(selectionPos + match.capturedStart()).blockNumber();
+            int capturedEnd = selectionPos + match.capturedStart() + match.capturedLength();
+            while (bm_it != bookmarks.end())
+            {
+                int bm_pos = bm_it.key();
+                // bookmark within truncated part of replaced text
+                if (bm_it->blockNumber > matchBlockNumber + newLF && bm_it->blockNumber <= matchBlockNumber + prevLF)
+                    bookmarksToRemove.insert(bm_it.key());
+                else if (bm_pos > capturedEnd)
+                    bm_it->blockNumber += deltaLF;
+                ++bm_it;
+            }
+        }
+        dst.append(src_text.midRef(prevPos));
+        Bookmarks::suspend();
+
+        // replace selection or entire text
         if (!c.hasSelection())
             c.select(QTextCursor::Document);
-        c.insertText(src_text);
-        _queryWidget->setTextCursor(c);
+        c.insertText(dst);
+
+        // All bookmarks from replaced area are destroyed,
+        // so we need to revitalize the pointers within _bookmarks list.
+        // This risky magic is used to preserve bokmarks order.
+        for (auto it = bookmarks.begin(); it != bookmarks.end(); ++it)
+        {
+            // the pointer wil be dropped from _bookmarks on resume
+            if (bookmarksToRemove.contains(it.key()))
+                continue;
+
+            // create new bookmark on the block which was bookmarked before replace
+            CodeBlockProperties *prop = new CodeBlockProperties(
+                        dynamic_cast<CodeEditor*>(_queryWidget->editor()),
+                        it->prop);
+            auto block = _queryWidget->document()->findBlockByNumber(it->blockNumber);
+            block.setUserData(prop);
+        }
+        Bookmarks::resume();
     }
 
     QToolTip::showText(
-                ui->btnReplaceAll->mapToGlobal(QPoint(0, -ui->btnReplaceAll->height() * 1.5)),
+                ui->btnReplaceAll->mapToGlobal(
+                    QPoint(0, static_cast<int>(-ui->btnReplaceAll->height() * 1.5))),
                 tr("%1 occurences replaced").arg(count)
                 );
 }

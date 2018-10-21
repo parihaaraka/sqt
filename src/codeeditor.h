@@ -13,16 +13,20 @@ namespace Bookmarks
     CodeBlockProperties* next();
     CodeBlockProperties* previous();
     CodeBlockProperties* last();
+    void remove(CodeBlockProperties* item);
+    void suspend();
+    void resume();
 }
 
 class CodeBlockProperties : public QTextBlockUserData
 {
 public:
+    CodeBlockProperties(CodeEditor *editor, CodeBlockProperties *toReplace);
     CodeBlockProperties(CodeEditor *editor);
     ~CodeBlockProperties();
     CodeEditor* editor() const;
 private:
-    bool _isBookmarked = true;
+    // bool _isBookmarked = true;
     CodeEditor *_editor;
 };
 

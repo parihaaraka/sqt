@@ -8,6 +8,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
     ui(new Ui::SettingsDialog)
 {
     ui->setupUi(this);
+    restoreGeometry(SqtSettings::value("settingsDialogGeometry").toByteArray());
     ui->appStyle->setPlainText(SqtSettings::value("appStyle").toString());
     ui->encodings->setText(SqtSettings::value("encodings").toString());
     ui->tabSize->setValue(SqtSettings::value("tabSize").toInt());
@@ -31,6 +32,7 @@ void SettingsDialog::on_okBtn_clicked()
     SqtSettings::setValue("highlightCurrentLine", ui->highlightCurrentLine->isChecked());
     SqtSettings::setValue("f1url", ui->f1url->text());
     SqtSettings::setValue("shiftF1url", ui->shiftF1url->text());
+    SqtSettings::setValue("settingsDialogGeometry", saveGeometry());
     accept();
     SqtSettings::load();
 }
