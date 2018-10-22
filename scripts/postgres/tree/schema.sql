@@ -14,7 +14,7 @@ select
 	null,
 	'procedure.png',
 	2
-where $dbms.version$ >= 100000
+where $dbms.version$ >= 110000
 union all
 select
 	'sequences',
