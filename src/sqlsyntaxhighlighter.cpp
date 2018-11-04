@@ -106,6 +106,11 @@ SqlSyntaxHighlighter::SqlSyntaxHighlighter(const QJsonObject &settings, QObject 
     }
 }
 
+bool SqlSyntaxHighlighter::isKeyword(const QString &word)
+{
+    return keywords.contains(word.toLower());
+}
+
 void SqlSyntaxHighlighter::highlightBlock(const QString &text)
 {
     int firstWordStartPos = -1;

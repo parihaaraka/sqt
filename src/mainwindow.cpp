@@ -508,6 +508,7 @@ void MainWindow::on_objectsView_customContextMenuRequested(const QPoint &pos)
             _objectsModel->removeRows(0, item->childCount(), srcIndex);
             con->close();
             con->disconnect(); // disconnect all slots from all signals
+            DbConnectionFactory::removeConnection(QString::number(std::intptr_t(item)));
             _objectsModel->setData(srcIndex, false, DbObject::ParentRole);
             _objectsModel->setData(srcIndex, QVariant(), DbObject::ContentRole);
             showContent(srcIndex, nullptr);

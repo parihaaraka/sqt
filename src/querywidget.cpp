@@ -162,17 +162,28 @@ void QueryWidget::setDbConnection(DbConnection *connection)
                 if (m)
                     _connection->clarifyTableStructure(*m->table());
 
-                QString structure;
+                QString structure, fieldsList;
                 for (int i = 0; i < res->columnCount(); ++i)
                 {
                     auto &c = res->getColumn(i);
                     QString typeDescr = c.typeName();
 
                     if (i)
+                    {
                         structure += ", ";
-                    structure += _connection->escapeIdentifier(c.name()) + ' ' + typeDescr;
+                        fieldsList += ", ";
+                    }
+
+                    QString tmp = _connection->escapeIdentifier(c.name());
+                    if (    c.name().length() == tmp.length() - 2 && // quotes only appendes
+                            tmp == tmp.toLower() &&  // originally lowercase
+                            _highlighter && !_highlighter->isKeyword(c.name())) // not a keyword
+                        tmp = c.name(); // take original name witout quotes
+
+                    structure += tmp + ' ' + typeDescr;
+                    fieldsList += tmp;
                 }
-                log('(' + structure + ')', resultsetStructureColor);
+                log('(' + structure + ")\nselect " + fieldsList, resultsetStructureColor);
             }
 
             // scroll down and left

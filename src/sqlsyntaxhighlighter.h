@@ -8,6 +8,7 @@ class SqlSyntaxHighlighter : public QSyntaxHighlighter
     Q_OBJECT
 public:
     explicit SqlSyntaxHighlighter(const QJsonObject &settings, QObject *parent = nullptr);
+    bool isKeyword(const QString &word);
 
 protected:
     virtual void highlightBlock(const QString &text);
