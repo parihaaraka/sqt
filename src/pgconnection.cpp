@@ -179,6 +179,14 @@ QString PgConnection::context() const noexcept
             (port.isEmpty() ? "" : ":" + port + "/" + database());
 }
 
+QString PgConnection::hostname() const noexcept
+{
+    if (!isOpened())
+        return QString();
+
+    return PQhost(_conn);
+}
+
 QString PgConnection::database() const noexcept
 {
     return _database;
