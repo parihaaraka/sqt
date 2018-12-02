@@ -1,34 +1,15 @@
 #include "copycontext.h"
 #include <QRegularExpression>
+#include "queryoptions.h"
 
 void PgCopyContext::init(const QString &query)
 {
     clear();
-
-    // search for comments /*sqt ... */
-    QRegularExpression cre(R"(\/\*sqt\s+(.*?)\*\/)", QRegularExpression::DotMatchesEverythingOption);
-    QRegularExpressionMatchIterator i = cre.globalMatch(query);
-
-    while (i.hasNext())
-    {
-        QRegularExpressionMatch commentMatch = i.next();
-        QString comment = commentMatch.captured(1);
-
-        // search for function-like options within comment
-        QRegularExpression ore(R"((^\w+|(?<=\s)\w+)\s*\(([^\)]*))", QRegularExpression::DotMatchesEverythingOption);
-        QRegularExpressionMatchIterator oi = ore.globalMatch(comment);
-        while (oi.hasNext())
-        {
-            QRegularExpressionMatch optionMatch = oi.next();
-            QString option = optionMatch.captured(1);
-            QString value = optionMatch.captured(2).trimmed();
-            if (option == "CopyDst")
-                _dstFiles.append(value);
-            else if (option == "CopySrc")
-                _srcFiles.append(value);
-        }
-    }
-
+    auto qo = QueryOptions::Extract(query);
+    if (qo.contains("copy_src"))
+        _srcFiles = qo["copy_src"].toVariant().toStringList();
+    if (qo.contains("copy_dst"))
+        _srcFiles = qo["copy_dst"].toVariant().toStringList();
     _initialized = true;
 }
 
@@ -49,7 +30,8 @@ bool PgCopyContext::nextSource()
     if (++_curSrcIndex > _srcFiles.size() - 1)
     {
         emit error(tr("COPY source file is not specified.\n"
-                      "  Use special comment to pass source file: /*sqt CopySrc(<file>) */"));
+                      "  Use special comment to pass source file: /*sqt { \"copy_src\": [\"<file1>\", \"<file2>\"...] } */"
+                      "  In case of single COPY FROM query non-array form is allowed: /*sqt { \"copy_src\": \"<file>\" } */\n"));
         return false;
     }
     _file.setFileName(_srcFiles[_curSrcIndex]);
@@ -68,12 +50,13 @@ bool PgCopyContext::nextDestination()
     if (++_curDstIndex > _dstFiles.size() - 1)
     {
         emit error(tr("COPY destination file is not specified.\n"
-                      "  Use special comment to pass destination file: /*sqt CopyDst(<file>) */\n"
-                      "  If argument is omitted, then log widget will be used instead of file."));
+                      "  Use special comment to pass destination files: /*sqt { \"copy_dst\": [\"<file1>\", \"<file2>\"...] } */\n"
+                      "  In case of single COPY TO query non-array form is allowed: /*sqt { \"copy_dst\": \"<file>\" } */\n"
+                      "  Specify an empty string instead of file name for output to the log widget."));
         return false;
     }
 
-    // use empty argument of CopyDst() to use log widget for output
+    // empty string as file name => use log widget for output
     if (_dstFiles[_curDstIndex].isEmpty())
         return true;
 

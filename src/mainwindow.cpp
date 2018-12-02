@@ -23,6 +23,7 @@
 #include "codeeditor.h"
 #include <QScrollBar>
 #include "settingsdialog.h"
+#include "queryoptions.h"
 
 struct RecentFile
 {
@@ -639,6 +640,12 @@ void MainWindow::on_actionExecute_query_triggered()
                              q->toPlainText());
         if (query.isEmpty())
             return;
+
+        // do not extract commented instructions from huge sql script
+        if (query.size() < 1024 * 32)
+        {
+            QueryOptions::Extract(query);
+        }
 
         con->executeAsync(query);
     }

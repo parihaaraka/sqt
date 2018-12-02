@@ -106,7 +106,7 @@ bool DbObjectsModel::insertRows(int pos, int count, const QModelIndex &parent)
 
     if (count > parentItem->childCount())
         return false;
-    beginInsertRows(parent, pos, pos + count);
+    beginInsertRows(parent, pos, pos + count - 1);
     for (int i = 0; i < count; ++i)
         parentItem->insertChild(pos);
     endInsertRows();
@@ -121,7 +121,7 @@ bool DbObjectsModel::removeRows(int pos, int count, const QModelIndex &parent)
 
     if (pos + count > parentItem->childCount())
         return false;
-    beginRemoveRows(parent, pos, pos + count);
+    beginRemoveRows(parent, pos, pos + count - 1);
     for (int i = 0; i < count; ++i)
         parentItem->removeChild(pos);
     endRemoveRows();

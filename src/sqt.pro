@@ -33,7 +33,10 @@ SOURCES += main.cpp\
     settings.cpp \
     settingsdialog.cpp \
     jsonsyntaxhighlighter.cpp \
-    sqlparser.cpp
+    sqlparser.cpp \
+    queryoptions.cpp \
+    timechart.cpp \
+    timechartscene.cpp
 
 HEADERS  += mainwindow.h \
     dbobjectsmodel.h \
@@ -61,7 +64,10 @@ HEADERS  += mainwindow.h \
     settings.h \
     settingsdialog.h \
     jsonsyntaxhighlighter.h \
-    sqlparser.h
+    sqlparser.h \
+    queryoptions.h \
+    timechart.h \
+    timechartscene.h
 
 FORMS    += mainwindow.ui \
     logindialog.ui \
