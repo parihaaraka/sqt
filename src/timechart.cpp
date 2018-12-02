@@ -34,9 +34,14 @@ TimeChart::TimeChart(QWidget *parent) : QGraphicsView(parent)
     setScene(scene);
 }
 
-bool TimeChart::pathExists(const QString &name)
+bool TimeChart::pathExists(const QString &name) const
 {
     return _paths.contains(name);
+}
+
+QStringList TimeChart::pathNames() const
+{
+    return _paths.keys();
 }
 
 void TimeChart::createPath(const QString &name, const QColor &color, bool cumulative)
@@ -112,6 +117,16 @@ void TimeChart::applyNewValues()
     if (adjustViewport || s->_intervalY == 0.0)
         this->adjustViewport();
     scroll->setValue(wantScroll ? scroll->maximum() : scrollPos);
+}
+
+void TimeChart::setXSourceField(const QString &name)
+{
+    _xSourceField = name;
+}
+
+QString TimeChart::xSourceField() const
+{
+    return _xSourceField;
 }
 
 QString TimeChart::xLabel(qreal x, qreal secApproxInterval)

@@ -73,16 +73,16 @@ QJsonObject QueryOptions::Extract(const QString &query)
     "graphs": [
         {
             "name": "tps",
-            "dif_y": {
-                "field1": "#0f0",
-                "field2": "#f00"
+            "cumulative_y": {
+                "field1": "#0a0",
+                "field2": "#a00"
             }
         },
         {
             "name": "block i/o",
             "y": {
-                "field1": "#0f0",
-                "field2": "#f00"
+                "field3": "#bb0",
+                "field4": "#00b"
             }
         }
     ]
@@ -107,3 +107,23 @@ QJsonObject QueryOptions::Extract(const QString &query)
 /*sqt
 { "copy_dst": ["file1", "file2"] }
 */
+
+// --- example ---
+/*sqt
+{
+    "graphs": [
+        {
+            "name": "tps_log",
+            "x": "ts",
+            "y": {
+                "f1": "#0c0"
+            }
+        }
+    ]
+}
+*/
+/*
+select s.ts, 5 + 4*random() f1
+from generate_series(now(), now() + '20min'::interval, '1sec'::interval) as s(ts)
+*/
+// ^^^ example ^^^

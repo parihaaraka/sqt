@@ -6,6 +6,7 @@
 #include <QTextCursor>
 #include <QPlainTextEdit>
 #include <memory>
+#include <QJsonObject>
 
 class DbConnection;
 class TableModel;
@@ -46,6 +47,7 @@ public:
     QWidget* editor() const;
     void setPlainText(const QString &text);
     void setHtml(const QString &html);
+    void setQuerySettings(QJsonObject &querySettings);
 
 signals:
     void sqlChanged();
@@ -61,6 +63,7 @@ public slots:
     //void on_customEditorContextMenuRequested(const QPoint & pos);
 
 private:
+    QJsonObject _querySettings;
     QString _fn;
     QString _encoding;
     QWidget *_editor;

@@ -29,6 +29,12 @@ void DataTable::clear()
     _columns.clear();
 }
 
+void DataTable::clearRows()
+{
+    qDeleteAll(_rows);
+    _rows.clear();
+}
+
 int DataTable::columnCount() const
 {
     return _columns.size();

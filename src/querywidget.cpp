@@ -31,6 +31,7 @@
 #include <QTimer>
 #include "sqlparser.h"
 #include "datatable.h"
+#include "timechart.h"
 
 QueryWidget::QueryWidget(QWidget *parent) : QueryWidget(nullptr, parent)
 {
@@ -400,6 +401,11 @@ void QueryWidget::setHtml(const QString &html)
     editor->setHtml(html);
 }
 
+void QueryWidget::setQuerySettings(QJsonObject &querySettings)
+{
+    _querySettings.swap(querySettings);
+}
+
 void QueryWidget::log(const QString &text, QColor color)
 {
     QTextCharFormat fmt = _messages->currentCharFormat();
@@ -498,33 +504,110 @@ void QueryWidget::fetched(DataTable *table)
     QString tname = QString::number(std::intptr_t(table));
     QTableView *tv = nullptr;
     TableModel *m = nullptr;
-    if (_resSplitter->count())
-        tv = qobject_cast<QTableView*>(_resSplitter->widget(_resSplitter->count() - 1));
-    if (!tv || tv->objectName() != tname)
+
+    if (_querySettings.contains("graphs"))
     {
-        tv = new QTableView(_resSplitter);
-        tv->horizontalHeader()->viewport()->setMouseTracking(true);
-        tv->setObjectName(tname);
+        QVector<TimeChart*> charts;
+        if (!_resSplitter->count())
+        {
+            // create charts
+            QJsonArray graphs = _querySettings["graphs"].toArray();
+            for (auto g: graphs)
+            {
+                auto gObj = g.toObject();
+                TimeChart *chart = new TimeChart(_resSplitter);
+                charts.append(chart);
+                chart->setObjectName(gObj["name"].toString());
+                chart->setXSourceField(gObj["x"].toString());
+                auto difYObj = gObj["cumulative_y"].toObject();
+                for (QString &k: difYObj.keys())
+                    chart->createPath(k, QColor(difYObj[k].toString()), true);
+                difYObj = gObj["y"].toObject();
+                for (QString &k: difYObj.keys())
+                    chart->createPath(k, QColor(difYObj[k].toString()), false);
 
-        //tv->setContextMenuPolicy(Qt::CustomContextMenu);
-        //connect(tv, &QTableView::customContextMenuRequested, this, &QueryWidget::onCustomGridContextMenuRequested);
-        //tv->setSelectionMode(QAbstractItemView::ContiguousSelection);
-        //tv->addAction(_actionCopy);
+                _resSplitter->addWidget(chart);
+            }
+        }
+        else
+        {
+            for (int i = 0; i < _resSplitter->count(); ++i)
+                charts.append(qobject_cast<TimeChart*>(_resSplitter->widget(i)));
+        }
 
-        m = new TableModel(_resSplitter);
-        m->setObjectName("m" + tname);
-        _tables.append(m);
-        tv->setModel(m);
-        _resSplitter->addWidget(tv);
-        m->take(table);
-        // prevent autoresize overhead when big resultset is fetched at once
-        tv->horizontalHeader()->setResizeContentsPrecision(20);
-        tv->resizeColumnsToContents();
+        for (auto c: charts)
+        {
+            QString xSourceField = c->xSourceField();
+            for (auto &n: c->pathNames())
+            {
+                int ind = table->getColumnOrd(n);
+                if (ind != -1)
+                {
+                    int sfInd = -1;
+                    if (!xSourceField.isEmpty())
+                    {
+                        // if x-source field is specified but not found then skip current chart
+                        // (path by path, because I'm too lazy to skip paths too)
+                        sfInd = table->getColumnOrd(xSourceField);
+                        if (sfInd == -1)
+                            continue;
+                    }
+                    for (int r = 0; r < table->rowCount(); ++r)
+                    {
+                        bool ok;
+                        qreal v = table->getRow(r)[n].toDouble(&ok);
+                        if (ok)
+                        {
+                            if (sfInd == -1)
+                                c->appendValue(n, v, QDateTime::currentDateTime());
+                            else
+                            {
+                                QString tsStr = table->getRow(r)[sfInd].toString();
+                                // TODO implement pg/odbc-specific time/datetime values conversion
+                                QDateTime ts = QDateTime::fromString(tsStr, Qt::ISODateWithMs);
+                                if (ts.isValid())
+                                    c->appendValue(n, v, ts);
+                            }
+                        }
+                    }
+                }
+            }
+            c->applyNewValues();
+        }
+        table->clearRows();
+
     }
     else
     {
-        m = qobject_cast<TableModel*>(tv->model());
-        m->take(table);
+        if (_resSplitter->count())
+            tv = qobject_cast<QTableView*>(_resSplitter->widget(_resSplitter->count() - 1));
+
+        if (!tv || tv->objectName() != tname)
+        {
+            tv = new QTableView(_resSplitter);
+            tv->horizontalHeader()->viewport()->setMouseTracking(true);
+            tv->setObjectName(tname);
+
+            //tv->setContextMenuPolicy(Qt::CustomContextMenu);
+            //connect(tv, &QTableView::customContextMenuRequested, this, &QueryWidget::onCustomGridContextMenuRequested);
+            //tv->setSelectionMode(QAbstractItemView::ContiguousSelection);
+            //tv->addAction(_actionCopy);
+
+            m = new TableModel(_resSplitter);
+            m->setObjectName("m" + tname);
+            _tables.append(m);
+            tv->setModel(m);
+            _resSplitter->addWidget(tv);
+            m->take(table);
+            // prevent autoresize overhead when big resultset is fetched at once
+            tv->horizontalHeader()->setResizeContentsPrecision(20);
+            tv->resizeColumnsToContents();
+        }
+        else
+        {
+            m = qobject_cast<TableModel*>(tv->model());
+            m->take(table);
+        }
     }
 }
 

@@ -16,10 +16,13 @@ class TimeChart : public QGraphicsView
 public:
     explicit TimeChart(QWidget *parent = nullptr);
     virtual ~TimeChart() override = default;
-    bool pathExists(const QString &name);
+    bool pathExists(const QString &name) const;
+    QStringList pathNames() const;
     void createPath(const QString &name, const QColor &color, bool cumulative = false);
     void appendValue(const QString &name, qreal value, const QDateTime &moment);
     void applyNewValues();
+    void setXSourceField(const QString &name);
+    QString xSourceField() const;
 protected:
     virtual void wheelEvent(QWheelEvent *event) override;
     virtual void resizeEvent(QResizeEvent * event) override;
@@ -35,9 +38,10 @@ private:
     QRect _viewportClipRect;
     qreal _scaleX, _scaleY;
     qreal _maxValue = 0;
+    QString _xSourceField;
     QString xLabel(qreal x, qreal secApproxInterval);
-    qreal beautifyInterval(qreal interval);
-    qreal beautifyTimeInterval(qreal interval);
+    static qreal beautifyInterval(qreal interval);
+    static qreal beautifyTimeInterval(qreal interval);
 private slots:
     void adjustViewport();
 };

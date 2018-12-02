@@ -72,6 +72,7 @@ public:
     DataTable(QObject *parent = nullptr);
     ~DataTable();
 	void clear();
+    void clearRows();
     DataRow& addRow();
     void addColumn(DataColumn *column);
     void addRow(DataRow *row);

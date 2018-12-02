@@ -644,7 +644,8 @@ void MainWindow::on_actionExecute_query_triggered()
         // do not extract commented instructions from huge sql script
         if (query.size() < 1024 * 32)
         {
-            QueryOptions::Extract(query);
+            auto qSettings = QueryOptions::Extract(query);
+            q->setQuerySettings(qSettings);
         }
 
         con->executeAsync(query);
