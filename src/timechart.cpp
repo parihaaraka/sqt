@@ -77,7 +77,7 @@ void TimeChart::applyNewValues()
 {
     QScrollBar *scroll = horizontalScrollBar();
     int scrollPos = scroll->value();
-    bool wantScroll = scroll->value() == scroll->maximum();
+    bool wantScroll = (scroll->value() == scroll->maximum() || !scroll->isVisible());
 
     qreal _maxX = 0;
     bool adjustViewport = false;
@@ -108,6 +108,9 @@ void TimeChart::applyNewValues()
         _maxX = qMax(_maxX, pit.value().last().x());
         graphicsItem.setPath(p);
     }
+
+    if (_pathParts.empty())
+        return;
     _pathParts.clear();
 
     QRectF sr = sceneRect();
@@ -190,9 +193,31 @@ void TimeChart::adjustViewport()
     constexpr int viewportRightMargin = 10;
     int viewportBottomMargin = qRound(tmpBoundingRect.height() * 1.3);
     int viewportTopMargin = viewportBottomMargin;
+    auto *s = qobject_cast<TimeChartScene*>(scene());
+
+    // adjust sceneRect to fit into view and place 0 to lower frame border
+    QRectF sr = sceneRect();
+    qreal sceneHeight = _maxValue * 1.2 - 0; // lower bound is 0
+    int viewportClipHeight = vp.height() - viewportTopMargin - viewportBottomMargin;
+    sr.setTop(0 - sceneHeight * viewportBottomMargin / viewportClipHeight);
+    sr.setBottom(_maxValue * 1.2 + sceneHeight * viewportTopMargin / viewportClipHeight);
+    setSceneRect(sr);
+
+    /* works too
+    _scaleY = - viewport()->height() / sr.height();
+    resetTransform();
+    scale(_scaleX, _scaleY);
+    */
+
+    qreal prevScaleY = _scaleY;
+    _scaleY = - viewport()->height() / sr.height();
+    if (!std::isinf(_scaleY))
+        scale(1, _scaleY / prevScaleY);
+    else
+        _scaleY = prevScaleY;
+
     qreal sceneTop = mapToScene(0, viewportTopMargin).y();
     qreal sceneBottom = mapToScene(0, vp.bottom() - viewportBottomMargin).y();
-    auto *s = qobject_cast<TimeChartScene*>(scene());
     s->_intervalY = beautifyInterval((sceneTop - sceneBottom) / 5);
 
     // use negative value to reserve space for '-'
@@ -210,17 +235,6 @@ void TimeChart::adjustViewport()
 
     auto sceneClipRect = mapToScene(_viewportClipRect).boundingRect();
     s->_intervalX = beautifyTimeInterval(sceneClipRect.width() / 5);
-
-    // adjust sceneRect to fit into view and place 0 to lower frame border
-    QRectF sr = sceneRect();
-    qreal sceneHeight = _maxValue * 1.2 - 0; // lower bound is 0
-    sr.setTop(0 - sceneHeight * viewportBottomMargin / _viewportClipRect.height());
-    sr.setBottom(_maxValue * 1.2 + sceneHeight * viewportTopMargin / _viewportClipRect.height());
-    setSceneRect(sr);
-
-    _scaleY = - viewport()->height() / sr.height();
-    resetTransform();
-    scale(_scaleX, _scaleY);
 }
 
 qreal TimeChart::beautifyInterval(qreal interval)

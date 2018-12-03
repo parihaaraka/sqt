@@ -63,7 +63,6 @@ void TimeChartScene::drawBackground(QPainter *painter, const QRectF &rect)
     painter->setPen(pen);
     painter->setClipRect(_sceneClipRect);
     painter->drawLines(grid.data(), grid.size());
-    //painter->setClipping(false);
     painter->restore();
 }
 
