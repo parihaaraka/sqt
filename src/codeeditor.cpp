@@ -266,7 +266,10 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
         {
             if (keyEvent->modifiers().testFlag(Qt::ControlModifier))
             {
-                if (keyEvent->modifiers().testFlag(Qt::ShiftModifier))
+                if (keyEvent->modifiers().testFlag(Qt::ShiftModifier) ||
+                        // Ubuntu uses Ctrl+Shift+U to enter character by unicode character number,
+                        // so we may use Ctrl+Win+U to lowercase selection
+                        keyEvent->modifiers().testFlag(Qt::MetaModifier))
                     c.insertText(c.selectedText().toLower());
                 else
                     c.insertText(c.selectedText().toUpper());

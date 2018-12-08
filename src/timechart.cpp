@@ -98,12 +98,12 @@ void TimeChart::applyNewValues()
             else if (!pathStruct.cumulative || !std::isnan(pathStruct.prevValue))
                 p.moveTo(pt);
 
-            pathStruct.prevValue = originalY;
-            if (pt.y() > _maxValue)
+            if (pt.y() > _maxValue && (!pathStruct.cumulative || !std::isnan(pathStruct.prevValue)))
             {
                 _maxValue = pt.y();
                 adjustViewport = true;
             }
+            pathStruct.prevValue = originalY;
         }
         _maxX = qMax(_maxX, pit.value().last().x());
         graphicsItem.setPath(p);

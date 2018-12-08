@@ -35,7 +35,7 @@ QJsonObject QueryOptions::Extract(const QString &query)
             QJsonValue v = doc.object()[k];
             if (k == "interval" && !result.contains(k))
                 tmp.insert(k, v);
-            else if (k == "copy_src" || k == "copy_dst" || k == "graphs")
+            else if (k == "copy_src" || k == "copy_dst" || k == "charts")
             {
                 if (!result.contains(k))
                     tmp.insert(k, v.isArray() ? v : QJsonArray{v});
@@ -69,11 +69,11 @@ QJsonObject QueryOptions::Extract(const QString &query)
 
 /*sqt
 {
-    "interval": "1000",
-    "graphs": [
+    "interval": 1000,
+    "charts": [
         {
             "name": "tps",
-            "cumulative_y": {
+            "agg_y": {
                 "field1": "#0a0",
                 "field2": "#a00"
             }
@@ -91,7 +91,7 @@ QJsonObject QueryOptions::Extract(const QString &query)
 
 /*sqt
 {
-    "graphs": [
+    "charts": [
         {
             "name": "tps_log",
             "x": "timestamp_field",
@@ -108,10 +108,10 @@ QJsonObject QueryOptions::Extract(const QString &query)
 { "copy_dst": ["file1", "file2"] }
 */
 
-// --- example ---
+// --- examples ---
 /*sqt
 {
-    "graphs": [
+    "charts": [
         {
             "name": "tps_log",
             "x": "ts",
@@ -126,4 +126,39 @@ QJsonObject QueryOptions::Extract(const QString &query)
 select s.ts, 5 + 4*random() f1
 from generate_series(now(), now() + '20min'::interval, '1sec'::interval) as s(ts)
 */
-// ^^^ example ^^^
+
+
+/*sqt
+{
+    "interval": 1000,
+    "charts": [
+        {
+            "name": "sessions",
+            "y": { "active": "#0b0", "total": "#c00", "idle": "#00c" }
+        },
+        {
+            "name": "transactions, backends",
+            "agg_y": { "xact_commit": "#0b0", "xact_rollback": "#c00" },
+            "y" : { "numbackends": "#00c" }
+        },
+        {
+            "name": "tuples out",
+            "agg_y": { "fetched": "#cb0", "returned": "#0c0" }
+        }
+    ]
+}
+*/
+/*
+select count(*) total,
+    count(*) filter (where state = 'active') active,
+    count(*) filter (where state = 'idle') idle
+from pg_stat_activity;
+
+select
+    sum(xact_commit) xact_commit,
+    sum(numbackends) numbackends,
+    sum(xact_rollback) xact_rollback,
+    sum(tup_fetched) fetched,
+    sum(tup_returned) returned
+from pg_stat_database;
+*/

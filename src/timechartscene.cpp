@@ -96,7 +96,7 @@ void TimeChartScene::drawForeground(QPainter *painter, const QRectF &)
 
     painter->translate(topLeft.x() + 10, topLeft.y() + 10);
     painter->setPen(Qt::NoPen);
-    painter->setBrush(QColor(100, 100, 255, 50));
+    painter->setBrush(QColor(220, 220, 255, 170));
     painter->drawRoundedRect(QRect(0, 0, maxWidth + rowHeight + 15, h + vMargin * 2), 3, 3);
 
     int i = 0;

@@ -355,7 +355,7 @@ void MainWindow::queryStateChanged(QueryWidget *w, QueryState state)
         return;
 
     refreshActions();
-    if (state == QueryState::Inactive)
+    if (state == QueryState::Inactive && !w->isTimerActive())
         refreshContextInfo();
 }
 
@@ -430,11 +430,16 @@ void MainWindow::on_objectsView_activated(const QModelIndex &index)
                     replace("%pass%", dlg->password(), Qt::CaseInsensitive);
         }
 
+        QString connectionID = QString::number(std::intptr_t(obj));
         std::shared_ptr<DbConnection> con = DbConnectionFactory::createConnection(QString::number(std::intptr_t(obj)), cs);
         connect(con.get(), &DbConnection::error, this, &MainWindow::onError);
         connect(con.get(), &DbConnection::message, this, &MainWindow::onMessage);
         if (!con->open())
+        {
             con->disconnect();
+            DbConnectionFactory::removeConnection(connectionID);
+            return;
+        }
         else
         {
             if (user != newUser && !newUser.isEmpty())
@@ -623,13 +628,21 @@ void MainWindow::viewModeActionTriggered(QAction *action)
 
 void MainWindow::on_actionExecute_query_triggered()
 {
+    // TODO refactor this mash :/  (get db actions in QueryWidget ?)
+
     QueryWidget *q = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
     DbConnection *con = q->dbConnection();
     if (!con)
         return;
     auto qState = con->queryState();
-    if (qState == QueryState::Running || qState == QueryState::Cancelling)
+    if (qState == QueryState::Running || qState == QueryState::Cancelling || q->isTimerActive())
     {
+        q->stopTimer();
+        if (qState == QueryState::Inactive)
+        {
+            refreshActions();
+            refreshContextInfo();
+        }
         con->cancel();
     }
     else if (qState == QueryState::Inactive)
@@ -641,13 +654,20 @@ void MainWindow::on_actionExecute_query_triggered()
         if (query.isEmpty())
             return;
 
+        QJsonObject qSettings;
         // do not extract commented instructions from huge sql script
         if (query.size() < 1024 * 32)
         {
-            auto qSettings = QueryOptions::Extract(query);
-            q->setQuerySettings(qSettings);
+            qSettings = QueryOptions::Extract(query);
+            int graphInterval = qSettings.contains("charts") ?
+                        qSettings["interval"].toInt(-1) : -1;
+            q->setQuerySettings(qSettings); // swap inside
+            if (graphInterval > 0)
+            {
+                q->executeOnTimer(query, graphInterval);
+                return;
+            }
         }
-
         con->executeAsync(query);
     }
 }
@@ -895,10 +915,15 @@ void MainWindow::on_actionSave_as_triggered()
 
 void MainWindow::refreshActions()
 {
+    // TODO refactor QueryWidget/DbConnection mash
+
     QWidget *fw = QApplication::focusWidget();
     QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
     ui->actionExecute_query->setEnabled(fw != ui->objectsView && ui->tabWidget->count() && w->dbConnection());
-    QueryState qState = (w && w->dbConnection() ? w->dbConnection()->queryState() : QueryState::Inactive);
+    QueryState qState = QueryState::Inactive;
+    if (w && w->dbConnection())
+        qState = w->isTimerActive() ? QueryState::Running : w->dbConnection()->queryState();
+
     ui->actionExecute_query->setIcon(qState == QueryState::Inactive ?
                                          QIcon(":img/control.png") :
                                          QIcon(":img/control-stop.png"));

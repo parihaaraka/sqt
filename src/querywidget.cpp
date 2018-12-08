@@ -40,6 +40,8 @@ QueryWidget::QueryWidget(QWidget *parent) : QueryWidget(nullptr, parent)
 QueryWidget::QueryWidget(DbConnection *connection, QWidget *parent) :
     QSplitter(parent), _editor(nullptr)
 {
+    _timer = new QTimer(this);
+    _timer->setTimerType(Qt::PreciseTimer);
     _messages = nullptr;
     _highlighter = nullptr;
     _editorLayout = new QVBoxLayout(this);
@@ -184,7 +186,9 @@ void QueryWidget::setDbConnection(DbConnection *connection)
                     structure += tmp + ' ' + typeDescr;
                     fieldsList += tmp;
                 }
-                log('(' + structure + ")\nselect " + fieldsList, resultsetStructureColor);
+
+                if (!isTimerActive())
+                    log('(' + structure + ")\nselect " + fieldsList, resultsetStructureColor);
             }
 
             // scroll down and left
@@ -406,6 +410,27 @@ void QueryWidget::setQuerySettings(QJsonObject &querySettings)
     _querySettings.swap(querySettings);
 }
 
+bool QueryWidget::isTimerActive() const
+{
+    return _timer->isActive();
+}
+
+void QueryWidget::stopTimer()
+{
+    _timer->stop();
+}
+
+void QueryWidget::executeOnTimer(const QString &query, int interval)
+{
+    _timer->disconnect();
+    connect(_timer, &QTimer::timeout, [this, query] {
+        if (_connection->queryState() == QueryState::Inactive)
+            _connection->executeAsync(query);
+    });
+    _connection->executeAsync(query);
+    _timer->start(interval);
+}
+
 void QueryWidget::log(const QString &text, QColor color)
 {
     QTextCharFormat fmt = _messages->currentCharFormat();
@@ -478,7 +503,8 @@ QCompleter* QueryWidget::completer()
 
 void QueryWidget::onMessage(const QString &text)
 {
-    log(text, Qt::black);
+    if (!isTimerActive())
+        log(text, Qt::black);
 }
 
 void QueryWidget::onError(const QString &text)
@@ -505,21 +531,21 @@ void QueryWidget::fetched(DataTable *table)
     QTableView *tv = nullptr;
     TableModel *m = nullptr;
 
-    if (_querySettings.contains("graphs"))
+    if (_querySettings.contains("charts"))
     {
-        QVector<TimeChart*> charts;
+        QVector<TimeChart*> chartWidgets;
         if (!_resSplitter->count())
         {
             // create charts
-            QJsonArray graphs = _querySettings["graphs"].toArray();
-            for (auto g: graphs)
+            QJsonArray jCharts = _querySettings["charts"].toArray();
+            for (auto g: jCharts)
             {
                 auto gObj = g.toObject();
                 TimeChart *chart = new TimeChart(_resSplitter);
-                charts.append(chart);
+                chartWidgets.append(chart);
                 chart->setObjectName(gObj["name"].toString());
                 chart->setXSourceField(gObj["x"].toString());
-                auto difYObj = gObj["cumulative_y"].toObject();
+                auto difYObj = gObj["agg_y"].toObject();
                 for (QString &k: difYObj.keys())
                     chart->createPath(k, QColor(difYObj[k].toString()), true);
                 difYObj = gObj["y"].toObject();
@@ -532,10 +558,10 @@ void QueryWidget::fetched(DataTable *table)
         else
         {
             for (int i = 0; i < _resSplitter->count(); ++i)
-                charts.append(qobject_cast<TimeChart*>(_resSplitter->widget(i)));
+                chartWidgets.append(qobject_cast<TimeChart*>(_resSplitter->widget(i)));
         }
 
-        for (auto c: charts)
+        for (auto c: chartWidgets)
         {
             QString xSourceField = c->xSourceField();
             for (auto &n: c->pathNames())

@@ -136,7 +136,7 @@ bool PgConnection::isOpened() const noexcept
 void PgConnection::cancel() noexcept
 {
     QMutexLocker lk(&_connectionGuard);
-    if (!_conn)
+    if (!_conn || queryState() == QueryState::Inactive)
         return;
 
     // the reason to call cancel() again is to detect broken connection and close/deallocate it
@@ -332,9 +332,10 @@ QMetaType::Type PgConnection::sqlTypeToVariant(int sqlType) const noexcept
     }
     return var_type;
 }
-
+#include <QDebug>
 void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *params) noexcept
 {
+    qDebug() << QTime::currentTime().toString();
     // save transaction status to avoid reconnects within transaction
     _connectionGuard.lock();
     PGTransactionStatusType initial_state = PQtransactionStatus(_conn);

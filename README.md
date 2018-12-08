@@ -18,11 +18,13 @@ Standalone [sqt for windows x64](https://drive.google.com/open?id=1pD-twf3N0svQv
 * code completion support (`Ctrl+Space`);
 * json viewer with highlighting and extracting json from it's nested text value (`Ctrl+J`);
 * totalling selected cells (`F6`);
+* customizable time charts to display [current](https://github.com/parihaaraka/sqt/blob/graph/scripts/postgres/statistics.sql) or [recorded](https://github.com/parihaaraka/sqt/blob/graph/scripts/postgres/recorded_statistics.sql) statistics;
 * resultsets structure textual output;
 * pg: client-side COPY to file or log widget, COPY from file;
 * pg: receiving notifications (`NOTIFY`) and messages (`RAISE`).
 
 ![screenshot](https://github.com/parihaaraka/sqt/wiki/img/screenshot1.png)
+![screenshot](https://github.com/parihaaraka/sqt/wiki/img/charts.png)
 
 ## Build instruction
 You may build the project by means of QtCreator or execute this sequence of commands from the project's root directory:

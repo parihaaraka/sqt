@@ -1,4 +1,4 @@
-#ifndef QUERYWIDGET_H
+﻿#ifndef QUERYWIDGET_H
 #define QUERYWIDGET_H
 
 #include <QWidget>
@@ -17,6 +17,7 @@ class QVBoxLayout;
 class DataTable;
 class CodeEditor;
 class QCompleter;
+class QTimer;
 
 class QueryWidget : public QSplitter
 {
@@ -48,6 +49,9 @@ public:
     void setPlainText(const QString &text);
     void setHtml(const QString &html);
     void setQuerySettings(QJsonObject &querySettings);
+    bool isTimerActive() const;
+    void stopTimer();
+    void executeOnTimer(const QString &query, int interval);
 
 signals:
     void sqlChanged();
@@ -63,6 +67,7 @@ public slots:
     //void on_customEditorContextMenuRequested(const QPoint & pos);
 
 private:
+    QTimer *_timer;
     QJsonObject _querySettings;
     QString _fn;
     QString _encoding;
