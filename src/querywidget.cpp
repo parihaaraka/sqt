@@ -611,6 +611,7 @@ void QueryWidget::fetched(DataTable *table)
         if (!tv || tv->objectName() != tname)
         {
             tv = new QTableView(_resSplitter);
+            tv->verticalHeader()->setDefaultSectionSize(QFontMetrics(tv->font()).lineSpacing());
             tv->horizontalHeader()->viewport()->setMouseTracking(true);
             tv->setObjectName(tname);
 
