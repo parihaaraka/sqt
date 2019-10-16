@@ -35,6 +35,8 @@ void load()
         appStyle = QString(
                     "QApplication { font-size: %1pt; } \n"
                     "QTableView, QHeaderView { font-size: %2pt; }\n"
+                    "QTableView::item { padding-top: 0.2em; border: 0px; }\n"
+                    "QHeaderView::section { padding: 0.2em; }\n"
                     "QTabBar::tab { height: 2em; }\n"
                     "QPlainTextEdit {\n"
                     "   font-family: Consolas, Menlo, 'Liberation Mono', 'Lucida Console', 'DejaVu Sans Mono', 'Courier New', monospace;\n"

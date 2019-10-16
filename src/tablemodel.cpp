@@ -50,7 +50,7 @@ QVariant TableModel::data(const QModelIndex &index, int role) const
         return QVariant();
     }
     case Qt::TextAlignmentRole:
-        return int(_table->getColumn(index.column()).hAlignment() | Qt::AlignVCenter);
+        return int(_table->getColumn(index.column()).hAlignment());// | Qt::AlignVCenter);
     case Qt::BackgroundRole:
         if (_table->getRow(index.row())[index.column()].isNull())
             return QBrush(QColor(0, 0, 0, 15));
@@ -106,7 +106,7 @@ QVariant TableModel::headerData(int section, Qt::Orientation orientation, int ro
     }
 
     if (role == Qt::TextAlignmentRole)
-        return int(Qt::AlignRight | Qt::AlignVCenter);
+        return int(Qt::AlignRight);// | Qt::AlignVCenter);
 
     // first row header cotains total numer of rows
     if (role == Qt::ToolTipRole && !section)

@@ -165,7 +165,7 @@ void TimeChart::wheelEvent(QWheelEvent *event)
         qreal degrees = event->angleDelta().y() / 8;
         qreal k = 1 + degrees / 90.0;
         qreal newScale = _scaleX * k;
-        if (newScale <= 10 && newScale > 0.005)
+        if (newScale <= 1000 && newScale > 0.005)
         {
             _scaleX = newScale;
             scale(k, 1.0);

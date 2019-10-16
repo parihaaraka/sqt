@@ -2,7 +2,7 @@ select
 	'column' node_type,
 	a.attname ||
     	' <span class="light">' || 
-		case when x.indexrelid is null then '' else ' 🔑 ' end ||
+		case when x.indexrelid is null then '' else ' ⚷ ' end ||
 		pg_catalog.format_type(a.atttypid, a.atttypmod) || 
 		case when a.attnotnull then ' NOT NULL' else '' end ||
 		'</span>' as ui_name,
