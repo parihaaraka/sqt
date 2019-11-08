@@ -1,4 +1,4 @@
-/* V100000+ */
+/* if version 100000 */
 do
 $$
 declare
@@ -41,7 +41,7 @@ begin
 end
 $$
 
-/* V90000+ */
+/* elif version 90000 */
 do
 $$
 declare
@@ -80,3 +80,4 @@ begin
 	using hint='script';
 end
 $$
+/* endif version */

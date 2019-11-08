@@ -1,17 +1,26 @@
 The script's file name (excluding extension) corresponds to the node's type (see `node_type` column below) being processed.
 
-A script may contain comments corresponding to regexp `(?=\/\*\s*V(\d+)\+\s*\*\/)`
-For example:
+A script may contain dbms minimal version boudaries like (so order matters):
 ```sql
-/* V90000+ */
+/* if version 100000 */
+select s.datname, s.pid, s.backend_type, s.usename --, ...
+from pg_stat_activity s
+
+/* elif version 90000 */
 select s.datname, s.pid, s.usename --, ...
 from pg_stat_activity s
 
-/* V100000+ */
-select s.datname, s.pid, s.backend_type, s.usename --, ...
-from pg_stat_activity s
+/* else version */
+select
+  /* if version 83000 */
+  ...
+  /* elif version 70000 */
+  ...
+  /* endif version */
+from pg_stat_activity
+/* endif version */
 ```
-Such boundaries split a script into parts acording to dbms version. PostgreSQL uses libpq's PQserverVersion(), ODBC data sources must provide version.sql or version.qs to return this value if used within scripts. E.g. `scripts/odbc/microsoft sql/version.sql` (uses compartibility_level as a comparable version).
+Nesting is ok and allows to combine a final script by parts. PostgreSQL uses libpq's PQserverVersion(), ODBC data sources must provide version.sql or version.qs to return this value if used within scripts. E.g. `scripts/odbc/microsoft sql/version.sql` (uses compartibility_level as a comparable version).
 
 ## `/tree` scripts
 

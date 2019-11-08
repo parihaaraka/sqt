@@ -1,4 +1,4 @@
-/* V120000+ */
+/* if version 120000 */
 do
 $$
 declare
@@ -272,7 +272,7 @@ end
 $$
 
 
-/* V90600+ */
+/* elif version 90600 */
 do
 $$
 declare
@@ -544,3 +544,4 @@ WHERE
    
 end
 $$
+/* endif version */

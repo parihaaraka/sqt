@@ -1,4 +1,4 @@
-/* V90200+ */
+/* if version 90200 */
 select
     s.spcname "name",
     pg_size_pretty(pg_tablespace_size(s.oid)) "size",
@@ -12,3 +12,4 @@ from pg_tablespace s
     join pg_roles r on s.spcowner = r.oid
 order by 1
 
+/* endif version */

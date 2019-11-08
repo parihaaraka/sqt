@@ -18,7 +18,8 @@ void DbTreeItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
     QStyleOptionViewItem style(option);
     initStyleOption(&style, index);
 
-    if (style.state & (QStyle::State_HasFocus | QStyle::State_Selected))
+    auto isCurrent = qobject_cast<const QAbstractItemView*>(option.widget)->currentIndex() == index;
+    if (isCurrent || style.state & (QStyle::State_HasFocus | QStyle::State_Selected))
     {
         QRect selFrame = option.rect;
         selFrame.setRight(selFrame.right() - 1);
@@ -82,7 +83,7 @@ void DbTreeItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
     painter->translate(option.rect.topLeft() +
                        QPoint(
                            style.features & QStyleOptionViewItem::HasDecoration ? 24 : 4,
-                           (option.rect.height() - doc.size().height()) / 2
+                           int((option.rect.height() - doc.size().height()) / 2)
                            )
                        );
     doc.drawContents(painter, QRect(QPoint(0,0), option.rect.size()));
@@ -103,7 +104,7 @@ QSize DbTreeItemDelegate::sizeHint(const QStyleOptionViewItem &option, const QMo
 
 void DbTreeItemDelegate::prepareDocToDrawDbTreeNode(const QStyleOptionViewItem &option, const QModelIndex &index, QTextDocument &doc) const
 {
-    Q_UNUSED(option);
+    Q_UNUSED(option)
 
     doc.setDocumentMargin(0);
     QTextOption opt;

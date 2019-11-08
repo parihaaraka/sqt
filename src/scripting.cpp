@@ -93,17 +93,19 @@ QString dbmsScriptPath(DbConnection *con, Context context)
 /// \return dbms Version specific part of script.
 ///
 /// A script may contain comments corresponding to regexp:
-/// (?=\/\*\s*V(\d+)\+\s*\*\/)
+/// \/\*\s*(if|elif|else|endif)\s+version\s*(\d+)?\s*\*\/
 /// For example:
-/// /* V90600+ */
-/// select s.datname, s.pid, s.usename --, ...
-/// from pg_stat_activity s
-///
-/// /* V100000+ */
+/// /* if version 100000 */
 /// select s.datname, s.pid, s.backend_type, s.usename --, ...
 /// from pg_stat_activity
 ///
-/// Such boundaries split a script into parts acording to dbms version.
+/// /* elif version 90600 */
+/// select s.datname, s.pid, s.usename --, ...
+/// from pg_stat_activity s
+/// /* endif version */
+///
+/// Such boundaries split a script into parts acording to dbms minimal version.
+/// Nesting is ok, order matters.
 /// PostgreSQL uses libpq's PQserverVersion(), ODBC data sources must provide
 /// version.sql or version.qs to return this value if used within scripts.
 /// E.g. scripts/odbc/microsoft sql/version.sql
@@ -111,41 +113,111 @@ QString dbmsScriptPath(DbConnection *con, Context context)
 ///
 QString versionSpecificPart(const QString &script, int version)
 {
-    QRegularExpression re(R"((?=\/\*\s*V(\d+)\+\s*\*\/))");
+
+/* if version 90000 */
+/* elif version 80000 */
+/* else version */
+/* endif version */
+
+    QRegularExpression re(R"(\/\*\s*(if|elif|else|endif)\s+version\s*(\d+)?\s*\*\/)");
+
+    //QRegularExpression re(R"((?=\/\*\s*V(\d+)\+\s*\*\/))");
     QRegularExpressionMatchIterator i = re.globalMatch(script);
 
     // return whole script body if boundaries are not found
     if (!i.hasNext())
         return script;
 
-    QMap<int, QString> parts;
-    while (i.hasNext())
+    QString res;
+    res.reserve(script.size());
+	int pos = 0;
+	int level = 0;
+    auto decrement_level = [&level]()
     {
-        QRegularExpressionMatch match = i.next();
-        int key = match.captured(1).toInt();
-        QString value;
-        if (i.hasNext())
-        {
-            QRegularExpressionMatch next_match = i.peekNext();
-            value = script.mid(match.capturedEnd(), next_match.capturedStart() - match.capturedEnd());
-        }
-        else
-        {
-            value = script.mid(match.capturedEnd());
-        }
-        parts[key] = value;
-    }
-    // search for the highest available version
-    // (QMap is sorted by key)
-    QMap<int, QString>::const_iterator mi = parts.constEnd();
-    do
+        --level;
+        if (level < 0)
+            throw QObject::tr("invalid dbms version boundaries");
+    };
+
+    std::function<void()> fill = [&]()
     {
-        --mi;
-        if (mi.key() <= version)
-            return mi.value();
-    }
-    while (mi != parts.constBegin());
-    return "";
+        while (i.hasNext())
+        {
+            int run_level = level;
+            QRegularExpressionMatch match = i.next();
+            QString cond = match.captured(1);
+            res.append(script.mid(pos, match.capturedStart() - pos));
+            if (cond == "if")
+            {
+                ++level;
+                int block_ver = match.captured(2).toInt();
+                if (version >= block_ver)
+                {
+                    // ok
+                    pos = match.capturedEnd();
+                    fill(); // to process nested ifs
+                }
+                else
+                {
+                    // search for suitable sibling
+                    while (i.hasNext())
+                    {
+                        QRegularExpressionMatch match = i.next();
+                        QString cond = match.captured(1);
+                        if (cond == "if")
+                            ++level;
+                        else if (cond == "endif")
+                        {
+                            decrement_level();
+                            pos = match.capturedEnd();
+                            if (level < run_level) // suitable sibling is not found
+                                return;
+                        }
+                        else if (level == run_level)
+                        {
+                            if (cond == "else" || version >= match.captured(2).toInt())
+                            {
+                                // ok
+                                pos = match.capturedEnd();
+                                fill(); // to process nested ifs
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            else if (cond == "endif")
+            {
+                decrement_level();
+                pos = match.capturedEnd();
+                return;
+            }
+            else
+            {
+                // block filled - need to skip the rest
+                while (i.hasNext())
+                {
+                    QRegularExpressionMatch match = i.next();
+                    QString cond = match.captured(1);
+                    if (cond == "if")
+                        ++level;
+                    else if (cond == "endif")
+                        decrement_level();
+
+                    if (level < run_level)
+                    {
+                        pos = match.capturedEnd();
+                        return;
+                    }
+                }
+            }
+        }
+        res.append(script.mid(pos));
+	};
+	fill();
+    if (level)
+        throw QObject::tr("invalid dbms version boundaries");
+    return res;
 }
 
 void refresh(DbConnection *connection, Context context)
@@ -170,15 +242,16 @@ void refresh(DbConnection *connection, Context context)
 
         QTextStream stream(&scriptFile);
         stream.setCodec("UTF-8");
-        bunch.insert(f.baseName(),
+
+        bunch.insert(
+            f.baseName(),
             Scripting::Script {
                 versionSpecificPart(
                     stream.readAll(),
                     // prevent infinite loop - do not acquire comparable version on root level
                     context == Context::Root ? -1 : connection->dbmsComparableVersion()),
                 suffix == "sql" ? Script::Type::SQL : Script::Type::QS
-            }
-        );
+            });
     }
 }
 

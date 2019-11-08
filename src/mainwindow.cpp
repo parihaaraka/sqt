@@ -536,13 +536,24 @@ void MainWindow::on_actionRefresh_triggered()
     DbObject *item = static_cast<DbObject*>(nodeToRefresh.internalPointer());
 
     // invalidate scripts cache to avoid reopening sqt on scripts change
-    DbConnection *cn = _objectsModel->dbConnection(nodeToRefresh).get();
-    Scripting::refresh(cn, Scripting::Context::Root);
-    Scripting::refresh(cn, Scripting::Context::Content);
-    Scripting::refresh(cn, Scripting::Context::Preview);
-    Scripting::refresh(cn, Scripting::Context::Autocomplete);
+    try
+    {
+        DbConnection *cn = _objectsModel->dbConnection(nodeToRefresh).get();
+        Scripting::refresh(cn, Scripting::Context::Root);
+        Scripting::refresh(cn, Scripting::Context::Content);
+        Scripting::refresh(cn, Scripting::Context::Preview);
+        Scripting::refresh(cn, Scripting::Context::Autocomplete);
 
-    Scripting::refresh(cn, Scripting::Context::Tree);
+        Scripting::refresh(cn, Scripting::Context::Tree);
+    }
+    catch (const QString &err)
+    {
+        onError(err);
+    }
+    catch (const std::runtime_error &e)
+    {
+        onError(QString::fromStdString(e.what()));
+    }
 
     // clear all child nodes
     _objectsModel->removeRows(0, item->childCount(), nodeToRefresh);
