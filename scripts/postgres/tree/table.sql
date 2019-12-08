@@ -21,12 +21,22 @@ from pg_catalog.pg_attribute a
 where a.attnum > 0 and not a.attisdropped and a.attrelid = $table.id$
 union all
 select
+	'tables',
+	'<i>Partitions</i>',
+	$table.id$,
+	null,
+	'tables.png',
+	x'7FFFFFF0'::int,
+	'1'
+where '$table.tag$' = 'p'
+union all
+select
 	'triggers',
 	'<i>Triggers</i>',
 	null,
 	null,
 	'arrow-transition.png',
-	x'7FFFFFF0'::int,
+	x'7FFFFFF1'::int,
 	'1'
 where '$table.tag$' != 'f'
 union all
@@ -36,7 +46,7 @@ select
 	null,
 	null,
 	'paper-plane.png',
-	x'7FFFFFF1'::int,
+	x'7FFFFFF2'::int,
 	'2'
 where '$table.tag$' not in ('v', 'f')
 union all
@@ -46,7 +56,7 @@ select
 	null,
 	null,
 	'traffic-cone.png',
-	x'7FFFFFF2'::int,
+	x'7FFFFFF3'::int,
 	'3'
 where '$table.tag$' in ('r', 'p')
 union all
@@ -56,6 +66,6 @@ select
 	null,
 	null,
 	'image-saturation-up.png',
-	x'7FFFFFF3'::int,
+	x'7FFFFFF4'::int,
 	'4'
 where '$table.tag$' != 'f'

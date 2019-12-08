@@ -15,6 +15,7 @@ Standalone [sqt for windows x64](https://drive.google.com/open?id=1pD-twf3N0svQv
 * convenient (Qt Creator-like) search/replace panel;
 * multiple resultsets support;
 * bookmarks (mark: `Ctrl+M`, previous: `Ctrl+,`, next: `Ctrl+.`, last: `Ctrl+L`);
+* uppercase (`Ctrl+U`), lowercase (`Ctrl+Shift+U`, `Ctrl+Win+U`)
 * code completion support (`Ctrl+Space`);
 * json viewer with highlighting and extracting json from it's nested text value (`Ctrl+J`);
 * totalling selected cells (`F6`);
