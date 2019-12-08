@@ -28,4 +28,22 @@ where c.relnamespace = $schema.id$ and
 		has_table_privilege(c.oid, 'select, insert, update, delete, truncate, references, trigger'::text) or
 		has_any_column_privilege(c.oid, 'select, insert, update, references'::text)
 	)
+/* if version 110000 */
+	and
+	(
+		(
+			$tables.id$ is null  and
+			coalesce(c.relispartition, false) = false
+		)
+		or
+		(
+			coalesce(c.relispartition, false) = true and
+			exists (
+				select 1
+				from pg_inherits p
+				where p.inhrelid = c.oid and p.inhparent = $tables.id$
+			)
+		)
+	)
+/* endif version */
 order by pg_relation_size(c.oid) desc
