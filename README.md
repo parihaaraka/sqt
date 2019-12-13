@@ -27,6 +27,9 @@ Standalone [sqt for windows x64](https://drive.google.com/open?id=1pD-twf3N0svQv
 ![screenshot](https://github.com/parihaaraka/sqt/wiki/img/screenshot1.png)
 ![screenshot](https://github.com/parihaaraka/sqt/wiki/img/charts.png)
 
+## Build requirements
+`apt install unixodbc-dev`
+
 ## Build instruction
 You may build the project by means of QtCreator or execute this sequence of commands from the project's root directory:
 ```
