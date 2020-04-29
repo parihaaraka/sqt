@@ -144,7 +144,7 @@ void CodeEditor::leftSideBarPaintEvent(QPaintEvent *event)
 int CodeEditor::leftSideBarWidth() const
 {
     return ICON_PLACE_WIDTH + RIGHT_MARGIN +
-            fontMetrics().width(QString::number(blockCount()));
+            fontMetrics().horizontalAdvance(QString::number(blockCount()));
 }
 
 QString CodeEditor::text() const
@@ -546,7 +546,7 @@ void CodeEditor::onHlTimerTimeout()
             QTextEdit::ExtraSelection s;
             s.format.setBackground(selectionColor);
 
-            auto verifyPos = [this, &selections, wordLength, &s, &testCursor, &content, &total_hits](int &pos, int &counter)
+            auto verifyPos = [&selections, wordLength, &s, &testCursor, &content, &total_hits](int &pos, int &counter)
             {
                 ++total_hits;
                 bool left_ok = true;

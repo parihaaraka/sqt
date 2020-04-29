@@ -2,7 +2,7 @@ QT  += widgets qml
 
 TARGET = sqt
 TEMPLATE = app
-CONFIG += c++11
+CONFIG += c++17   # for the sake of [[fallthrough]] only (for now)
 
 # prevent making debug and release subfolders in target dir on windows
 CONFIG -= debug_and_release debug_and_release_target

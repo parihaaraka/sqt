@@ -2,6 +2,7 @@
 #include "ui_connectiondialog.h"
 #include <QSettings>
 #include <QDesktopWidget>
+#include <QScreen>
 
 ConnectionDialog::ConnectionDialog(QWidget *parent, QString name, QString connectionString) :
     QDialog(parent),
@@ -39,7 +40,9 @@ ConnectionDialog::ConnectionDialog(QWidget *parent, QString name, QString connec
     }
     ui->editName->setText(name);
     QRect frect = frameGeometry();
-    frect.moveCenter(QDesktopWidget().availableGeometry().center());
+    // QWidget::screen() is too new to be used
+    QScreen *screen = QGuiApplication::screenAt(QApplication::activeWindow()->pos());
+    frect.moveCenter(screen->availableGeometry().center());
     move(frect.topLeft());
 }
 

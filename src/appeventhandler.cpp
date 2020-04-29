@@ -313,7 +313,8 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
             int tabSize = SqtSettings::value("tabSize", 3).toInt();
             QTextOption textOption(edit->document()->defaultTextOption());
             // accurate tab size evaluation
-            textOption.setTabStop(QFontMetrics(edit->font()).width(QString(tabSize * 100, ' ')) / 100.0);
+            textOption.setTabStopDistance(QFontMetrics(edit->font())
+                                          .horizontalAdvance(QString(tabSize * 100, ' ')) / 100.0);
             if (edit->objectName() != "editCS" && edit->objectName() != "_def_wrap_")
                 textOption.setWrapMode(QTextOption::NoWrap);
             edit->document()->setDefaultTextOption(textOption);

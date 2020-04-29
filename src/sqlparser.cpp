@@ -153,7 +153,7 @@ AliasSearchResult explainAlias(const QString &alias, const QString &text, int po
                 word += c;
                 break;
             }
-            //[[fallthrough]];
+            [[fallthrough]];
         case 1:
             if (c.isLetterOrNumber() || c == '_')
             {
@@ -184,7 +184,7 @@ AliasSearchResult explainAlias(const QString &alias, const QString &text, int po
                 c = text[pos];
             }
             mode = 0xFF;
-            //[[fallthrough]];
+            [[fallthrough]];
         case 0xFF:
             word.clear();
             if (c.isLetter() || c == '_')

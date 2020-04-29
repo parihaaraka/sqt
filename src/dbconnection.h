@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QMutex>
 #include <QTime>
+#include <QElapsedTimer>
 #include <atomic>
 #include <QJSValueList>
 #include <QVector>
@@ -115,7 +116,7 @@ signals:
 
 protected:
     std::atomic<QueryState> _query_state;
-    QTime _timer;
+    QElapsedTimer _timer;
     QString _database;
     QString _connection_string;
     QMutex _resultsetsGuard;

@@ -401,7 +401,7 @@ void MainWindow::on_addConnectionAction_triggered()
 void MainWindow::on_actionAbout_triggered()
 {
     QMessageBox::about(this, tr("About"),
-                       tr("sql query tool v%1<br/>&copy; 2013-2018 Andrey Lukyanov<br/>freeware<br/><br/>"
+                       tr("sql query tool v%1<br/>&copy; 2013-2020 Andrey Lukyanov<br/>freeware<br/><br/>"
                           "The program is provided AS IS with NO WARRANTY OF ANY "
                           "KIND, INCLUDING THE WARRANTY OF DESIGN, MERCHANTABILITY "
                           "AND FITNESS FOR A PARTICULAR PURPOSE.<br/><br/>"

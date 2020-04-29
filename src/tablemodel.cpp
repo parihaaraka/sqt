@@ -75,7 +75,7 @@ QVariant TableModel::data(const QModelIndex &index, int role) const
             return dt.toString("yyyy-MM-dd hh:mm:ss.zzz");
         }
     }
-    //[[fallthrough]];
+    [[fallthrough]];
     case Qt::EditRole:
         return _table->getRow(index.row())[index.column()];
     }

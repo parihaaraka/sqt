@@ -291,7 +291,7 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
                             typeName = (col_size == 24 ? "real" : "double precision");
                             break;
                         }
-                    //[[fallthrough]];
+                    [[fallthrough]];
                     case SQL_CHAR:
                     case SQL_VARCHAR:
                     case SQL_WCHAR:

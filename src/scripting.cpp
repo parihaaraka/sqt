@@ -327,7 +327,7 @@ void execute(
     else if (s->type == Scripting::Script::Type::QS)
     {
         QJSEngine e;
-        qmlRegisterType<DataTable>();
+        qmlRegisterAnonymousType<DataTable>("dummy", 1);
         QQmlEngine::setObjectOwnership(connection, QQmlEngine::CppOwnership);
         QJSValue cn = e.newQObject(connection);
         e.globalObject().setProperty("__connection", cn);

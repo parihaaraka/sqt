@@ -105,7 +105,26 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
     QTextStream save_stream(&f);
     save_stream.setCodec(QTextCodec::codecForName(_encoding.toLatin1().data()));
     if (QPlainTextEdit *plain = qobject_cast<QPlainTextEdit*>(_editor))
-        save_stream << plain->toPlainText();
+    {
+        // remove trailing whitespace without regexp
+        QTextDocument *doc = plain->document();
+        for (QTextBlock it = doc->begin(); it != doc->end(); it = it.next())
+        {
+            if (it != doc->begin())
+                save_stream << '\n';
+
+            QString line = it.text();
+            size_t len = line.size();
+            while (len > 0)
+            {
+                if (!line.at(len - 1).isSpace())
+                    break;
+                --len;
+            }
+            save_stream << line.midRef(0, len);
+        }
+        //save_stream << plain->toPlainText();
+    }
     else if (QTextEdit *rich = qobject_cast<QTextEdit*>(_editor))
         save_stream << rich->toPlainText();
     save_stream.flush();

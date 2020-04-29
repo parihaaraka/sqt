@@ -7,6 +7,6 @@ select
 	stat.idx_tup_fetch,
 	x.indisunique
 from pg_index x
-	join pg_class i on x.indexrelid = i.oid
-	join pg_stat_all_indexes stat on x.indexrelid = stat.indexrelid
+	left join pg_class i on x.indexrelid = i.oid
+	left join pg_stat_all_indexes stat on x.indexrelid = stat.indexrelid
 where x.indrelid = $table.id$
