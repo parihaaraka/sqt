@@ -224,7 +224,12 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
     QStringList queries = query.split(QRegularExpression("^go\\s*$",
                                                          QRegularExpression::CaseInsensitiveOption |
                                                          QRegularExpression::MultilineOption),
-                                      QString::SkipEmptyParts);
+                                  #if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
+                                      Qt::SkipEmptyParts
+                                  #else
+                                      QString::SkipEmptyParts
+                                  #endif
+                                      );
     SQLHSTMT hstmt_local;
     RETCODE retcode = SQLAllocHandle(SQL_HANDLE_STMT, _hdbc, &hstmt_local);
     if (!check(retcode, _hdbc, SQL_HANDLE_DBC))

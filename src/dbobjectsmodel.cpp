@@ -316,7 +316,13 @@ std::shared_ptr<DbConnection> DbObjectsModel::dbConnection(const QModelIndex &in
 QVariant DbObjectsModel::parentNodeProperty(const QModelIndex &index, QString type)
 {
     QVariant envValue;
-    QStringList parts = type.split('.', QString::SkipEmptyParts);
+    QStringList parts = type.split('.',
+                               #if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
+                                   Qt::SkipEmptyParts
+                               #else
+                                   QString::SkipEmptyParts
+                               #endif
+                                   );
     if (parts.size() > 2 || parts.isEmpty())
         return envValue;
     QString searchType = parts.at(0);

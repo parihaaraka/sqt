@@ -186,6 +186,12 @@ QString PgConnection::database() const noexcept
 
 QString PgConnection::dbmsInfo() const noexcept
 {
+    auto _endl =
+        #if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
+            Qt::endl;
+        #else
+            endl;
+        #endif
     // synchronous usage only
     QString res;
     if (!isOpened())
@@ -197,7 +203,7 @@ QString PgConnection::dbmsInfo() const noexcept
         "DateStyle", "IntervalStyle", "TimeZone",
         "integer_datetimes", "standard_conforming_strings"};
     QTextStream out(&res);
-    out << dbmsName() << " v." << dbmsVersion() << endl << endl;
+    out << dbmsName() << " v." << dbmsVersion() << _endl << _endl;
     for (const QString &p: params)
     {
         const char *val = PQparameterStatus(_conn, p.toStdString().c_str());
@@ -207,7 +213,7 @@ QString PgConnection::dbmsInfo() const noexcept
         out.setFieldWidth(27); // max param name length
         out << p;
         out.setFieldWidth(0);
-        out << ": " << val << endl;
+        out << ": " << val << _endl;
     }
     return res;
 }

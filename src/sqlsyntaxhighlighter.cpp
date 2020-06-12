@@ -72,7 +72,13 @@ SqlSyntaxHighlighter::SqlSyntaxHighlighter(const QJsonObject &settings, QObject 
         for (const QJsonValue &v: kwDict)
         {
             QString kw = v.toString();
-            QStringList words = kw.split(' ', QString::SkipEmptyParts);
+            QStringList words = kw.split(' ',
+                             #if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
+                                         Qt::SkipEmptyParts
+                             #else
+                                         QString::SkipEmptyParts
+                             #endif
+                                         );
             QHash <QString, WordInfo> *curLevel = &keywords;
             LastWordOption *lwo = nullptr;
             for (int i = 0; i < words.length(); ++i)

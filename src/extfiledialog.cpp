@@ -55,7 +55,13 @@ void ExtFileDialog::fillEncodings()
     _encodingCombo->clear();
     _encodingCombo->addItems(
                 SqtSettings::value("encodings").toString().
-                split(',', QString::SkipEmptyParts));
+                split(',',
+                  #if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
+                      Qt::SkipEmptyParts
+                  #else
+                      QString::SkipEmptyParts
+                  #endif
+                      ));
     if (!_encodingCombo->count())
         _encodingCombo->setCurrentIndex(0);
 }
