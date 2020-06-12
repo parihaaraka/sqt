@@ -505,8 +505,10 @@ void MainWindow::on_objectsView_customContextMenuRequested(const QPoint &pos)
     }
     else if (selectedItem == actionConnect)
     {
-        if (con && con->isOpened()) // disconnect
+        bool wasOpened = false;
+        if (con) // "disconnect" in any case (clear tree)
         {
+            wasOpened = con->isOpened();
             // there are problems with expanding desolated node without the following line
             ui->objectsView->collapse(index);
 
@@ -519,10 +521,8 @@ void MainWindow::on_objectsView_customContextMenuRequested(const QPoint &pos)
             _objectsModel->setData(srcIndex, QVariant(), DbObject::ContentRole);
             showContent(srcIndex, nullptr);
         }
-        else
-        {
+        if (!wasOpened)
             on_objectsView_activated(index);
-        }
     }
 }
 

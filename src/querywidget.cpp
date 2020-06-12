@@ -106,7 +106,8 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
     save_stream.setCodec(QTextCodec::codecForName(_encoding.toLatin1().data()));
     if (QPlainTextEdit *plain = qobject_cast<QPlainTextEdit*>(_editor))
     {
-        // remove trailing whitespace without regexp
+        // remove trailing space characters without regexp
+        // * but save exactly 3 whitespaces! It's about bitbucket's markdown :(
         QTextDocument *doc = plain->document();
         for (QTextBlock it = doc->begin(); it != doc->end(); it = it.next())
         {
@@ -115,12 +116,20 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
 
             QString line = it.text();
             size_t len = line.size();
+
+            int whitespace_count = 0;
+            int any_space_count = 0;
             while (len > 0)
             {
-                if (!line.at(len - 1).isSpace())
+                QChar c = line.at(len - any_space_count - 1);
+                if (!c.isSpace())
                     break;
-                --len;
+                ++any_space_count;
+                if (c == ' ')
+                    ++whitespace_count;
             }
+            if (whitespace_count != 3 || whitespace_count != any_space_count)
+                len -= any_space_count;
             save_stream << line.midRef(0, len);
         }
         //save_stream << plain->toPlainText();
