@@ -9,7 +9,7 @@ void PgCopyContext::init(const QString &query)
     if (qo.contains("copy_src"))
         _srcFiles = qo["copy_src"].toVariant().toStringList();
     if (qo.contains("copy_dst"))
-        _srcFiles = qo["copy_dst"].toVariant().toStringList();
+        _dstFiles = qo["copy_dst"].toVariant().toStringList();
     _initialized = true;
 }
 
