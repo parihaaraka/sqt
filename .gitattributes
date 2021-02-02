@@ -1,0 +1,1 @@
+scripts/postgres/**/*.sql linguist-language=PLpgSQL
