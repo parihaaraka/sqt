@@ -224,11 +224,14 @@ QVector<ReplaceChunk> FindAndReplacePanel::unescape(QString ui_string, QString *
                 QChar nextChar = ui_string.at(i + 1);
                 if (nextChar.isDigit())
                 {
+                    if (!res.isEmpty())
+                        array.append(ReplaceChunk{-1, res});
                     array.append(ReplaceChunk{nextChar.digitValue(), ""});
                     ++i;
                     res.clear();
                     continue;
                 }
+
                 switch (nextChar.toLatin1())
                 {
                 case '\\':
@@ -249,15 +252,18 @@ QVector<ReplaceChunk> FindAndReplacePanel::unescape(QString ui_string, QString *
                     break;
                 case 'g':  //   \g{10} - backreference
                 {
-                    nextChar = ui_string.at(i + 1);
+                    nextChar = ui_string.at(i + 2);
                     int refNum = -1;
                     if (nextChar == '{')
                     {
-                        const char *num_ptr = ui_string.mid(i + 2).toStdString().c_str();
+                        auto tmp = ui_string.mid(i + 3).toStdString();
+                        const char *num_ptr = tmp.c_str();
                         char *end;
                         refNum = static_cast<int>(strtol(num_ptr, &end, 10));
                         if (end > num_ptr && *end == '}')
                         {
+                            if (!res.isEmpty())
+                                array.append(ReplaceChunk{-1, res});
                             array.append(ReplaceChunk{refNum, ""});
                             i += (end - num_ptr) + 3;
                             res.clear();
@@ -440,7 +446,7 @@ void FindAndReplacePanel::on_btnReplaceAll_clicked()
             ++count;
             QRegularExpressionMatch match = i.next();
             QString tmp = replaceMatch(match, replParts);
-            dst.append(src_text.mid(prevPos, match.capturedStart() - prevPos));
+            dst.append(src_text.midRef(prevPos, match.capturedStart() - prevPos));
             dst.append(tmp);
             prevPos = match.capturedEnd();
 

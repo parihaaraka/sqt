@@ -1,1 +1,3 @@
+*.sql linguist-detectable=true
 scripts/postgres/**/*.sql linguist-language=PLpgSQL
+scripts/odbc/microsoft*/**/*.sql linguist-language=TSQL
