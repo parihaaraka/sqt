@@ -30,7 +30,8 @@ QJsonObject QueryOptions::Extract(const QString &query)
 
         // merge result with last options scope
         QJsonObject tmp;
-        for (const QString &k: doc.object().keys())
+        const auto keys = doc.object().keys();
+        for (const QString &k: keys)
         {
             QJsonValue v = doc.object()[k];
             if (k == "interval" && !result.contains(k))
@@ -56,7 +57,8 @@ QJsonObject QueryOptions::Extract(const QString &query)
             }
         }
 
-        for (const QString &k: result.keys())
+        const auto res_keys = result.keys();
+        for (const QString &k: res_keys)
         {
             if (tmp.contains(k))
                 continue;

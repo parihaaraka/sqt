@@ -89,7 +89,7 @@ DataTable* DataTable::takeRows(DataTable *source)
 
     if (_columns.isEmpty())
     {
-        for (const DataColumn *c: source->_columns)
+        for (const DataColumn *c: qAsConst(source->_columns))
             _columns.append(new DataColumn(*c));
     }
 

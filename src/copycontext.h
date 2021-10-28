@@ -24,8 +24,8 @@ private:
     int _curDstIndex;
     bool _initialized = false;
 signals:
-    void message(const QString &msg) const;
-    void error(const QString &msg) const;
+    void message(const QString &msg);
+    void error(const QString &msg);
 };
 
 #endif // COPYCONTEXT_H

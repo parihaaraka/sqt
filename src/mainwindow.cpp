@@ -272,7 +272,7 @@ MainWindow::MainWindow(QWidget *parent) :
                 else
                 {
                     QMenu *menu = dbBtnMenu->addMenu(srcIndex.data().toString());
-                    for (const QString &db: databases)
+                    for (const QString &db: qAsConst(databases))
                         menu->addAction(db, [this, qw, connection, db](){
                             DbConnection *cn = connection->clone();
                             cn->setDatabase(db);
@@ -558,7 +558,7 @@ void MainWindow::on_actionRefresh_triggered()
     // clear all child nodes
     _objectsModel->removeRows(0, item->childCount(), nodeToRefresh);
     // force refresh
-    _objectsModel->dataChanged(nodeToRefresh, nodeToRefresh);
+    emit _objectsModel->dataChanged(nodeToRefresh, nodeToRefresh);
 
     // clear current node's preserved data
     item->setData(QVariant(), DbObject::ContentRole);
@@ -950,7 +950,8 @@ void MainWindow::refreshActions()
     ui->actionChange_sort_mode->setEnabled(fw == ui->objectsView);
 
     QueryWidget *qw = (ui->tabWidget->isHidden() ? _objectScript : w);
-    for (QAction *action: ui->menuEdit->actions())
+    const auto actions = ui->menuEdit->actions();
+    for (QAction *action: actions)
         action->setEnabled(qw);
     _frPanel->setEditor(qw);
 }
@@ -982,7 +983,7 @@ void MainWindow::addMruFile()
 
     for (int i = 1; i < ui->menuOpen_recent->actions().size(); ++i)
     {
-        QAction *a = ui->menuOpen_recent->actions()[i];
+        QAction *a = ui->menuOpen_recent->actions().at(i);
         if (!a->text().compare(file) || itemsToSave.size() == 15)
         {
             ui->menuOpen_recent->removeAction(a);
@@ -1304,7 +1305,8 @@ void MainWindow::onActionOpenFile()
         delete a;
 
         QList<RecentFile> itemsToSave;
-        for (const QAction *a: ui->menuOpen_recent->actions())
+        const auto actions = ui->menuOpen_recent->actions();
+        for (const QAction *a: actions)
             itemsToSave.append({a->text(), a->data().toString()});
 
         SqtSettings::setValue("recentFiles", QVariant::fromValue(itemsToSave));
@@ -1335,9 +1337,7 @@ void MainWindow::openFile(const QString &fileName, const QString &encoding)
 
 void MainWindow::log(const QString &msg)
 {
-    ui->log->appendPlainText(QString("%1: %2")
-            .arg(QTime::currentTime().toString(Qt::ISODateWithMs))
-            .arg(msg.trimmed()));
+    ui->log->appendPlainText(QString("%1: %2").arg(QTime::currentTime().toString(Qt::ISODateWithMs), msg.trimmed()));
 
     int blockCount = ui->log->document()->blockCount();
     // limit log to 1000 rows

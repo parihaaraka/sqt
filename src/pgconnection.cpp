@@ -465,7 +465,7 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
         connect(this, &PgConnection::queryStateChanged, thread, [this, thread](QueryState state) {
             if (state == QueryState::Inactive)
             {
-                for (auto res: _resultsets)
+                for (auto res: qAsConst(_resultsets))
                     clarifyTableStructure(*res);
                 // delete listeners before switch to another thread
                 QMutexLocker lk(&_connectionGuard);
@@ -653,12 +653,10 @@ void PgConnection::clarifyTableStructure(DataTable &table)
             case BITOID:
             case VARBITOID:
                 len = fmod;
-                fmod = -1;
                 break;
             default:
                 if (fmod >= VARHDRSZ) { // if not?
                     len = fmod - VARHDRSZ;
-                    fmod = -1;
                 }
             }
         }
@@ -702,7 +700,7 @@ void PgConnection::noticeReceiver(void *arg, const PGresult *res)
         cn->_resultsets.push_back(t);
     }
     else
-        cn->message(PQresultErrorMessage(res));
+        emit cn->message(PQresultErrorMessage(res));
 }
 
 void PgConnection::fetchNotifications()
@@ -713,7 +711,7 @@ void PgConnection::fetchNotifications()
     {
         std::unique_ptr<PGnotify, void(*)(void*)> n_guard(notify, PQfreemem);
         emit message(tr("* notification received:\n  server process id: %1\n  channel: %2\n  payload: %3").
-                     arg(n_guard->be_pid).arg(n_guard->relname).arg(n_guard->extra));
+                     arg(n_guard->be_pid).arg(n_guard->relname, n_guard->extra));
     }
 }
 

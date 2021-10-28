@@ -27,6 +27,91 @@ Standalone (outdated) [sqt for windows x64](https://drive.google.com/open?id=1pD
 ![screenshot](https://github.com/parihaaraka/sqt/wiki/img/screenshot1.png)
 ![screenshot](https://github.com/parihaaraka/sqt/wiki/img/charts.png)
 
+## COPY to/from local file via meta-comments (pg only)
+Use `COPY FROM STDIN` and `COPY TO STDOUT` forms of the command with some magic in comments:
+```sql
+/*sqt { "copy_dst": ["/tmp/pg_stat_activity.csv", "/tmp/pg_stat_database.csv"] } */
+copy (select * from pg_stat_activity) to stdout with (format csv, header);
+copy (select * from pg_stat_database) to stdout with (format csv, header);
+```
+Specify an empty string instead of file name for output to the log widget:
+```sql
+/*sqt { "copy_dst": "" } */
+copy (select * from pg_stat_activity) to stdout with (format csv, header);
+```
+* As you can see, the non-array form of `copy_dst` may be used in case of single source query.
+
+
+```sql
+create table tmp1 as select * from pg_stat_activity limit 0;
+create table tmp2 as select * from pg_stat_database limit 0;
+
+/*sqt { "copy_src": ["/tmp/pg_stat_activity.csv", "/tmp/pg_stat_database.csv"] } */
+copy tmp1 from stdin with (format csv, header);
+copy tmp2 from stdin with (format csv, header);
+```
+
+## Charting via meta-comments
+### Timelines example:
+```sql
+/*sqt
+{
+    "interval": 1000,
+    "charts": [
+        {
+            "name": "sessions",
+            "y": { "active": "#0b0", "total": "#c00", "idle": "#00c" }
+        },
+        {
+            "name": "transactions, backends",
+            "agg_y": { "xact_commit": "#0b0", "xact_rollback": "#c00" },
+            "y" : { "numbackends": "#00c" }
+        },
+        {
+            "name": "tuples out",
+            "agg_y": { "fetched": "#cb0", "returned": "#0c0" }
+        }
+    ]
+}
+*/
+select count(*) total,
+    count(*) filter (where state = 'active') active,
+    count(*) filter (where state = 'idle') idle
+from pg_stat_activity;
+
+select
+    sum(xact_commit) xact_commit,
+    sum(numbackends) numbackends,
+    sum(xact_rollback) xact_rollback,
+    sum(tup_fetched) fetched,
+    sum(tup_returned) returned
+from pg_stat_database;
+```
+`interval` - interval to reexecute queries (milliseconds);
+
+`charts` - list of charts with names and graphical paths description;
+
+`agg_y` - cumulative values source.
+
+### Plot some source of (x,y) values
+```sql
+/*sqt
+{
+    "charts": [
+        {
+            "name": "tps_log",
+            "x": "ts",
+            "y": {
+                "f1": "#0c0"
+            }
+        }
+    ]
+}
+*/
+select s.ts, 5 + 4*random() f1
+from generate_series(now(), now() + '20min'::interval, '1sec'::interval) as s(ts)
+```
+
 ## Build instruction
 You may build the project by means of QtCreator or execute this sequence of commands from the project's root directory:
 ```
@@ -44,4 +129,3 @@ Qt toolchain must be installed and be available via PATH.
 
 ### Acknowledgment
 Some icons by [Yusuke  Kamiyamane](http://p.yusukekamiyamane.com). All rights reserved.
-

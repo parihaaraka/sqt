@@ -75,7 +75,7 @@ bool QueryWidget::openFile(const QString &fileName, const QString &encoding)
     QFile f(fileName);
     if (!f.open(QIODevice::ReadOnly))
     {
-        onError(tr("Unable to open %1: %2").arg(fileName).arg(f.errorString()));
+        onError(tr("Unable to open %1: %2").arg(fileName, f.errorString()));
         return false;
     }
     _fn = fileName;
@@ -97,7 +97,7 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
     QFile f(fileName);
     if (!f.open(QIODevice::WriteOnly))
     {
-        onError(tr("Unable to save %1: %2").arg(fileName).arg(f.errorString()));
+        onError(tr("Unable to save %1: %2").arg(fileName, f.errorString()));
         return false;
     }
     _fn = fileName;
@@ -172,7 +172,7 @@ void QueryWidget::setDbConnection(DbConnection *connection)
         connect(connection, &DbConnection::queryStateChanged, this, [this](QueryState queryState) {
             // actual query execution time before post-processing
             if (queryState == QueryState::Inactive)
-                onMessage(tr("%1: done in %2").arg(QTime::currentTime().toString("HH:mm:ss")).arg(_connection->elapsed()));
+                onMessage(tr("%1: done in %2").arg(QTime::currentTime().toString("HH:mm:ss"), _connection->elapsed()));
 
             if (MainWindow *mainWindow = qobject_cast<MainWindow*>(window()))
                 mainWindow->queryStateChanged(this, queryState);
@@ -182,7 +182,7 @@ void QueryWidget::setDbConnection(DbConnection *connection)
             // print all resultsets structure ready to be used in 'create function returning table(...)'
             QColor resultsetStructureColor = _messages->palette().text().color();
             resultsetStructureColor.setAlphaF(0.6);
-            for (const auto res: _connection->_resultsets)
+            for (const auto res: qAsConst(_connection->_resultsets))
             {
                 if (!res->columnCount())
                     continue;
@@ -494,7 +494,7 @@ QCompleter* QueryWidget::completer()
                     arr = doc.array();
 
                 QString tooltip;
-                for (auto i: arr)
+                for (const auto &i: qAsConst(arr))
                 {
                     if (!i.isObject())
                         continue;
@@ -867,7 +867,7 @@ void QueryWidget::onCompleterRequest()
     if (!cmplCount)
         return;
     if (cmplCount == 1)
-        cmpl->activated(cmpl->currentCompletion());
+        emit cmpl->activated(cmpl->currentCompletion());
     else
     {
         QRect cr = ed->cursorRect();

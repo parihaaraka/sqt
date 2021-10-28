@@ -146,7 +146,7 @@ QString versionSpecificPart(const QString &script, int version)
             int run_level = level;
             QRegularExpressionMatch match = i.next();
             QString cond = match.captured(1);
-            res.append(script.mid(pos, match.capturedStart() - pos));
+            res.append(script.midRef(pos, match.capturedStart() - pos));
             if (cond == "if")
             {
                 ++level;
@@ -212,7 +212,7 @@ QString versionSpecificPart(const QString &script, int version)
                 }
             }
         }
-        res.append(script.mid(pos));
+        res.append(script.midRef(pos));
 	};
 	fill();
     if (level)
@@ -286,7 +286,7 @@ void execute(
             macros << match.captured(1);
     }
     // replace macroses with values
-    for (const QString &macro: macros)
+    for (const QString &macro: qAsConst(macros))
     {
         QString value = (macro == "dbms.version" ?
                              QString::number(connection->dbmsComparableVersion()) :

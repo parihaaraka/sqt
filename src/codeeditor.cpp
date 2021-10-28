@@ -248,8 +248,6 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
             int nextPos = startOfText;
             if (c.position() <= startOfText && c.position() > c.block().position())
                 nextPos = c.block().position();
-            else
-                nextPos = startOfText;
             c.setPosition(nextPos, keyEvent->modifiers().testFlag(Qt::ShiftModifier) ?
                               QTextCursor::KeepAnchor :
                               QTextCursor::MoveAnchor);
@@ -657,7 +655,7 @@ void CodeEditor::insertCompletion(const QString &completion)
 QList<QTextEdit::ExtraSelection> CodeEditor::matchBracket(QString &docContent, const QTextCursor &selectedBracket, int darkerFactor) const
 {
     QList<QTextEdit::ExtraSelection> selections;
-    QChar c1 = selectedBracket.selectedText()[0];
+    QChar c1 = selectedBracket.selectedText().at(0);
     QString brackets("([{)]}");
     int c1pos = brackets.indexOf(c1, Qt::CaseInsensitive);
     // not a bracket or within commented text / string literal / so on
@@ -736,7 +734,8 @@ bool CodeEditor::isEnveloped(int pos) const
 {
     QTextBlock b = this->document()->findBlock(pos);
     int posInBlock = pos - b.position();
-    for (const QTextLayout::FormatRange &r: b.layout()->formats())
+    const auto formats = b.layout()->formats();
+    for (const QTextLayout::FormatRange &r: formats)
     {
         if (posInBlock >= r.start && posInBlock < r.start + r.length)
         {
@@ -841,7 +840,7 @@ void Bookmarks::suspend()
 void Bookmarks::resume()
 {
     _suspendBookmarks = false;
-    for (CodeBlockProperties* bm: _deletedBookmarks)
+    for (CodeBlockProperties* bm: qAsConst(_deletedBookmarks))
         Bookmarks::remove(bm);
     _deletedBookmarks.clear();
 }

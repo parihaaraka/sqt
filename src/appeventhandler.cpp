@@ -87,7 +87,8 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                 if (node.isArray())
                 {
                     QJsonArray new_array;
-                    for (auto i: node.toArray())
+                    const auto na = node.toArray();
+                    for (const auto &i: na)
                     {
                         QJsonValue v(expandJsonValue(i));
                         if (i.isString() && v.isObject())

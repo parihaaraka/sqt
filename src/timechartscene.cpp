@@ -91,7 +91,8 @@ void TimeChartScene::drawForeground(QPainter *painter, const QRectF &)
     int h = chart->_paths.count() * rowHeight;
     int vMargin = 3;
     int maxWidth = 0;
-    for (auto label: chart->_paths.keys())
+    const auto labels = chart->_paths.keys();
+    for (const auto &label: labels)
         maxWidth = qMax(maxWidth, painter->boundingRect(QRect(0, 0, 0, 0), 0, label).width());
 
     painter->translate(topLeft.x() + 10, topLeft.y() + 10);
@@ -100,7 +101,7 @@ void TimeChartScene::drawForeground(QPainter *painter, const QRectF &)
     painter->drawRoundedRect(QRect(0, 0, maxWidth + rowHeight + 15, h + vMargin * 2), 3, 3);
 
     int i = 0;
-    for (auto label: chart->_paths.keys())
+    for (const auto &label: labels)
     {
         TimeChart::Path &path = chart->_paths[label];
         painter->setPen(Qt::NoPen);

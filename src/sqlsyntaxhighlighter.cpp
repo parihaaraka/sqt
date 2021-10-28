@@ -104,7 +104,7 @@ SqlSyntaxHighlighter::SqlSyntaxHighlighter(const QJsonObject &settings, QObject 
                 else
                     it = curLevel->insert(w, { ind, LastWordOption::Yes, {}});
 
-                lwo = &it.value().isLastWord;
+                //lwo = &it.value().isLastWord;
                 curLevel = &it.value().nextWords;
             }
         }

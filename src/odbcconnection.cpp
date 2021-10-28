@@ -94,8 +94,7 @@ bool OdbcConnection::checkStmt(RETCODE retcode, SQLHSTMT handle)
                 msg = tr("%1 %2, state %3: %4").
                         arg(is_warn ? tr("warinig") : tr("error")).
                         arg(NativeError).
-                        arg(SqlState).
-                        arg(msg);
+                        arg(SqlState, msg);
                 if (is_warn)
                     emit message(msg);
                 else
@@ -157,8 +156,7 @@ bool OdbcConnection::check(RETCODE retcode, SQLHANDLE handle, SQLSMALLINT handle
                 msg = tr("%1 %2, state %3: %4").
                         arg(is_warn ? tr("warinig") : tr("error")).
                         arg(NativeError).
-                        arg(SqlState).
-                        arg(msg);
+                        arg(SqlState, msg);
                 if (is_warn)
                     emit message(msg);
                 else

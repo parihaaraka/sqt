@@ -20,7 +20,8 @@ void load()
     QMutexLocker locker(&_m);
     _settings.clear();
     QSettings settings;
-    for (const auto &k: settings.allKeys())
+    const auto allKeys = settings.allKeys();
+    for (const auto &k: allKeys)
         _settings.insert(k, settings.value(k));
 
     auto setDefault = [&settings](const QString &key, const QVariant &value) {
