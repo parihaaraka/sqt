@@ -39,9 +39,14 @@ res2 as
 )
 select
 	res.member_of, res.contains,
-	pg_get_userbyid(res.roleid) rolname, 
-	res.roleid, 
-	r.rolsuper, r.rolinherit, r.rolcreaterole, r.rolcreatedb, r.rolcanlogin, r.rolreplication
+	pg_get_userbyid(res.roleid) rolname,
+	res.roleid,
+	r.rolsuper, r.rolinherit, r.rolcreaterole, r.rolcreatedb, r.rolcanlogin, r.rolreplication,
+	(
+		select array_agg(d.datname)
+		from pg_database d
+		where not d.datistemplate and has_database_privilege(r.oid, d.oid, 'CONNECT')
+	) may_connect
 from (select * from res1 union all select * from res2) res
 	join pg_roles r on res.roleid = r.oid
 order by res.member_of is null, res.lvl, 2
