@@ -69,3 +69,12 @@ select
 	x'7FFFFFF4'::int,
 	'4'
 where '$table.tag$' != 'f'
+union all
+select
+	'table_locks',
+	'<i>Locks</i>',
+	null,
+	null,
+	null,
+	x'7FFFFFF5'::int,
+	'5'
