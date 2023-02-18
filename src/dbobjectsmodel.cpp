@@ -72,9 +72,12 @@ QVariant DbObjectsModel::data(const QModelIndex &index, int role) const
     DbObject *item = static_cast<DbObject*>(index.internalPointer());
     if (role == Qt::DisplayRole)
     {
+        auto initial_value = item->data(role);
+        if (!initial_value.isValid())
+            initial_value = item->data(Qt::EditRole);
         QVariant childCount = item->data(DbObject::ChildObjectsCountRole);
-        return item->data(role).toString() + (childCount.isValid() ?
-                                                  " (" + QString::number(childCount.toInt()) + ")" : "");
+        return initial_value.toString() + (childCount.isValid() ?
+                                               " (" + QString::number(childCount.toInt()) + ")" : "");
     }
     return item->data(role);
 }
@@ -171,7 +174,9 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
             DbObject *newItem = parentNode->child(i);
             newItem->setData(QUuid::createUuid(), DbObject::IdRole);
             newItem->setData(settings.value("connection_string").toString(), DbObject::DataRole);
-            newItem->setData(settings.value("name").toString(), Qt::DisplayRole);
+            auto name = settings.value("name").toString();
+            newItem->setData(name, Qt::EditRole);
+            // data() returns adjusted DisplayRole (with number of children)
             newItem->setData(settings.value("user").toString(), DbObject::NameRole);
             newItem->setData("connection", DbObject::TypeRole);
             //newItem->setData(QString::number(std::intptr_t(newItem)), DbObject::IdRole); // id to use within connections storage

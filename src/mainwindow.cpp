@@ -401,7 +401,7 @@ void MainWindow::on_addConnectionAction_triggered()
 void MainWindow::on_actionAbout_triggered()
 {
     QMessageBox::about(this, tr("About"),
-                       tr("sql query tool v%1<br/>&copy; 2013-2020 Andrey Lukyanov<br/>freeware<br/><br/>"
+                       tr("sql query tool v%1<br/>&copy; 2013-2023 Andrey Lukyanov<br/>freeware<br/><br/>"
                           "The program is provided AS IS with NO WARRANTY OF ANY "
                           "KIND, INCLUDING THE WARRANTY OF DESIGN, MERCHANTABILITY "
                           "AND FITNESS FOR A PARTICULAR PURPOSE.<br/><br/>"
@@ -482,7 +482,7 @@ void MainWindow::on_objectsView_customContextMenuRequested(const QPoint &pos)
         std::unique_ptr<ConnectionDialog> dlg(
                     new ConnectionDialog(
                         this,
-                        _objectsModel->data(srcIndex, Qt::DisplayRole).toString(),
+                        _objectsModel->data(srcIndex, Qt::EditRole).toString(),
                         _objectsModel->data(srcIndex, DbObject::DataRole).toString())
                     );
         if (dlg->exec() == QDialog::Accepted)
@@ -519,6 +519,7 @@ void MainWindow::on_objectsView_customContextMenuRequested(const QPoint &pos)
             DbConnectionFactory::removeConnection(QString::number(std::intptr_t(item)));
             _objectsModel->setData(srcIndex, false, DbObject::ParentRole);
             _objectsModel->setData(srcIndex, QVariant(), DbObject::ContentRole);
+            _objectsModel->setData(srcIndex, QVariant(), DbObject::ChildObjectsCountRole);
             showContent(srcIndex, nullptr);
         }
         if (!wasOpened)

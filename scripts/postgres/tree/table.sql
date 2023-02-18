@@ -61,13 +61,23 @@ select
 where '$table.tag$' in ('r', 'p')
 union all
 select
+	'dependent_constraints',
+	'<i>Dependent constraints</i>',
+	null,
+	null,
+	'traffic-cone.png',
+	x'7FFFFFF3'::int,
+	'4'
+where '$table.tag$' in ('r', 'p')
+union all
+select
 	'rules',
 	'<i>Rules</i>',
 	null,
 	null,
 	'image-saturation-up.png',
 	x'7FFFFFF4'::int,
-	'4'
+	'5'
 where '$table.tag$' != 'f'
 union all
 select
@@ -77,4 +87,4 @@ select
 	null,
 	null,
 	x'7FFFFFF5'::int,
-	'5'
+	'6'

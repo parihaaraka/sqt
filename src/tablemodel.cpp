@@ -50,6 +50,8 @@ QVariant TableModel::data(const QModelIndex &index, int role) const
         return QVariant();
     }
     case Qt::TextAlignmentRole:
+        // AlignVCenter makes short text look bad inside a tall cell.
+        // TODO manual painting with good padding, line spacing and top alignment
         return int(_table->getColumn(index.column()).hAlignment());// | Qt::AlignVCenter);
     case Qt::BackgroundRole:
         if (_table->getRow(index.row())[index.column()].isNull())
@@ -61,15 +63,15 @@ QVariant TableModel::data(const QModelIndex &index, int role) const
         QMetaType::Type type = QMetaType::Type(res.type());
         if (type == QMetaType::QTime)
         {
-            return qvariant_cast<QTime>(res).toString("hh:mm:ss.zzz");
+            return res.value<QTime>().toString("hh:mm:ss.zzz");
         }
         else if (type == QMetaType::QDate)
         {
-            return qvariant_cast<QDate>(res).toString("yyyy-MM-dd");
+            return res.value<QDate>().toString("yyyy-MM-dd");
         }
         else if (type == QMetaType::QDateTime)
         {
-            QDateTime dt = qvariant_cast<QDateTime>(res);
+            auto dt = res.value<QDateTime>();
             if (dt.time().msecsTo(QTime(0, 0)) == 0)
                 return dt.toString("yyyy-MM-dd");
             return dt.toString("yyyy-MM-dd hh:mm:ss.zzz");
