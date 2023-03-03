@@ -99,7 +99,7 @@ QString DbConnection::elapsed() const noexcept
     if (elapsed_ms < 60000)
         return QString::number(elapsed_ms / 1000.0, 'f', precision) + " sec";
 
-    return QDateTime::fromMSecsSinceEpoch(elapsed_ms).
+    return QDateTime::fromMSecsSinceEpoch(elapsed_ms, Qt::UTC).
             toString(elapsed_ms < 60 * 60000 ?
                          "mm:ss.zzz":
                          "HH:mm:ss");
