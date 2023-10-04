@@ -11,7 +11,7 @@ int main(int argc, char *argv[])
     a.setWindowIcon(QIcon(":/sqt.ico"));
     QCoreApplication::setOrganizationName("parihaaraka");
     QCoreApplication::setApplicationName("sqt");
-    QCoreApplication::setApplicationVersion("0.4.4");
+    QCoreApplication::setApplicationVersion("0.4.5");
     setlocale(LC_NUMERIC, "C");
 
     AppEventHandler appEventHandler;

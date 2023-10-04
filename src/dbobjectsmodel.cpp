@@ -274,7 +274,8 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
                     {
                         QString cs = DbConnectionFactory::connection(QString::number(std::intptr_t(parent)))->connectionString();
                         QString id = QString::number(std::intptr_t(newItem.get()));
-                        auto db = DbConnectionFactory::createConnection(id, cs, newItem->data(DbObject::NameRole).toString());
+                        //DbObject::NameRole contains quotes the identifier must be quoted, so Qt::DisplayRole is used
+                        auto db = DbConnectionFactory::createConnection(id, cs, newItem->data(Qt::DisplayRole).toString());
                         connect(db.get(), &DbConnection::error, this, &DbObjectsModel::error);
                         connect(db.get(), &DbConnection::message, this, &DbObjectsModel::message);
                     }
@@ -397,7 +398,7 @@ bool DbObjectsModel::alterConnection(QModelIndex &index, QString name, QString c
     if (item->data(DbObject::TypeRole) != "connection")
         return false;
 
-    setData(index, name, Qt::DisplayRole);
+    setData(index, name, Qt::EditRole);
     setData(index, connectionString, DbObject::DataRole);
     saveConnectionSettings();
     return true;
@@ -412,7 +413,7 @@ void DbObjectsModel::saveConnectionSettings()
     {
         settings.setArrayIndex(i);
         settings.setValue("connection_string", _rootItem->child(i)->data(DbObject::DataRole).toString());
-        settings.setValue("name", _rootItem->child(i)->data(Qt::DisplayRole).toString());
+        settings.setValue("name", _rootItem->child(i)->data(Qt::EditRole).toString());
         settings.setValue("user", _rootItem->child(i)->data(DbObject::NameRole).toString());
     }
     settings.endArray();

@@ -1,8 +1,8 @@
 with tmp as
 (
 	select 
-		pg_get_userbyid(db.datdba) datdba, pg_encoding_to_char(db.encoding) "encoding", 
-		db.datcollate, db.datctype, db.datallowconn, db.datconnlimit, db.datlastsysoid, 
+		pg_get_userbyid(db.datdba) datdba, pg_encoding_to_char(db.encoding) "encoding",
+		db.datcollate, db.datctype, db.datallowconn, db.datconnlimit,
 		db.datfrozenxid, db.datminmxid, db.dattablespace, db.datacl,
 		s.*, c.*
 	from pg_database db
