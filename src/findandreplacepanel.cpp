@@ -446,7 +446,11 @@ void FindAndReplacePanel::on_btnReplaceAll_clicked()
             ++count;
             QRegularExpressionMatch match = i.next();
             QString tmp = replaceMatch(match, replParts);
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
             dst.append(src_text.midRef(prevPos, match.capturedStart() - prevPos));
+#else
+            dst.append(src_text.mid(prevPos, match.capturedStart() - prevPos));
+#endif
             dst.append(tmp);
             prevPos = match.capturedEnd();
 
@@ -472,7 +476,11 @@ void FindAndReplacePanel::on_btnReplaceAll_clicked()
                 ++bm_it;
             }
         }
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
         dst.append(src_text.midRef(prevPos));
+#else
+        dst.append(src_text.mid(prevPos));
+#endif
         Bookmarks::suspend();
 
         // replace selection or entire text

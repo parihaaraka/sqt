@@ -222,7 +222,7 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                         }
                         else    // decimal
                         {
-                            maxScale = std::max(maxScale, tmp.length() - dotPos - 1);
+                            maxScale = std::max(maxScale, (int) tmp.length() - dotPos - 1);
                             qlonglong frac = (tmp + "000000000000000000").mid(dotPos + 1, 18).toLongLong() * (val < 0 ? -1 : 1);
 
                             sumInt += tmp.mid(0, dotPos).toLongLong();

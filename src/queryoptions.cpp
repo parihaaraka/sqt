@@ -16,7 +16,11 @@ QJsonObject QueryOptions::Extract(const QString &query)
     while (i.hasNext())
     {
         QRegularExpressionMatch commentMatch = i.next();
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
         QByteArray tmpSrc = query.midRef(commentMatch.capturedEnd()).toUtf8();
+#else
+        QByteArray tmpSrc = query.mid(commentMatch.capturedEnd()).toUtf8();
+#endif
         QJsonDocument doc = QJsonDocument::fromJson(tmpSrc, &err);
         // The error is mandatory for the first try, because we need closing parenthes.
         if (err.error == QJsonParseError::GarbageAtEnd)

@@ -694,7 +694,7 @@ QList<QTextEdit::ExtraSelection> CodeEditor::matchBracket(QString &docContent, c
 
         if (pos < 0 || pos == length)
             break;
-        QCharRef c = docContent[pos];
+        QChar c = docContent[pos];
         if ((c != c1 && c != c2) || isEnveloped(pos))
             continue;
 

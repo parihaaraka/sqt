@@ -146,7 +146,11 @@ QString versionSpecificPart(const QString &script, int version)
             int run_level = level;
             QRegularExpressionMatch match = i.next();
             QString cond = match.captured(1);
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
             res.append(script.midRef(pos, match.capturedStart() - pos));
+#else
+            res.append(script.mid(pos, match.capturedStart() - pos));
+#endif
             if (cond == "if")
             {
                 ++level;
@@ -212,7 +216,11 @@ QString versionSpecificPart(const QString &script, int version)
                 }
             }
         }
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
         res.append(script.midRef(pos));
+#else
+        res.append(script.mid(pos));
+#endif
 	};
 	fill();
     if (level)
@@ -241,7 +249,11 @@ void refresh(DbConnection *connection, Context context)
             throw QObject::tr("can't open %1").arg(files.at(0).filePath());
 
         QTextStream stream(&scriptFile);
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
         stream.setCodec("UTF-8");
+#else
+        stream.setEncoding(QStringConverter::Utf8);
+#endif
 
         bunch.insert(
             f.baseName(),

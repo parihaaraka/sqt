@@ -9,7 +9,6 @@
 #include "tablemodel.h"
 #include <QFile>
 #include <QMessageBox>
-#include <QTextCodec>
 #include <QTextStream>
 #include <QMenu>
 #include <QVBoxLayout>
@@ -33,6 +32,12 @@
 #include "datatable.h"
 #include "timechart.h"
 
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+#include <QtCore/QTextCodec>
+#else
+#include <QStringConverter>
+#endif
+
 QueryWidget::QueryWidget(QWidget *parent) : QueryWidget(nullptr, parent)
 {
 }
@@ -46,7 +51,7 @@ QueryWidget::QueryWidget(DbConnection *connection, QWidget *parent) :
     _highlighter = nullptr;
     _editorLayout = new QVBoxLayout(this);
     _editorLayout->setSpacing(0);
-    _editorLayout->setMargin(0);
+    _editorLayout->setContentsMargins(0, 0, 0, 0);
     QWidget *w = new QWidget(this);
     w->setLayout(_editorLayout);
     addWidget(w);
@@ -81,7 +86,18 @@ bool QueryWidget::openFile(const QString &fileName, const QString &encoding)
     _fn = fileName;
     _encoding = encoding;
     QTextStream read_stream(&f);
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     read_stream.setCodec(QTextCodec::codecForName(_encoding.toLatin1().data()));
+#else
+    auto enc = QStringConverter::encodingForName(_encoding);
+    if (!enc.has_value())
+    {
+        onError(tr("Unknown encoding: %1").arg(_encoding));
+        return false;
+    }
+    read_stream.setEncoding(enc.value());
+#endif
+
     if (f.size() > 1024 * 1024 * 5) // do not highlight > 5mb scripts
         dehighlight();
     else
@@ -103,7 +119,18 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
     _fn = fileName;
     if (!encoding.isEmpty()) _encoding = encoding;
     QTextStream save_stream(&f);
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     save_stream.setCodec(QTextCodec::codecForName(_encoding.toLatin1().data()));
+#else
+    auto enc = QStringConverter::encodingForName(_encoding);
+    if (!enc.has_value())
+    {
+        onError(tr("Unknown encoding: %1").arg(_encoding));
+        return false;
+    }
+    save_stream.setEncoding(enc.value());
+#endif
+
     if (QPlainTextEdit *plain = qobject_cast<QPlainTextEdit*>(_editor))
     {
         // remove trailing space characters without regexp
@@ -130,7 +157,11 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
             }
             if (whitespace_count != 3 || whitespace_count != any_space_count)
                 len -= any_space_count;
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
             save_stream << line.midRef(0, len);
+#else
+            save_stream << line.mid(0, len);
+#endif
         }
         //save_stream << plain->toPlainText();
     }

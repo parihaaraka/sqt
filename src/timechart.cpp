@@ -2,7 +2,7 @@
 #include "timechartscene.h"
 #include <QGuiApplication>
 #include <QApplication>
-#include <QDesktopWidget>
+//#include <QDesktopWidget>
 #include <QScreen>
 #include <cmath>
 #include <QScrollBar>

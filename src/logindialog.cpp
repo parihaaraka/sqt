@@ -1,7 +1,7 @@
 #include <QtGui>
 #include "logindialog.h"
 #include "ui_logindialog.h"
-#include <QDesktopWidget>
+#include <QScreen>
 #include <QPushButton>
 
 LoginDialog::LoginDialog(QWidget *parent, QString user) :

@@ -1,7 +1,7 @@
 #include "connectiondialog.h"
 #include "ui_connectiondialog.h"
 #include <QSettings>
-#include <QDesktopWidget>
+//#include <QDesktopWidget>
 #include <QScreen>
 
 ConnectionDialog::ConnectionDialog(QWidget *parent, QString name, QString connectionString) :

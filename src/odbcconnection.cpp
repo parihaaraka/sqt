@@ -4,7 +4,11 @@
 #include <string.h>
 #include <stdio.h>
 #include <QDateTime>
-#include <QTextCodec>
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+#include <QtCore/QTextCodec>
+#else
+#include <QStringConverter>
+#endif
 #include <QStringList>
 #include <QRegularExpression>
 #include "datatable.h"

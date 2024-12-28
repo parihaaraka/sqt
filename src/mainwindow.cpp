@@ -24,7 +24,9 @@
 #include <QScrollBar>
 #include "settingsdialog.h"
 #include "queryoptions.h"
-
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#include <QActionGroup>
+#endif
 struct RecentFile
 {
     QString fileName;
@@ -60,7 +62,9 @@ MainWindow::MainWindow(QWidget *parent) :
     _proxyStyle = new MyProxyStyle();
 
     qRegisterMetaType<QueryState>();
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     qRegisterMetaTypeStreamOperators<QList<RecentFile>>("RecentFile");
+#endif
     SqtSettings::load();
 
     setCentralWidget(ui->splitterV);

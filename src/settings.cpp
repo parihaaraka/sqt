@@ -47,7 +47,11 @@ void load()
     }
 
     if (settings.value("encodings").toString().isEmpty())
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
         setDefault("encodings", "UTF-8,Windows-1251,UTF-16LE,cp866");
+#else
+        setDefault("encodings", "UTF-8,UTF-16,ISO-8859-1");
+#endif
 
     if (settings.value("f1url").toString().isEmpty())
         setDefault("f1url", (QLocale::system().language() == QLocale::Russian ?
