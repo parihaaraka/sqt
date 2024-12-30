@@ -465,7 +465,11 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
         connect(this, &PgConnection::queryStateChanged, thread, [this, thread](QueryState state) {
             if (state == QueryState::Inactive)
             {
+#if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
                 for (auto res: qAsConst(_resultsets))
+#else
+                for (auto res: std::as_const(_resultsets))
+#endif
                     clarifyTableStructure(*res);
                 // delete listeners before switch to another thread
                 QMutexLocker lk(&_connectionGuard);

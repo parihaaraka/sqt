@@ -27,6 +27,7 @@
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QActionGroup>
 #endif
+
 struct RecentFile
 {
     QString fileName;
@@ -276,7 +277,11 @@ MainWindow::MainWindow(QWidget *parent) :
                 else
                 {
                     QMenu *menu = dbBtnMenu->addMenu(srcIndex.data().toString());
+#if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
                     for (const QString &db: qAsConst(databases))
+#else
+                    for (const QString &db: std::as_const(databases))
+#endif
                         menu->addAction(db, [this, qw, connection, db](){
                             DbConnection *cn = connection->clone();
                             cn->setDatabase(db);
@@ -947,7 +952,11 @@ void MainWindow::refreshActions()
                                          tr("Execute query") :
                                          tr("Stop execution"));
     if (qState != QueryState::Inactive)
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
         ui->actionExecute_query->setShortcuts(QList<QKeySequence>() << QKeySequence(Qt::CTRL + Qt::Key_F5));
+#else
+        ui->actionExecute_query->setShortcuts(QList<QKeySequence>() << QKeySequence(Qt::CTRL | Qt::Key_F5));
+#endif
     else
         ui->actionExecute_query->setShortcuts(QKeySequence::Refresh);
 

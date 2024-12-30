@@ -465,7 +465,11 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
                             if (retcode == SQL_ERROR)
                                 break;
                             if (cb != SQL_NULL_DATA)
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
                                 (*row)[i] = QString::fromUtf16(reinterpret_cast<ushort*>(buf), int(res_len / sizeof(SQLWCHAR)));
+#else
+                                (*row)[i] = QString::fromUtf16(reinterpret_cast<char16_t*>(buf), int(res_len / sizeof(SQLWCHAR)));
+#endif
                             //(*row)[i] = QTextCodec::codecForMib(1015)->toUnicode(val); // 1015 is UTF-16, 1014 UTF-16LE, 1013 UTF-16LE
                             break;
                         }

@@ -1,6 +1,9 @@
 #include "dbconnection.h"
 #include <QVector>
 #include <QVariant>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#include <QTimeZone>
+#endif
 
 DbConnection::DbConnection() :
     QObject(nullptr)
@@ -99,7 +102,11 @@ QString DbConnection::elapsed() const noexcept
     if (elapsed_ms < 60000)
         return QString::number(elapsed_ms / 1000.0, 'f', precision) + " sec";
 
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     return QDateTime::fromMSecsSinceEpoch(elapsed_ms, Qt::UTC).
+#else
+    return QDateTime::fromMSecsSinceEpoch(elapsed_ms, QTimeZone::UTC).
+#endif
             toString(elapsed_ms < 60 * 60000 ?
                          "mm:ss.zzz":
                          "HH:mm:ss");

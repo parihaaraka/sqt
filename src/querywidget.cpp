@@ -22,7 +22,6 @@
 #include "mainwindow.h"
 #include "scripting.h"
 #include "codeeditor.h"
-#include "settings.h"
 #include <QTextBrowser>
 #include <QScrollBar>
 #include <QCompleter>
@@ -213,7 +212,11 @@ void QueryWidget::setDbConnection(DbConnection *connection)
             // print all resultsets structure ready to be used in 'create function returning table(...)'
             QColor resultsetStructureColor = _messages->palette().text().color();
             resultsetStructureColor.setAlphaF(0.6);
+#if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
             for (const auto res: qAsConst(_connection->_resultsets))
+#else
+            for (const auto res: std::as_const(_connection->_resultsets))
+#endif
             {
                 if (!res->columnCount())
                     continue;
@@ -525,7 +528,11 @@ QCompleter* QueryWidget::completer()
                     arr = doc.array();
 
                 QString tooltip;
+#if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
                 for (const auto &i: qAsConst(arr))
+#else
+                for (const auto &i: std::as_const(arr))
+#endif
                 {
                     if (!i.isObject())
                         continue;

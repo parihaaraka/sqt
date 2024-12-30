@@ -71,8 +71,7 @@ void DbTreeItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
     QColor regularColor, lightColor;
 
     regularColor = style.palette.color(QPalette::Text);
-    int l = regularColor.lightness();
-    l = (l >= 100 ? 50 : 120);
+    int l = regularColor.lightness() * 0.5;
 
     lightColor = QColor::fromHsv(regularColor.hsvHue(), regularColor.hslSaturation(), l);
     doc.setDefaultStyleSheet(QString("span.light { color: %1; } span.regular { color: %2; }").

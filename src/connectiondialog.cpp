@@ -41,7 +41,11 @@ ConnectionDialog::ConnectionDialog(QWidget *parent, QString name, QString connec
     ui->editName->setText(name);
     QRect frect = frameGeometry();
     // QWidget::screen() is too new to be used
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     QScreen *screen = QGuiApplication::screenAt(QApplication::activeWindow()->pos());
+#else
+    QScreen *screen = QApplication::activeWindow()->screen();
+#endif
     frect.moveCenter(screen->availableGeometry().center());
     move(frect.topLeft());
 }

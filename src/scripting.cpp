@@ -298,7 +298,11 @@ void execute(
             macros << match.captured(1);
     }
     // replace macroses with values
+#if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
     for (const QString &macro: qAsConst(macros))
+#else
+    for (const QString &macro: std::as_const(macros))
+#endif
     {
         QString value = (macro == "dbms.version" ?
                              QString::number(connection->dbmsComparableVersion()) :

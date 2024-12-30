@@ -15,6 +15,7 @@ SOURCES += main.cpp\
     dbosortfilterproxymodel.cpp \
     odbcconnection.cpp \
     querywidget.cpp \
+    styling.cpp \
     tablemodel.cpp \
     extfiledialog.cpp \
     dbtreeitemdelegate.cpp \
@@ -45,6 +46,7 @@ HEADERS  += mainwindow.h \
     dbosortfilterproxymodel.h \
     odbcconnection.h \
     querywidget.h \
+    styling.h \
     tablemodel.h \
     extfiledialog.h \
     dbtreeitemdelegate.h \

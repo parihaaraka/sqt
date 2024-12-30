@@ -68,7 +68,7 @@ QModelIndex DbObjectsModel::index(int row, int column, const QModelIndex &parent
 QVariant DbObjectsModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid())
-        return QVariant();
+        return QVariant{};
     DbObject *item = static_cast<DbObject*>(index.internalPointer());
     if (role == Qt::DisplayRole)
     {
@@ -366,7 +366,7 @@ bool DbObjectsModel::addServer(QString name, QString connectionString)
     DbObject *new_connection = new DbObject(_rootItem);
     beginInsertRows(parentIndex, ind, ind);
     new_connection->setData(connectionString, DbObject::DataRole);
-    new_connection->setData(name, Qt::DisplayRole);
+    new_connection->setData(name, Qt::EditRole);
     new_connection->setData("connection", DbObject::TypeRole);
     new_connection->setData(false, DbObject::ParentRole);
     new_connection->setData(QIcon(":img/server.png"), Qt::DecorationRole);

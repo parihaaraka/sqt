@@ -9,6 +9,7 @@
 #include <QCompleter>
 #include <QAbstractItemView>
 #include "settings.h"
+#include "styling.h"
 #include <QDebug>
 
 #define RIGHT_MARGIN 2
@@ -624,7 +625,7 @@ void CodeEditor::onHlTimerTimeout()
         if (c.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor))
         {
             // get bracket to the right and matching one selected
-            right_bracket_selections.append(matchBracket(content, c, left_bracket_selections.empty() ? 100 : 115));
+            right_bracket_selections.append(matchBracket(content, c, left_bracket_selections.empty() ? 100 : 130));
         }
     }
 
@@ -667,7 +668,10 @@ QList<QTextEdit::ExtraSelection> CodeEditor::matchBracket(QString &docContent, c
 
     // initial selection of current bracket
     QTextEdit::ExtraSelection selection;
-    selection.format.setBackground(QColor(160,255,160).darker(darkerFactor));
+    if (isDarkMode())
+        selection.format.setBackground(QColor(50,110,50).lighter(darkerFactor));
+    else
+        selection.format.setBackground(QColor(160,255,160).darker(darkerFactor));
     selection.cursor = selectedBracket;
     selections.append(selection);
 
@@ -703,7 +707,12 @@ QList<QTextEdit::ExtraSelection> CodeEditor::matchBracket(QString &docContent, c
     while (depth);
 
     if (depth) // pair is not matched - change color of initial character
-        selections[0].format.setBackground(QColor(255,160,160).darker(darkerFactor));
+    {
+        if (isDarkMode())
+            selections[0].format.setBackground(QColor(110,50,50).lighter(darkerFactor));
+        else
+            selections[0].format.setBackground(QColor(255,160,160).darker(darkerFactor));
+    }
     else
     {
         selection.cursor = textCursor();
@@ -840,7 +849,11 @@ void Bookmarks::suspend()
 void Bookmarks::resume()
 {
     _suspendBookmarks = false;
+#if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
     for (CodeBlockProperties* bm: qAsConst(_deletedBookmarks))
+#else
+    for (CodeBlockProperties* bm: std::as_const(_deletedBookmarks))
+#endif
         Bookmarks::remove(bm);
     _deletedBookmarks.clear();
 }

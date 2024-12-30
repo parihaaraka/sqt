@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include "sqlsyntaxhighlighter.h"
+#include "styling.h"
 
 SqlSyntaxHighlighter::SqlSyntaxHighlighter(const QJsonObject &settings, QObject *parent) :
     QSyntaxHighlighter(parent)
@@ -29,9 +30,15 @@ SqlSyntaxHighlighter::SqlSyntaxHighlighter(const QJsonObject &settings, QObject 
         format.setFontWeight(bold ? QFont::Bold : QFont::Normal);
         if (!node.isUndefined() && node.isObject())
         {
-            QColor c(node.toObject()["foreground"].toString());
-            if (c.isValid())
-                format.setForeground(c);
+            QJsonValue fg = node.toObject()[isDarkMode() ? "foreground_dark" : "foreground_light"];
+            if (fg.type() != QJsonValue::String)
+                fg = node.toObject()["foreground"];
+            if (fg.type() == QJsonValue::String)
+            {
+                QColor c(fg.toString());
+                if (c.isValid())
+                    format.setForeground(c);
+            }
             format.setFontItalic(node.toObject()["italic"].toBool(italic));
             format.setFontWeight(node.toObject()["bold"].toBool(bold) ?
                         QFont::Bold : QFont::Normal);

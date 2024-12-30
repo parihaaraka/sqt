@@ -89,7 +89,11 @@ DataTable* DataTable::takeRows(DataTable *source)
 
     if (_columns.isEmpty())
     {
+#if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
         for (const DataColumn *c: qAsConst(source->_columns))
+#else
+        for (const DataColumn *c: std::as_const(source->_columns))
+#endif
             _columns.append(new DataColumn(*c));
     }
 
