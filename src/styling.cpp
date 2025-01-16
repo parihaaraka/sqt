@@ -15,6 +15,6 @@ bool isDarkMode()
     const QPalette defaultPalette;
     const auto text = defaultPalette.color(QPalette::WindowText);
     const auto window = defaultPalette.color(QPalette::Window);
-    return text.stylinglightness() > window.lightness();
+    return text.lightness() > window.lightness();
 #endif
 }
