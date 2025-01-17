@@ -88,7 +88,7 @@ bool QueryWidget::openFile(const QString &fileName, const QString &encoding)
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     read_stream.setCodec(QTextCodec::codecForName(_encoding.toLatin1().data()));
 #else
-    auto enc = QStringConverter::encodingForName(_encoding);
+    auto enc = QStringConverter::encodingForName(_encoding.toUtf8().data());
     if (!enc.has_value())
     {
         onError(tr("Unknown encoding: %1").arg(_encoding));
@@ -121,7 +121,7 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     save_stream.setCodec(QTextCodec::codecForName(_encoding.toLatin1().data()));
 #else
-    auto enc = QStringConverter::encodingForName(_encoding);
+    auto enc = QStringConverter::encodingForName(_encoding.toUtf8().data());
     if (!enc.has_value())
     {
         onError(tr("Unknown encoding: %1").arg(_encoding));

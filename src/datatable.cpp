@@ -122,9 +122,9 @@ DataRow::DataRow(DataTable* table)
 {
     _table = table;
     for (int i = 0; i < table->columnCount(); ++i)
-	{
+    {
         _row.append(QVariant());
-	}
+    }
 }
 
 DataRow::~DataRow()
@@ -135,11 +135,11 @@ DataRow::~DataRow()
 int DataTable::getColumnOrd(QString column_name) const
 {
     for (int i = 0; i < columnCount(); ++i)
-	{
+    {
         if (_columns.at(i)->name() == column_name)
             return i;
-	}
-	return -1;
+    }
+    return -1;
 }
 
 QVariant& DataRow::operator [](QString column_name)

@@ -11,19 +11,19 @@ class QAbstractButton;
 
 class ConnectionDialog : public QDialog
 {
-	Q_OBJECT
-	
+    Q_OBJECT
+
 public:
     explicit ConnectionDialog(QWidget *parent = nullptr, QString name = QString(), QString connectionString = QString());
     ~ConnectionDialog();
     QString name();
     QString connectionString();
-	
+
 protected:
-	void changeEvent(QEvent *e);
-	
+    void changeEvent(QEvent *e);
+
 private slots:
-	void on_buttonBox_clicked(QAbstractButton *button);
+    void on_buttonBox_clicked(QAbstractButton *button);
 
 private:
     Ui::ConnectionDialog *ui;

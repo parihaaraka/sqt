@@ -60,7 +60,11 @@ QVariant TableModel::data(const QModelIndex &index, int role) const
     case Qt::DisplayRole:
     {
         QVariant &res = _table->getRow(index.row())[index.column()];
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
         QMetaType::Type type = QMetaType::Type(res.type());
+#else
+        QMetaType::Type type = QMetaType::Type(res.typeId());
+#endif
         if (type == QMetaType::QTime)
         {
             return res.value<QTime>().toString("hh:mm:ss.zzz");

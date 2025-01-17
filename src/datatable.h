@@ -71,7 +71,7 @@ public:
     DataTable(const DataTable &table);
     DataTable(QObject *parent = nullptr);
     ~DataTable();
-	void clear();
+    void clear();
     void clearRows();
     DataRow& addRow();
     void addColumn(DataColumn *column);
