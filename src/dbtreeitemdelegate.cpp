@@ -7,6 +7,7 @@
 #include "dbobject.h"
 #include "dbconnection.h"
 #include "dbconnectionfactory.h"
+#include "styling.h"
 
 DbTreeItemDelegate::DbTreeItemDelegate(QObject *parent) :
     QStyledItemDelegate(parent)
@@ -118,12 +119,16 @@ MyProxyStyle::MyProxyStyle(QStyle *style) : QProxyStyle(style)
 {
     Q_UNUSED(style)
 
-    QFileInfo fi_c(QApplication::applicationDirPath() + "/decor/branch-closed.png");
-    QFileInfo fi_o(QApplication::applicationDirPath() + "/decor/branch-open.png");
+    QString appPath = QApplication::applicationDirPath();
+    QString scheme = isDarkMode() ? "dark" : "light";
+    QFileInfo fi_c(QString("%1%2-%3.svg").arg(appPath).arg("/decor/branch-closed").arg(scheme));
+    QFileInfo fi_o(QString("%1%2-%3.svg").arg(appPath).arg("/decor/branch-opened").arg(scheme));
+    //QFileInfo fi_c(QApplication::applicationDirPath() + "/decor/branch-closed.png");
+    //QFileInfo fi_o(QApplication::applicationDirPath() + "/decor/branch-open.png");
     if (fi_c.exists() && fi_o.exists())
     {
-        _closed = QIcon(fi_c.absoluteFilePath());
-        _open = QIcon(fi_o.absoluteFilePath());
+        _closed = QIcon(QPixmap(fi_c.absoluteFilePath()));
+        _open = QIcon(QPixmap(fi_o.absoluteFilePath()));
     }
 }
 
