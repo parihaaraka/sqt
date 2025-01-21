@@ -410,7 +410,7 @@ void MainWindow::on_addConnectionAction_triggered()
 void MainWindow::on_actionAbout_triggered()
 {
     QMessageBox::about(this, tr("About"),
-                       tr("sql query tool v%1<br/>&copy; 2013-2023 Andrey Lukyanov<br/>freeware<br/><br/>"
+                       tr("sql query tool v%1<br/>&copy; 2013-2025 Andrey Lukyanov<br/>freeware<br/><br/>"
                           "The program is provided AS IS with NO WARRANTY OF ANY "
                           "KIND, INCLUDING THE WARRANTY OF DESIGN, MERCHANTABILITY "
                           "AND FITNESS FOR A PARTICULAR PURPOSE.<br/><br/>"
@@ -1373,8 +1373,9 @@ void MainWindow::onMessage(const QString &msg)
     if (msg.isEmpty())
         return;
 
+    const QPalette defaultPalette;
     QTextCharFormat fmt = ui->log->currentCharFormat();
-    fmt.setForeground(QBrush(Qt::black));
+    fmt.setForeground(QBrush(defaultPalette.color(QPalette::Text)));
     ui->log->mergeCurrentCharFormat(fmt);
     log(msg);
 }
@@ -1396,7 +1397,7 @@ void MainWindow::onError(const QString &err)
         _hideTimer->start();
 
     QTextCharFormat fmt = ui->log->currentCharFormat();
-    fmt.setForeground(QBrush(Qt::red));
+    fmt.setForeground(QBrush(QColor::fromString("#E0FF4040")));
     ui->log->mergeCurrentCharFormat(fmt);
     log(err);
 }

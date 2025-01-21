@@ -22,11 +22,11 @@ ConnectionDialog::ConnectionDialog(QWidget *parent, QString name, QString connec
             ui->editCS->mergeCurrentCharFormat(fmt);
             ui->editCS->appendPlainText(text);
         };
-        appendText(Qt::red, tr("make use of ONE of these two sample patterns:"));
+        appendText(Qt::darkGray, tr("make use of ONE of these two sample patterns:"));
         appendText(Qt::darkGray, tr("   ↓ postgresql native"));
-        appendText("#507", "host=127.0.0.1 port=5432 dbname=postgres user=%user% password=%pass% connect_timeout=5");
+        appendText("#E03080FF", "host=127.0.0.1 port=5432 dbname=postgres user=%user% password=%pass% connect_timeout=5");
         appendText(Qt::darkGray, tr("   ↓ odbc"));
-        appendText("#116",
+        appendText("#E03080FF",
            #ifdef Q_OS_WIN32
                    "Driver={SQL Server Native Client 11.0};Server=srv_name;Database=db_name;Trusted_Connection=yes;App=sqt;"
            #else

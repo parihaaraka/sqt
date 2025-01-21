@@ -570,12 +570,15 @@ QCompleter* QueryWidget::completer()
 void QueryWidget::onMessage(const QString &text)
 {
     if (!isTimerActive())
-        log(text, Qt::black);
+    {
+        const QPalette defaultPalette;
+        log(text, defaultPalette.color(QPalette::Text));
+    }
 }
 
 void QueryWidget::onError(const QString &text)
 {
-    log(text, Qt::red);
+    log(text, QColor::fromString("#E0FF4040"));
 }
 
 void QueryWidget::fetched(DataTable *table)

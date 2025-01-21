@@ -60,7 +60,7 @@ void DbTreeItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
             auto con = DbConnectionFactory::connection(QString::number(std::intptr_t(obj)));
             if (con)
             {
-                QColor color = (con->isOpened() ? Qt::green : Qt::red);
+                QColor color = (con->isOpened() ? Qt::green : QColor::fromString("#E0FF4040"));
                 painter->setBrush(QBrush(color));
                 painter->setPen(color.darker(160));
                 painter->drawEllipse(option.rect.topLeft() + QPoint(17, 4), 2, 2);
