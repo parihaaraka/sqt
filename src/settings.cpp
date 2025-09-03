@@ -17,6 +17,7 @@ static QHash<QString, QVariant> _settings;
 
 void load()
 {
+    qRegisterMetaType<QList<RecentFile>>();
     QMutexLocker locker(&_m);
     _settings.clear();
     QSettings settings;

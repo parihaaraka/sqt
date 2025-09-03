@@ -28,14 +28,6 @@
 #include <QActionGroup>
 #endif
 
-struct RecentFile
-{
-    QString fileName;
-    QString encoding;
-};
-
-Q_DECLARE_METATYPE(QList<RecentFile>)
-
 QDataStream& operator<<(QDataStream& out, const QList<RecentFile> &fList)
 {
     for (auto const &f: fList)

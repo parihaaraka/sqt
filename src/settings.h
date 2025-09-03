@@ -3,6 +3,13 @@
 
 #include <QVariant>
 
+struct RecentFile
+{
+    QString fileName;
+    QString encoding;
+};
+Q_DECLARE_METATYPE(QList<RecentFile>)
+
 namespace SqtSettings
 {
 
