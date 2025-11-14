@@ -1,4 +1,6 @@
 #include "datatable.h"
+#include "qpalette.h"
+#include "styling.h"
 #include "tablemodel.h"
 #include <QBrush>
 #include <QDateTime>
@@ -55,7 +57,7 @@ QVariant TableModel::data(const QModelIndex &index, int role) const
         return int(_table->getColumn(index.column()).hAlignment());// | Qt::AlignVCenter);
     case Qt::BackgroundRole:
         if (_table->getRow(index.row())[index.column()].isNull())
-            return QBrush(QColor(0, 0, 0, 15));
+            return QBrush(isDarkMode() ? QColor{255, 255, 255, 15} : QColor{0, 0, 0, 15});
         return QVariant();
     case Qt::DisplayRole:
     {
