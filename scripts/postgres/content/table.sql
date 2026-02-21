@@ -101,7 +101,7 @@ begin
 						ca.attrelid = c.conrelid and
 						ca.attnum = any(c.conkey) and
 						c.conkey[2] is null
-				where c.conrelid = _obj_id
+				where c.conrelid = _obj_id and c.contype != 'n'
 				union all
 				select a.attnum, 'd', null::text,
 					format(case when a.attgenerated = 0::"char" then 'DEFAULT %s' else '(%s)' end, pg_get_expr(d.adbin, d.adrelid)) ||
