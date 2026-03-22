@@ -13,6 +13,7 @@ SOURCES += main.cpp\
     dbobject.cpp \
     logindialog.cpp \
     dbosortfilterproxymodel.cpp \
+    misc.cpp \
     odbcconnection.cpp \
     querywidget.cpp \
     styling.cpp \
@@ -44,6 +45,7 @@ HEADERS  += mainwindow.h \
     dbobject.h \
     logindialog.h \
     dbosortfilterproxymodel.h \
+    misc.h \
     odbcconnection.h \
     querywidget.h \
     styling.h \

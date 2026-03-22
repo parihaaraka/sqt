@@ -1,4 +1,7 @@
 #include "settings.h"
+#include "qfileinfo.h"
+#include "qjsondocument.h"
+#include "qjsonobject.h"
 #include <QSettings>
 #include <QMutex>
 #include <QMutexLocker>
@@ -8,6 +11,7 @@
 #include <QScreen>
 #include <QRegularExpression>
 #include <QFont>
+#include "styling.h"
 
 namespace SqtSettings
 {
@@ -131,3 +135,29 @@ void setValue(const QString &key, const QVariant &value)
 }
 
 } // namespace SqtSettings
+
+QTextCharFormat hlFormat(const QJsonValue &node, const QVariant &prop, const QColor &defForeground, bool bold, bool italic)
+{
+    QTextCharFormat format;
+    format.setProperty(QTextFormat::UserProperty, prop);
+    format.setForeground(defForeground);
+    format.setFontItalic(italic);
+    format.setFontWeight(bold ? QFont::Bold : QFont::Normal);
+    if (node.isObject())
+    {
+        auto obj = node.toObject();
+        QJsonValue fg = obj[isDarkMode() ? "foreground_dark" : "foreground_light"];
+        if (fg.type() != QJsonValue::String)
+            fg = obj["foreground"];
+        if (fg.type() == QJsonValue::String)
+        {
+            QColor c(fg.toString());
+            if (c.isValid())
+                format.setForeground(c);
+        }
+        format.setFontItalic(obj["italic"].toBool(italic));
+        format.setFontWeight(obj["bold"].toBool(bold) ?
+                    QFont::Bold : QFont::Normal);
+    }
+    return format;
+}

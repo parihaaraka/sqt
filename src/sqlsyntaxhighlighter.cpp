@@ -4,9 +4,9 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include "sqlsyntaxhighlighter.h"
-#include "styling.h"
+#include "settings.h"
 
-SqlSyntaxHighlighter::SqlSyntaxHighlighter(const QJsonObject &settings, QObject *parent) :
+SqlSyntaxHighlighter::SqlSyntaxHighlighter(const QJsonDocument &settings, QObject *parent) :
     QSyntaxHighlighter(parent)
 {
     /*
@@ -16,52 +16,23 @@ SqlSyntaxHighlighter::SqlSyntaxHighlighter(const QJsonObject &settings, QObject 
 
     delimiters = " \t\r\n``'\";:()[]<>{}/\\^&$|!?~,.-+*%=" + settings["add_separators"].toString();
 
-    auto get_format = [](
-            const QJsonValue node,
-            const QVariant &prop,
-            const QColor &defForeground,
-            bool bold = false,
-            bool italic = false) ->QTextCharFormat
-    {
-        QTextCharFormat format;
-        format.setProperty(QTextFormat::UserProperty, prop);
-        format.setForeground(defForeground);
-        format.setFontItalic(italic);
-        format.setFontWeight(bold ? QFont::Bold : QFont::Normal);
-        if (!node.isUndefined() && node.isObject())
-        {
-            QJsonValue fg = node.toObject()[isDarkMode() ? "foreground_dark" : "foreground_light"];
-            if (fg.type() != QJsonValue::String)
-                fg = node.toObject()["foreground"];
-            if (fg.type() == QJsonValue::String)
-            {
-                QColor c(fg.toString());
-                if (c.isValid())
-                    format.setForeground(c);
-            }
-            format.setFontItalic(node.toObject()["italic"].toBool(italic));
-            format.setFontWeight(node.toObject()["bold"].toBool(bold) ?
-                        QFont::Bold : QFont::Normal);
-        }
-        return format;
-    };
 
     QTextCharFormat format;
-    formats.append(get_format(settings["literal"], "envelope", Qt::red));  // 0 - literal
+    formats.append(hlFormat(settings["literal"], "envelope", Qt::red));  // 0 - literal
 
-    format = get_format(settings["identifier"], "envelope", Qt::black);
+    format = hlFormat(settings["identifier"], "envelope", Qt::black);
     tsqlBrackets = settings["identifier"].toObject()["brackets"].toBool(false);
     formats.append(format);  // 1 - ""
     formats.append(format);  // 2 - []
 
-    format = get_format(settings["comment"], "envelope", Qt::darkGreen, false, true);
+    format = hlFormat(settings["comment"], "envelope", Qt::darkGreen, false, true);
     formats.append(format);  // 3 - comment /**/
     formats.append(format);  // 4 - comment --
 
-    formats.append(get_format(settings["number"], "code", Qt::darkMagenta, true, false));  // 5 - number
-    formats.append(get_format(settings["variable"], "code", {"#4f2b2a"}, false, false));   // 6 - variable
+    formats.append(hlFormat(settings["number"], "code", Qt::darkMagenta, true, false));  // 5 - number
+    formats.append(hlFormat(settings["variable"], "code", {"#4f2b2a"}, false, false));   // 6 - variable
 
-    formats.append(get_format(settings["function"], "code", Qt::darkBlue, true, false));   // 7 - function
+    formats.append(hlFormat(settings["function"], "code", Qt::darkBlue, true, false));   // 7 - function
     QJsonArray fnDict = settings["function"].toObject()["dict"].toArray();
     for (const QJsonValue &v: fnDict)
     {
@@ -115,7 +86,7 @@ SqlSyntaxHighlighter::SqlSyntaxHighlighter(const QJsonObject &settings, QObject 
                 curLevel = &it.value().nextWords;
             }
         }
-        formats.append(get_format(p, "code", Qt::black));
+        formats.append(hlFormat(p, "code", Qt::black));
     }
 }
 

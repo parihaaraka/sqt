@@ -4,29 +4,17 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include "jsonsyntaxhighlighter.h"
+#include "settings.h"
 
-JsonSyntaxHighlighter::JsonSyntaxHighlighter(QObject *parent) :
+JsonSyntaxHighlighter::JsonSyntaxHighlighter(const QJsonDocument &settings, QObject *parent) :
     QSyntaxHighlighter(parent)
 {
-    auto get_format = [](
-            const QColor &defForeground,
-            bool bold = false,
-            bool italic = false) ->QTextCharFormat
-    {
-        QTextCharFormat format;
-        format.setForeground(defForeground);
-        format.setFontItalic(italic);
-        format.setFontWeight(bold ? QFont::Bold : QFont::Normal);
-        return format;
-    };
-
-    formats.append(get_format(Qt::darkGreen));              // 0 - double quoted text
-
-    formats.append(get_format(Qt::darkRed));                // 1 - number
-    formats.append(get_format(Qt::darkBlue));               // 2 - node name
-    formats.append(get_format(Qt::darkCyan));               // 3 - true, false
-    formats.append(get_format(Qt::darkGray, false, true));  // 4 - null
-    formats.append(get_format(Qt::red));                    // 5 - err literal
+    formats.append(hlFormat(settings["string"], "envelope", Qt::darkGreen));        // 0 - double quoted text
+    formats.append(hlFormat(settings["number"], "code", Qt::darkRed));              // 1 - number
+    formats.append(hlFormat(settings["node_name"], "envelope", Qt::darkBlue));      // 2 - node name
+    formats.append(hlFormat(settings["bool"], "code", Qt::blue));                   // 3 - true, false
+    formats.append(hlFormat(settings["null"], "code", Qt::darkGray, false, true));  // 4 - null
+    formats.append(hlFormat(settings["error"], "code", Qt::red));                   // 5 - err literal
  }
 
 void JsonSyntaxHighlighter::highlightBlock(const QString &text)

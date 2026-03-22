@@ -9,8 +9,8 @@
 #include <QHeaderView>
 #include "mainwindow.h"
 #include "codeeditor.h"
+#include "misc.h"
 #include "settings.h"
-
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -142,9 +142,23 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
             QPlainTextEdit *ed = new QPlainTextEdit(dlg);
             ed->setObjectName("_def_wrap_");
             layout->addWidget(ed);
-            ed->setPlainText(err.errorString() + '\n' + stringValue);
+            if (err.error == QJsonParseError::ParseError::NoError)
+                ed->setPlainText(stringValue);
+            else
+                ed->setPlainText(err.errorString() + '\n' + stringValue);
 
-            JsonSyntaxHighlighter *hl = new JsonSyntaxHighlighter(ed);
+            QJsonDocument settings;
+            try
+            {
+                // lets use postgresql palette
+                settings = readJsonFile(QApplication::applicationDirPath() + "/scripts/hl_json.conf");
+            }
+            catch (const QString &err)
+            {
+                MainWindow *w = qobject_cast<MainWindow*>(QApplication::activeWindow());
+                w->onError(err);
+            }
+            JsonSyntaxHighlighter *hl = new JsonSyntaxHighlighter(settings, ed);
             hl->setDocument(ed->document());
 
             QStatusBar *status = new QStatusBar(dlg);
@@ -268,9 +282,14 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
 
                 if (count)
                     QApplication::clipboard()->setText(res);
-                QMainWindow *w = qobject_cast<QMainWindow*>(QApplication::activeWindow());
-                if (w && w->statusBar())
-                    w->statusBar()->showMessage(QString("%1 (%2 cells)").arg(totalAmount).arg(count), 1000*15);
+                MainWindow *w = qobject_cast<MainWindow*>(QApplication::activeWindow());
+                if (w)
+                {
+                    auto msg = QString("%1 (%2 cells)").arg(totalAmount).arg(count);
+                    if (w->statusBar())
+                        w->statusBar()->showMessage(msg, 1000*15);
+                    w->onMessage(msg);
+                }
                 return true;
             }
         }

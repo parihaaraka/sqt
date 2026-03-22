@@ -1,6 +1,7 @@
 #include "querywidget.h"
 #include <QTabWidget>
 #include <QApplication>
+#include "misc.h"
 #include "sqlsyntaxhighlighter.h"
 #include "dbconnectionfactory.h"
 #include "dbconnection.h"
@@ -284,26 +285,13 @@ void QueryWidget::highlight(std::shared_ptr<DbConnection> con)
     {
         if (con)
             _connection = con;
-        QJsonDocument settingsDocument;
-        QJsonObject settings;
+
+        QJsonDocument settings;
         if (_connection)
         {
             try
             {
-                QFile file(Scripting::dbmsScriptPath(_connection.get()) + "hl.conf");
-                if (file.open(QIODevice::ReadOnly | QIODevice::Text))
-                {
-                    auto text_data = file.readAll();
-                    if (!text_data.isEmpty())
-                    {
-                        QJsonParseError error;
-                        settingsDocument = QJsonDocument::fromJson(text_data, &error);
-                        if (settingsDocument.isNull())
-                            throw error.errorString();
-                        settings = settingsDocument.object();
-                    }
-                    file.close();
-                }
+                settings = readJsonFile(Scripting::dbmsScriptPath(_connection.get()) + "hl.conf");
             }
             catch (const QString &err)
             {
