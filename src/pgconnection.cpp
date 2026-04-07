@@ -836,7 +836,9 @@ void PgConnection::fetch() noexcept
                 emit fetched(_temp_result);
 
             if (status == PGRES_FATAL_ERROR) // erroneous resultset
-                emit error(PQresultErrorMessage(tmp_res.get()));
+                emit error(tr("SQLSTATE: %1\n%2")
+                           .arg(PQresultErrorField(tmp_res.get(), PG_DIAG_SQLSTATE))
+                           .arg(PQresultErrorMessage(tmp_res.get())));
             else if (_temp_result->columnCount())
                 emit message(tr("%1 rows fetched").arg(_temp_result_rowcount));
 
