@@ -24,7 +24,7 @@ ConnectionDialog::ConnectionDialog(QWidget *parent, QString name, QString connec
         };
         appendText(Qt::darkGray, tr("make use of ONE of these two sample patterns:"));
         appendText(Qt::darkGray, tr("   ↓ postgresql native"));
-        appendText("#E03080FF", "host=127.0.0.1 port=5432 dbname=postgres user=%user% password=%pass% connect_timeout=5");
+        appendText("#E03080FF", "host=127.0.0.1 port=5432 dbname=postgres user=%user% password=%pass% connect_timeout=5 options='-c statement_timeout=5000'");
         appendText(Qt::darkGray, tr("   ↓ odbc"));
         appendText("#E03080FF",
            #ifdef Q_OS_WIN32

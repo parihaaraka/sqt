@@ -20,12 +20,4 @@ void str_replace(std::string &src, std::string substr, std::string res);
 
 std::string trim(const std::string &a_str);
 
-const char* timed_prefix(const char* prefix = NULL);
-
-void GpgCmd(std::vector<unsigned char> source, std::string command, std::vector<unsigned char> &out, std::string &log);
-
-std::vector<unsigned char> Decrypt(int client_id, std::string message, char *key_id);
-
-std::string Encrypt(char *key_id, std::vector<unsigned char> message);
-
 #endif // STUFF_H
