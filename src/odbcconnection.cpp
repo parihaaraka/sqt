@@ -43,7 +43,7 @@ OdbcConnection::OdbcConnection() :
 
 OdbcConnection::~OdbcConnection()
 {
-    close();
+    OdbcConnection::close();
     if (_hdbc)
         SQLFreeHandle(SQL_HANDLE_DBC, _hdbc);
     if (_henv)
@@ -274,7 +274,11 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
                 _resultsets.append(table);
                 lk.unlock();
 
+#ifdef _WIN32
+                SQLUINTEGER col_size;
+#else
                 SQLULEN col_size;
+#endif
                 SQLCHAR buf[512];
                 SQLSMALLINT buf_res_length, data_type, dec_digits, nullable_desc;
                 for (SQLUSMALLINT i = 0; i < col_count; ++i)
@@ -707,7 +711,7 @@ void OdbcConnection::close() noexcept
 {
     _dbmsScriptingID.clear();
     clearResultsets();
-    if (!isOpened())
+    if (!OdbcConnection::isOpened())
         return;
     SQLDisconnect(_hdbc);
 }

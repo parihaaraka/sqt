@@ -8,71 +8,13 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-# ------------------- search Qt6 -------------------
-find_package(Qt6 QUIET COMPONENTS Widgets Qml)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(ProxySettings)
+include(FindOrInstallQt)
+include(FindOrInstallPostgreSQL)
 
-if(NOT Qt6_FOUND)
-    find_program(QMAKE_EXECUTABLE qmake)
-    if(NOT QMAKE_EXECUTABLE)
-        file(GLOB QT_INSTALL_DIRS "/home/*/Qt/*/gcc_64" "/opt/Qt/*/gcc_64")
-        foreach(DIR ${QT_INSTALL_DIRS})
-            if(EXISTS "${DIR}/bin/qmake")
-                set(QMAKE_EXECUTABLE "${DIR}/bin/qmake")
-                break()
-            endif()
-        endforeach()
-    endif()
-
-    if(QMAKE_EXECUTABLE)
-        execute_process(
-            COMMAND ${QMAKE_EXECUTABLE} -query QT_INSTALL_PREFIX
-            OUTPUT_VARIABLE QT_INSTALL_PREFIX
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-        )
-        if(QT_INSTALL_PREFIX)
-            message(STATUS "Found Qt via qmake at: ${QT_INSTALL_PREFIX}")
-            list(APPEND CMAKE_PREFIX_PATH ${QT_INSTALL_PREFIX})
-            # search Qt6 again with the new path
-            find_package(Qt6 REQUIRED COMPONENTS Widgets Qml)
-        endif()
-    else()
-        message(FATAL_ERROR
-            "Qt6 not found. Please set CMAKE_PREFIX_PATH to your Qt installation prefix,\n"
-            "or set Qt6_DIR to the directory containing Qt6Config.cmake.\n"
-            "Example: cmake .. -DCMAKE_PREFIX_PATH=/home/me/Qt/6.10.1/gcc_64"
-        )
-    endif()
-else()
-    message(STATUS "Qt6 found via standard search")
-endif()
-
-# ------------------- PostgreSQL (libpq) -------------------
-find_package(PostgreSQL)
-if(NOT PostgreSQL_FOUND)
-    find_package(PkgConfig)
-    if(PKG_CONFIG_FOUND)
-        pkg_check_modules(PG libpq)
-        if(PG_FOUND)
-            set(PostgreSQL_LIBRARIES ${PG_LIBRARIES})
-            set(PostgreSQL_INCLUDE_DIRS ${PG_INCLUDE_DIRS})
-            set(PostgreSQL_FOUND TRUE)
-        endif()
-    endif()
-endif()
-
-if(NOT PostgreSQL_FOUND)
-    find_path(PostgreSQL_INCLUDE_DIR NAMES libpq-fe.h HINTS $ENV{PG_ROOT}/include /usr/include/postgresql PATH_SUFFIXES include)
-    find_library(PostgreSQL_LIBRARY NAMES pq libpq HINTS $ENV{PG_ROOT}/lib PATH_SUFFIXES lib)
-    if(PostgreSQL_INCLUDE_DIR AND PostgreSQL_LIBRARY)
-        set(PostgreSQL_FOUND TRUE)
-        set(PostgreSQL_INCLUDE_DIRS ${PostgreSQL_INCLUDE_DIR})
-        set(PostgreSQL_LIBRARIES ${PostgreSQL_LIBRARY})
-    else()
-        message(FATAL_ERROR "PostgreSQL (libpq) not found. Set PG_ROOT or install libpq-dev.")
-    endif()
-endif()
-
-# ------------------- ODBC -------------------
+find_or_install_qt6()
+find_or_install_postgresql()
 if(WIN32)
     set(ODBC_LIBRARIES odbc32 odbccp32)
 else()
@@ -80,12 +22,10 @@ else()
     pkg_check_modules(ODBC REQUIRED odbc)
 endif()
 
-# ------------------- OpenSSL (только Linux) -------------------
 if(UNIX)
     find_package(OpenSSL REQUIRED)
 endif()
 
-# --------------------------------------------------------------
 file(GLOB SOURCES "src/*.cpp")
 file(GLOB HEADERS "src/*.h" "src/*.hpp")
 file(GLOB FORMS   "src/*.ui")
@@ -125,7 +65,7 @@ else()
     target_include_directories(${PROJECT_NAME} PRIVATE ${OPENSSL_INCLUDE_DIR})
 endif()
 
-# ------------------- copying decor и scripts -------------------
+# -------------------------------------------------------------------
 set(DECOR_SRC "${CMAKE_CURRENT_SOURCE_DIR}/decor")
 set(SCRIPTS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/scripts")
 set(DECOR_DST "${CMAKE_CURRENT_BINARY_DIR}/decor")
