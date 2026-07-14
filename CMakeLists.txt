@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.10)
 project(sqt)
 
 set(OpenGL_GL_PREFERENCE "GLVND")
+if(WIN32)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-subsystem,windows")
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -43,6 +46,80 @@ add_executable(${PROJECT_NAME}
     ${RESOURCES}
     ${RC_FILES}
 )
+
+# ------------------- Deployment (Windows only) -------------------
+if(WIN32)
+    # Qt deployment using windeployqt
+    find_program(WINDEPLOYQT_EXE windeployqt)
+    if(WINDEPLOYQT_EXE)
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND "${WINDEPLOYQT_EXE}"
+                    --no-compiler-runtime
+                    --no-system-d3d-compiler
+                    --no-opengl-sw
+                    --no-translations
+                    "$<TARGET_FILE:${PROJECT_NAME}>"
+            COMMENT "Deploying Qt libraries via windeployqt"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+        )
+    else()
+        message(WARNING "windeployqt not found; Qt DLLs will not be deployed automatically.")
+    endif()
+
+    # PostgreSQL and dependency DLLs from vcpkg
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        set(VCPKG_TRIPLET "x64-mingw-dynamic")
+    else()
+        set(VCPKG_TRIPLET "x64-windows")
+    endif()
+
+    set(VCPKG_INSTALLED_BASE "${CMAKE_SOURCE_DIR}/vcpkg_installed/${VCPKG_TRIPLET}")
+    set(VCPKG_BIN_DIR "")
+    foreach(SUBDIR "" "${VCPKG_TRIPLET}")
+        set(TEST_DIR "${VCPKG_INSTALLED_BASE}/${SUBDIR}/bin")
+        if(EXISTS "${TEST_DIR}/libpq.dll")
+            set(VCPKG_BIN_DIR "${TEST_DIR}")
+            break()
+        endif()
+    endforeach()
+
+    if(VCPKG_BIN_DIR)
+        file(GLOB VCPKG_DLLS "${VCPKG_BIN_DIR}/*.dll")
+        if(VCPKG_DLLS)
+            add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${VCPKG_DLLS} "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+                COMMENT "Copying vcpkg DLLs from ${VCPKG_BIN_DIR}"
+            )
+        else()
+            message(WARNING "No DLLs found in ${VCPKG_BIN_DIR}")
+        endif()
+    else()
+        message(WARNING "Could not find bin directory with libpq.dll; PostgreSQL DLLs will not be copied.")
+    endif()
+
+    # Copy MinGW runtime DLLs (libgcc, libstdc++, libwinpthread)
+    get_filename_component(MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    set(MINGW_DLLS
+        "${MINGW_BIN_DIR}/libgcc_s_seh-1.dll"
+        "${MINGW_BIN_DIR}/libstdc++-6.dll"
+        "${MINGW_BIN_DIR}/libwinpthread-1.dll"
+    )
+    # Filter only existing files
+    set(EXISTING_MINGW_DLLS "")
+    foreach(DLL ${MINGW_DLLS})
+        if(EXISTS "${DLL}")
+            list(APPEND EXISTING_MINGW_DLLS "${DLL}")
+        endif()
+    endforeach()
+    if(EXISTING_MINGW_DLLS)
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${EXISTING_MINGW_DLLS} "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+            COMMENT "Copying MinGW runtime DLLs"
+        )
+    else()
+        message(WARNING "MinGW runtime DLLs not found; they may not be copied.")
+    endif()
+endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src

@@ -12,7 +12,7 @@ function(find_or_install_postgresql)
     if(WIN32)
         download_vcpkg()
 
-        # set triplet for MinGW
+        # Determine triplet based on compiler
         if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
             set(VCPKG_TRIPLET "x64-mingw-dynamic")
             set(VCPKG_HOST_TRIPLET "x64-mingw-dynamic")
@@ -34,9 +34,10 @@ function(find_or_install_postgresql)
         endif()
 
         set(VCPKG_INSTALLED "${CMAKE_SOURCE_DIR}/vcpkg_installed/${VCPKG_TRIPLET}")
+        file(MAKE_DIRECTORY "${VCPKG_INSTALLED}")
 
-        # install libpq if not found
-        if(NOT EXISTS "${VCPKG_INSTALLED}/libpq-fe.h" AND NOT EXISTS "${VCPKG_INSTALLED}/${VCPKG_TRIPLET}/include/libpq-fe.h")
+        # Install libpq if not already present
+        if(NOT EXISTS "${VCPKG_INSTALLED}/include/libpq-fe.h" AND NOT EXISTS "${VCPKG_INSTALLED}/${VCPKG_TRIPLET}/include/libpq-fe.h")
             message(STATUS "Installing libpq via vcpkg (${VCPKG_TRIPLET})...")
             set(ENV{CC} ${CMAKE_C_COMPILER})
             set(ENV{CXX} ${CMAKE_CXX_COMPILER})
@@ -55,20 +56,17 @@ function(find_or_install_postgresql)
             message(STATUS "libpq already installed at ${VCPKG_INSTALLED}")
         endif()
 
-        file(GLOB_RECURSE PG_INCLUDE_FILE "${VCPKG_INSTALLED}/libpq-fe.h")
-        if(PG_INCLUDE_FILE)
-            list(GET PG_INCLUDE_FILE 0 PG_INCLUDE_DIR_PATH)
-            get_filename_component(PG_INCLUDE_DIR "${PG_INCLUDE_DIR_PATH}" DIRECTORY)
-        else()
-            set(PG_INCLUDE_DIR NOTFOUND)
-        endif()
-
-        file(GLOB_RECURSE PG_LIBRARY_FILE "${VCPKG_INSTALLED}/libpq.dll.a")
-        if(PG_LIBRARY_FILE)
-            list(GET PG_LIBRARY_FILE 0 PG_LIBRARY)
-        else()
-            set(PG_LIBRARY NOTFOUND)
-        endif()
+        # Manual search for headers and library (find_package does not work because vcpkg does not provide config files)
+        find_path(PG_INCLUDE_DIR libpq-fe.h
+            PATHS "${VCPKG_INSTALLED}"
+            PATH_SUFFIXES include "${VCPKG_TRIPLET}/include"
+            NO_DEFAULT_PATH
+        )
+        find_library(PG_LIBRARY NAMES pq libpq
+            PATHS "${VCPKG_INSTALLED}"
+            PATH_SUFFIXES lib "${VCPKG_TRIPLET}/lib"
+            NO_DEFAULT_PATH
+        )
 
         if(PG_INCLUDE_DIR AND PG_LIBRARY)
             set(PostgreSQL_INCLUDE_DIRS ${PG_INCLUDE_DIR} PARENT_SCOPE)
@@ -76,11 +74,11 @@ function(find_or_install_postgresql)
             set(PostgreSQL_FOUND TRUE PARENT_SCOPE)
             message(STATUS "libpq found: include=${PG_INCLUDE_DIR}, library=${PG_LIBRARY}")
         else()
-            message(FATAL_ERROR "libpq-fe.h or libpq.dll.a not found in ${VCPKG_INSTALLED}")
+            message(FATAL_ERROR "libpq-fe.h or libpq library not found in ${VCPKG_INSTALLED}")
         endif()
 
     else()
-        # Linux
+        # Linux: standard search via pkg-config and manual fallback
         find_package(PkgConfig)
         if(PKG_CONFIG_FOUND)
             pkg_check_modules(PG libpq)
