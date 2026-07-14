@@ -4,6 +4,8 @@ function(find_or_install_postgresql)
     find_package(PostgreSQL)
     if(PostgreSQL_FOUND)
         message(STATUS "PostgreSQL found: ${PostgreSQL_LIBRARIES}")
+        set(PostgreSQL_INCLUDE_DIRS ${PostgreSQL_INCLUDE_DIRS} PARENT_SCOPE)
+        set(PostgreSQL_LIBRARIES ${PostgreSQL_LIBRARIES} PARENT_SCOPE)
         return()
     endif()
 
