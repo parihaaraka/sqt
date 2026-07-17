@@ -210,6 +210,57 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
 
         QTextCursor c = textCursor();
 
+        if (keyEvent->key() == Qt::Key_Backspace && !c.hasSelection())
+        {
+            int indentSize = SqtSettings::value("indentSize", 3).toInt();
+            int pos = c.position();
+            int blockStart = c.block().position();
+
+            int col = 0;
+            QTextCursor scan(c.document());
+            scan.setPosition(blockStart);
+            while (scan.position() < pos)
+            {
+                QChar ch = document()->characterAt(scan.position());
+                col += ch == '\t' ? indentSize - (col % indentSize) : 1;
+                scan.movePosition(QTextCursor::NextCharacter);
+            }
+
+            int prevBoundary;
+            if (col % indentSize == 0 && col > 0)
+                prevBoundary = col - indentSize;
+            else
+                prevBoundary = (col / indentSize) * indentSize;
+
+            int toRemove = col - prevBoundary;
+            if (toRemove == 0)
+                break;
+
+            int spacesBefore = 0;
+            QTextCursor back(c);
+            back.setPosition(pos);
+            while (back.position() > blockStart)
+            {
+                back.movePosition(QTextCursor::PreviousCharacter);
+                QChar ch = document()->characterAt(back.position());
+                if (ch == ' ')
+                    spacesBefore++;
+                else
+                    break;
+            }
+
+            if (spacesBefore >= toRemove)
+            {
+                // delete toRemove spaces before the cursor
+                c.setPosition(pos - toRemove);
+                c.setPosition(pos, QTextCursor::KeepAnchor);
+                c.removeSelectedText();
+                return true;
+            }
+            // lack of spaces - call default Backspace handler
+            break;
+        }
+
         if (keyEvent->key() == Qt::Key_Return)
         {
             // previous indentation
@@ -256,11 +307,245 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
             return true;
         }
 
+        int start = c.selectionStart();
+        int end = c.selectionEnd();
+
+        if (keyEvent->key() == Qt::Key_Tab || keyEvent->key() == Qt::Key_Backtab)
+        {
+            bool cursorToStart = (start == c.position());
+
+            c.setPosition(end);
+            int lastBlock = c.blockNumber();
+            c.setPosition(start);
+            bool multiLine = (c.blockNumber() != lastBlock);
+
+            if (multiLine)
+            {
+                c.movePosition(QTextCursor::StartOfBlock);
+                c.beginEditBlock();
+                bool firstPass = true;
+                int indentSize = SqtSettings::value("indentSize", 3).toInt();
+
+                if (keyEvent->key() == Qt::Key_Backtab)
+                {
+                    do
+                    {
+                        if (!firstPass)
+                        {
+                            if (!c.movePosition(QTextCursor::NextBlock))
+                                break;
+                        }
+                        else
+                            firstPass = false;
+
+                        if (c.position() >= end)
+                            break;
+
+                        int tab = indentSize;
+                        while (tab > 0)
+                        {
+                            QChar curChar = document()->characterAt(c.position());
+                            if (QString(" \t").contains(curChar))
+                            {
+                                int pos = c.position();
+                                c.setPosition(pos + 1, QTextCursor::KeepAnchor);
+                                c.removeSelectedText();
+
+                                if (pos < start)
+                                    --start;
+                                if (pos < end)
+                                    --end;
+
+                                tab -= (curChar == '\t' ? indentSize : 1);
+                            }
+                            else
+                                break;
+                        }
+                    }
+                    while (true);
+                }
+                else // Tab
+                {
+                    QString indent = SqtSettings::value("tabsIndent", true).toBool()
+                                     ? "\t"
+                                     : QString(indentSize, ' ');
+                    int indentLen = indent.length();
+
+                    do
+                    {
+                        if (!firstPass)
+                        {
+                            if (!c.movePosition(QTextCursor::NextBlock))
+                                break;
+                        }
+                        else
+                            firstPass = false;
+
+                        if (c.position() >= end)
+                            break;
+
+                        int pos = c.position();
+                        c.insertText(indent);
+
+                        if (pos <= start)
+                            start += indentLen;
+                        end += indentLen;
+                    }
+                    while (true);
+                }
+
+                c.endEditBlock();
+
+                if (cursorToStart)
+                {
+                    c.setPosition(end);
+                    c.setPosition(start < 0 ? 0 : start, QTextCursor::KeepAnchor);
+                }
+                else
+                {
+                    c.setPosition(start < 0 ? 0 : start);
+                    c.setPosition(end, QTextCursor::KeepAnchor);
+                }
+                setTextCursor(c);
+                return true;
+            }
+            else
+            {
+                // single line
+                if (keyEvent->key() == Qt::Key_Tab)
+                {
+                    int indentSize = SqtSettings::value("indentSize", 3).toInt();
+                    bool useTabs = SqtSettings::value("tabsIndent", true).toBool();
+
+                    QTextCursor cursor = textCursor();
+                    bool hasSelection = cursor.hasSelection();
+                    int selStart = cursor.selectionStart();
+                    int selEnd = cursor.selectionEnd();
+
+                    // delete selection if exists
+                    if (hasSelection)
+                    {
+                        cursor.setPosition(selStart);
+                        cursor.setPosition(selEnd, QTextCursor::KeepAnchor);
+                        cursor.removeSelectedText();
+                    }
+
+                    int pos = cursor.position();
+                    int blockStart = cursor.block().position();
+
+                    int col = 0;
+                    QTextCursor scan(cursor.document());
+                    scan.setPosition(blockStart);
+                    while (scan.position() < pos)
+                    {
+                        QChar ch = document()->characterAt(scan.position());
+                        col += ch == '\t' ? indentSize - (col % indentSize) : 1;
+                        scan.movePosition(QTextCursor::NextCharacter);
+                    }
+
+                    int targetCol = ((col / indentSize) + 1) * indentSize;
+                    int spacesToAdd = targetCol - col;
+                    if (spacesToAdd == 0)
+                        spacesToAdd = indentSize;
+
+                    QString insertText = useTabs ? "\t" : QString(spacesToAdd, ' ');
+                    cursor.insertText(insertText);
+                    setTextCursor(cursor);
+                }
+                else if (keyEvent->key() == Qt::Key_Backtab)
+                {
+                    int indentSize = SqtSettings::value("indentSize", 3).toInt();
+
+                    QTextCursor cursor = textCursor();
+                    bool hasSelection = cursor.hasSelection();
+                    int selStart = cursor.selectionStart();
+                    int selEnd = cursor.selectionEnd();
+                    int cursorPos = cursor.position();
+
+                    int blockStart = cursor.block().position();
+
+                    // analyze indentation
+                    QVector<QChar> chars;
+                    QVector<int> widths;
+                    int totalWidth = 0;
+                    QTextCursor scan(cursor.document());
+                    scan.setPosition(blockStart);
+                    while (true)
+                    {
+                        QChar ch = document()->characterAt(scan.position());
+                        if (ch == ' ')
+                        {
+                            chars.append(ch);
+                            widths.append(1);
+                            totalWidth += 1;
+                            scan.movePosition(QTextCursor::NextCharacter);
+                        }
+                        else if (ch == '\t')
+                        {
+                            int w = indentSize - (totalWidth % indentSize);
+                            chars.append(ch);
+                            widths.append(w);
+                            totalWidth += w;
+                            scan.movePosition(QTextCursor::NextCharacter);
+                        }
+                        else
+                            break;
+                    }
+                    int indentEndPos = scan.position();
+
+                    if (totalWidth == 0)
+                        return true;
+
+                    int newTotalWidth = ((totalWidth - 1) / indentSize) * indentSize;
+                    if (newTotalWidth == totalWidth)
+                        return true;
+
+                    int toRemoveWidth = totalWidth - newTotalWidth;
+                    int accumulated = 0;
+                    int removeCount = 0;
+                    for (int i = chars.size() - 1; i >= 0; --i)
+                    {
+                        accumulated += widths[i];
+                        removeCount++;
+                        if (accumulated >= toRemoveWidth)
+                            break;
+                    }
+
+                    int removeStart = indentEndPos - removeCount;
+
+                    cursor.setPosition(removeStart);
+                    cursor.setPosition(indentEndPos, QTextCursor::KeepAnchor);
+                    cursor.removeSelectedText();
+
+                    auto adjustPos = [&](int pos) -> int {
+                        if (pos >= removeStart && pos < indentEndPos)
+                            return removeStart;          // inside deleted block – move on the beginning of the block
+                        else if (pos >= indentEndPos)
+                            return pos - removeCount;    // after deleted block – move left
+                        else
+                            return pos;                  // before deleted block – don't move
+                    };
+
+                    int newCursor = adjustPos(cursorPos);
+                    cursor.setPosition(newCursor);
+
+                    if (hasSelection)
+                    {
+                        int newStart = adjustPos(selStart);
+                        int newEnd = adjustPos(selEnd);
+                        cursor.setPosition(newStart);
+                        cursor.setPosition(newEnd, QTextCursor::KeepAnchor);
+                    }
+
+                    setTextCursor(cursor);
+                }
+                return true;
+            }
+        }
+
         if (!c.hasSelection())
             break;
 
-        int start = c.selectionStart();
-        int end = c.selectionEnd();
         if (keyEvent->key() == Qt::Key_U)
         {
             if (keyEvent->modifiers().testFlag(Qt::ControlModifier))
@@ -277,95 +562,6 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
                 break;
             c.setPosition(start);
             c.setPosition(end, QTextCursor::KeepAnchor);
-            setTextCursor(c);
-            return true;
-        }
-        else if (keyEvent->key() == Qt::Key_Tab || keyEvent->key() == Qt::Key_Backtab)
-        {
-            bool cursorToStart = (start == c.position());
-
-            // do not indent if selection is within single block
-            c.setPosition(end);
-            int lastBlock = c.blockNumber();
-            c.setPosition(start);
-            if (c.blockNumber() == lastBlock)
-                break;
-
-            c.movePosition(QTextCursor::StartOfBlock);
-            int startOfFirstBlock = c.position();
-            c.beginEditBlock();
-            bool firstPass = true;
-            if (keyEvent->key() == Qt::Key_Backtab)
-            {
-                int tabSize = SqtSettings::value("tabSize", 3).toInt();
-                do
-                {
-                    if (!firstPass)
-                    {
-                        if (!c.movePosition(QTextCursor::NextBlock))
-                            break;
-                    }
-                    else
-                        firstPass = false;
-
-                    if (c.position() >= end)
-                        break;
-
-                    int tab = tabSize;
-                    while (tab > 0)
-                    {
-                        QChar curChar = document()->characterAt(c.position());
-                        if (QString(" \t").contains(curChar))
-                        {
-                            c.setPosition(c.position() + 1, QTextCursor::KeepAnchor);
-                            c.removeSelectedText();
-                            --end;
-                            if (start > startOfFirstBlock && c.position() <= start)
-                                --start;
-                            tab -= (curChar == '\t' ? tabSize : 1);
-                        }
-                        else
-                            break;
-                    }
-                    /*if (tabSize < 0)
-                    {
-                        c.insertText(QString(' ').repeated(-tabSize));
-                        end -= tabSize;
-                    }*/
-                }
-                while (true);
-            }
-            else
-            {
-                do
-                {
-                    if (!firstPass)
-                    {
-                        if (!c.movePosition(QTextCursor::NextBlock))
-                            break;
-                    }
-                    else
-                        firstPass = false;
-                    if (c.position() >= end)
-                        break;
-                    if (c.position() <= start)
-                        ++start;
-                    c.insertText("\t");
-                    ++end;
-                }
-                while (true);
-            }
-            c.endEditBlock();
-            if (cursorToStart)
-            {
-                c.setPosition(end);
-                c.setPosition(start < 0 ? 0 : start, QTextCursor::KeepAnchor);
-            }
-            else
-            {
-                c.setPosition(start < 0 ? 0 : start);
-                c.setPosition(end, QTextCursor::KeepAnchor);
-            }
             setTextCursor(c);
             return true;
         }
@@ -467,14 +663,14 @@ void CodeEditor::insertFromMimeData(const QMimeData *source)
     QTextCursor c = textCursor();
     QString block = c.block().text();
     int distance = 0;
-    int tabSize = SqtSettings::value("tabSize", 3).toInt();
+    int indentSize = SqtSettings::value("indentSize", 3).toInt();
     for (int i = 0; i < c.positionInBlock(); ++i)
-        distance += (block[i] == '\t' ? tabSize : 1);
+        distance += (block[i] == '\t' ? indentSize : 1);
 
     // prepend every line of the inserted text with the following prefix
-    QString prefix = QString(distance / tabSize, '\t') + (distance % tabSize ? "\t" : "");
+    QString prefix = QString(distance / indentSize, '\t') + (distance % indentSize ? "\t" : "");
     QString data = source->text();
-    if (distance % tabSize)
+    if (distance % indentSize)
         data = '\t' + data;
     data.replace('\n', '\n' + prefix);
 

@@ -330,11 +330,19 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
         if (QPlainTextEdit *edit = qobject_cast<QPlainTextEdit*>(obj))
         {
             // apply tab size
-            int tabSize = SqtSettings::value("tabSize", 3).toInt();
+            int indentSize = SqtSettings::value("indentSize", 3).toInt();
             QTextOption textOption(edit->document()->defaultTextOption());
             // accurate tab size evaluation
             textOption.setTabStopDistance(QFontMetrics(edit->font())
-                                          .horizontalAdvance(QString(tabSize * 100, ' ')) / 100.0);
+                                          .horizontalAdvance(QString(indentSize * 100, ' ')) / 100.0);
+
+            QTextOption::Flags currentFlags = textOption.flags();
+            if (SqtSettings::value("visualizeWhitespace", false).toBool())
+                currentFlags |= QTextOption::ShowTabsAndSpaces;
+            else
+                currentFlags &= ~QTextOption::ShowTabsAndSpaces;
+            textOption.setFlags(currentFlags);
+
             if (edit->objectName() != "editCS" && edit->objectName() != "_def_wrap_")
                 textOption.setWrapMode(QTextOption::NoWrap);
             edit->document()->setDefaultTextOption(textOption);

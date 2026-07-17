@@ -71,9 +71,9 @@ void load()
                             ));
 
     bool ok;
-    int tabSize = settings.value("tabSize", -1).toInt(&ok);
-    if (!ok || tabSize <= 0)
-        setDefault("tabSize", 3);
+    int indentSize = settings.value("indentSize", -1).toInt(&ok);
+    if (!ok || indentSize <= 0)
+        setDefault("indentSize", 3);
 
     locker.unlock();
     QApplication *app = qobject_cast<QApplication*>(QGuiApplication::instance());
