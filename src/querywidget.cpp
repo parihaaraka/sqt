@@ -320,6 +320,19 @@ void QueryWidget::dehighlight()
         _highlighter->setDocument(nullptr);
 }
 
+void QueryWidget::rehighlight()
+{
+    if (_highlighter && _highlighter->document())
+        _highlighter->rehighlight();
+}
+
+bool QueryWidget::is_sql_hl(QPlainTextEdit *ed)
+{
+    return _highlighter
+            && _highlighter->document()
+            && _highlighter->document() == (ed ? ed->document() : nullptr);
+}
+
 void QueryWidget::setReadOnly(bool ro)
 {
     if (!_editor)

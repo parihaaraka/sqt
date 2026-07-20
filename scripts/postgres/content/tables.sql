@@ -3,16 +3,16 @@ select
 	c.oid,
 	case
 		when c.relnamespace = pg_my_temp_schema() then 'local temporary'
-		when c.relkind = 'r'::"char" then 'ordinary table'
-		when c.relkind = 'p'::"char" then 'partitioned table'
+		when c.relkind = 'r'::"char" then 'ordinary'
+		when c.relkind = 'p'::"char" then 'partitioned'
 		when c.relkind = 'v'::"char" then 'view'
-		when c.relkind = 'f'::"char" then 'foreign table'
+		when c.relkind = 'f'::"char" then 'foreign'
 		else null::text
 	end as "type",
-		(c.relkind = any (array['r'::"char", 'p'::"char"]))
-		or (c.relkind = any (array['v'::"char", 'f'::"char"]))
+	c.relkind = any ('{r,p}'::"char"[]) or (
+		c.relkind = any ('{v,f}'::"char"[])
 		and (pg_relation_is_updatable(c.oid::regclass, false) & 8) = 8
-	as is_insertable_into,
+	) as insertable,
 	pg_size_pretty(pg_relation_size(c.oid)) as table_size,
 	c.reltuples,
 	(
@@ -22,7 +22,8 @@ select
 	) indexes_size,
 	pg_size_pretty(inherited.inherited_size) inherited_size,
 	inherited.inherited_reltuples,
-	pg_size_pretty(inherited.inherited_indexes_size) inherited_indexes_size
+	pg_size_pretty(inherited.inherited_indexes_size) inherited_indexes_size,
+	obj_description(c.oid, 'pg_class') description
 from pg_class c
 	left join lateral (
 		select

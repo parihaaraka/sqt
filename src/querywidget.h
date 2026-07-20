@@ -35,6 +35,8 @@ public:
     void ShowFindPanel(FindAndReplacePanel *panel);
     void highlight(std::shared_ptr<DbConnection> con = nullptr);
     void dehighlight();
+    void rehighlight();
+    bool is_sql_hl(QPlainTextEdit *ed);
 
     void setReadOnly(bool ro = true);
     bool isReadOnly() const;

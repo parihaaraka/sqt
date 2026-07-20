@@ -27,6 +27,7 @@ private:
     QHash<QString, char> functions;
     QString delimiters;
     bool tsqlBrackets;
+    void fadeWhitespaceMarkers(const QString &text);
 };
 
 #endif // SQLSYNTAXHIGHLIGHTER_H

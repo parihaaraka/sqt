@@ -16,6 +16,7 @@
 #include <QJsonArray>
 #include <QVBoxLayout>
 #include "jsonsyntaxhighlighter.h"
+#include "querywidget.h"
 
 AppEventHandler::AppEventHandler(QObject *parent) : QObject(parent)
 {
@@ -181,7 +182,7 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                     return true;
                 std::sort(indexes.begin(), indexes.end());
                 QModelIndex prev;
-                for (const QModelIndex &cur: indexes)
+                for (const QModelIndex &cur: std::as_const(indexes))
                 {
                     if (!prev.isValid())
                         ;
@@ -327,6 +328,7 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
     }
     else if (event->type() == QEvent::FontChange)
     {
+        //auto *e = qobject_cast<CodeEditor*>(obj);
         if (QPlainTextEdit *edit = qobject_cast<QPlainTextEdit*>(obj))
         {
             // apply tab size
@@ -335,17 +337,26 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
             // accurate tab size evaluation
             textOption.setTabStopDistance(QFontMetrics(edit->font())
                                           .horizontalAdvance(QString(indentSize * 100, ' ')) / 100.0);
-
-            QTextOption::Flags currentFlags = textOption.flags();
-            if (SqtSettings::value("visualizeWhitespace", false).toBool())
-                currentFlags |= QTextOption::ShowTabsAndSpaces;
-            else
-                currentFlags &= ~QTextOption::ShowTabsAndSpaces;
-            textOption.setFlags(currentFlags);
-
             if (edit->objectName() != "editCS" && edit->objectName() != "_def_wrap_")
                 textOption.setWrapMode(QTextOption::NoWrap);
+
+            auto *p = edit->parent()->parent();
+            auto *qw = p ? qobject_cast<QueryWidget*>(p) : nullptr;
+            bool flagsChanged = false;
+            if (qw && qw->is_sql_hl(edit))
+            {
+                QTextOption::Flags currentFlags = textOption.flags();
+                QTextOption::Flags prevFlags = currentFlags;
+                if (SqtSettings::value("visualizeWhitespace", false).toBool())
+                    currentFlags |= QTextOption::ShowTabsAndSpaces;
+                else
+                    currentFlags &= ~QTextOption::ShowTabsAndSpaces;
+                textOption.setFlags(currentFlags);
+                flagsChanged = prevFlags != currentFlags;
+            }
             edit->document()->setDefaultTextOption(textOption);
+            if (qw && flagsChanged)
+                qw->rehighlight();
             edit->setCursorWidth(2);
         }
         else if (QTableView *tv = qobject_cast<QTableView*>(obj))

@@ -1204,8 +1204,23 @@ void MainWindow::showTextualContent(const QVariant &value, const QVariant &type,
     // for standalone usage
     _objectScript->show();
 
+    auto adjust_visualizeWhitespace = [this](bool sql) {
+        if (QPlainTextEdit *plain = qobject_cast<QPlainTextEdit*>(_objectScript->editor()))
+        {
+            QTextOption textOption(plain->document()->defaultTextOption());
+            QTextOption::Flags currentFlags = textOption.flags();
+            if (SqtSettings::value("visualizeWhitespace", false).toBool() && sql)
+                currentFlags |= QTextOption::ShowTabsAndSpaces;
+            else
+                currentFlags &= ~QTextOption::ShowTabsAndSpaces;
+            textOption.setFlags(currentFlags);
+            plain->document()->setDefaultTextOption(textOption);
+        }
+    };
+
     if (type.toString() == "script")
     {
+        adjust_visualizeWhitespace(true);
         _objectScript->setPlainText(value.toString());
         _objectScript->highlight(con);
     }
@@ -1216,6 +1231,8 @@ void MainWindow::showTextualContent(const QVariant &value, const QVariant &type,
     }
     else // "text" or empty
     {
+        // don't visualize whitespaces in non-sql content
+        adjust_visualizeWhitespace(false);
         _objectScript->dehighlight();
         _objectScript->setPlainText(value.toString());
     }

@@ -3,8 +3,15 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QTextDocument>
+#include <QTextOption>
+#include <qpalette.h>
 #include "sqlsyntaxhighlighter.h"
 #include "settings.h"
+
+// Alpha value used to make tab/space markers "barely visible"
+// (0 = fully transparent, 255 = fully opaque)
+static const int kWhitespaceMarkerAlpha = 35;
 
 SqlSyntaxHighlighter::SqlSyntaxHighlighter(const QJsonDocument &settings, QObject *parent) :
     QSyntaxHighlighter(parent)
@@ -325,4 +332,45 @@ void SqlSyntaxHighlighter::highlightBlock(const QString &text)
     if (currentBlockState() != mode)
         setCurrentBlockState(mode);
 
+    fadeWhitespaceMarkers(text);
+}
+
+void SqlSyntaxHighlighter::fadeWhitespaceMarkers(const QString &text)
+{
+    if (!document() ||
+        !(document()->defaultTextOption().flags() & QTextOption::ShowTabsAndSpaces))
+        return;
+
+    int runStart = -1;
+    for (int idx = 0; idx <= text.length(); ++idx)
+    {
+        if (idx < text.length())
+        {
+            const QChar c = text.at(idx);
+            if (c == ' ' || c == '\t')
+            {
+                if (runStart < 0)
+                    runStart = idx;
+                continue;
+            }
+        }
+
+        if (runStart < 0)
+            continue;
+
+        // Within this highlighter, a run of consecutive spaces/tabs is
+        // always covered either by a single atomic setFormat() call
+        // (a whole string/quoted-identifier/comment/completed keyword
+        // phrase) or by none at all - formatting never changes mid-run.
+        // So it's enough to sample the format of the first character
+        // and apply it to the entire run in one call.
+        QTextCharFormat fmt = format(runStart);
+        QColor fg = fmt.foreground().style() != Qt::NoBrush
+                        ? fmt.foreground().color()
+                        : QApplication::palette().color(QPalette::Text);
+        fg.setAlpha(kWhitespaceMarkerAlpha);
+        fmt.setForeground(fg);
+        setFormat(runStart, idx - runStart, fmt);
+        runStart = -1;
+    }
 }
