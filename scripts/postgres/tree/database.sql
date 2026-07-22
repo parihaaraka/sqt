@@ -1,26 +1,27 @@
+with s as (
+	select (regexp_match(nspname, '([^_]+)'))[1] prefix, array_agg(oid) oids, count(*) cnt
+	from pg_catalog.pg_namespace
+	where nspname !~ ('pg_toast.*|pg_temp.*') and nspname ~ '^[^_]+_'
+	group by (regexp_match(nspname, '([^_]+)'))[1]
+	having count(*) > 5
+)
 select
 	'schema' node_type,
-	case when nspname in ('information_schema', 'pg_catalog') then '<span class="light">' || nspname || '</span>'
-		else nspname end ui_name,
-	quote_ident(nspname) "name",
-	oid id,
+	case when ns.nspname in ('information_schema', 'pg_catalog') then '<span class="light">' || ns.nspname || '</span>'
+		else ns.nspname end ui_name,
+	quote_ident(ns.nspname) "name",
+	ns.oid id,
 	'layers-small.png' icon,
-	case when nspname in ('information_schema', 'pg_catalog') then '0' else '1' end || nspname sort1
-from pg_catalog.pg_namespace
-where nspname !~ ('pg_toast.*|pg_temp.*')
+	case when ns.nspname in ('information_schema', 'pg_catalog') then '0' else '1' end || ns.nspname sort1
+from pg_catalog.pg_namespace ns
+	left join s on ns.oid = any(s.oids)
+where ns.nspname !~ ('pg_toast.*|pg_temp.*') and s.prefix is null
 union all
 select
-	'extensions' node_type,
-	'<i>Extensions</i>' ui_name,
-	null "name",
+	'schemas_folder' node_type,
+	s.prefix || ' <i><span class="light">group</span></i>' ui_name,
+	s.prefix "name",
 	null id,
-	'sd-memory-card.png' icon,
-	'z1' sort1
-union all
-select
-	'db_locks',
-	'<i>Locks</i>',
-	null,
-	null,
-	null,
-	'z2' sort1
+	'layers-small.png' icon,
+	'1' || prefix sort1 --
+from s

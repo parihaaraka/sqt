@@ -69,14 +69,13 @@ void DbTreeItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
     }
 
     QTextDocument doc;
-    QColor regularColor, lightColor;
-
-    regularColor = style.palette.color(QPalette::Text);
-    int l = regularColor.lightness() * 0.5;
-
-    lightColor = QColor::fromHsv(regularColor.hsvHue(), regularColor.hslSaturation(), l);
+    QColor regularColor = style.palette.color(QPalette::Text);
+    QColor lightColor = regularColor;
+    lightColor.setAlpha(0x60);
+    auto tmp = QString("span.light { color: %1; } span.regular { color: %2; }").
+                 arg(lightColor.name(QColor::HexArgb), regularColor.name());
     doc.setDefaultStyleSheet(QString("span.light { color: %1; } span.regular { color: %2; }").
-                             arg(lightColor.name(), regularColor.name()));
+                             arg(lightColor.name(QColor::HexArgb), regularColor.name()));
     prepareDocToDrawDbTreeNode(option, index, doc);
 
     painter->save();

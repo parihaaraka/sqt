@@ -1,7 +1,51 @@
-select 
+with c as
+(
+	select c.*
+	from pg_class c
+	where c.relnamespace = $schema.id$ and
+		(c.relkind = any (array['r'::"char", 'f'::"char", 'p'::"char"])) and
+		not pg_is_other_temp_schema(c.relnamespace) and
+		(
+			pg_has_role(c.relowner, 'usage'::text) or
+			has_table_privilege(c.oid, 'select, insert, update, delete, truncate, references, trigger'::text) or
+			has_any_column_privilege(c.oid, 'select, insert, update, references'::text)
+		)
+/* if version 110000 */
+		and
+		(
+			(
+				$tables.id$ is null  and
+				coalesce(c.relispartition, false) = false
+			)
+			or
+			(
+				coalesce(c.relispartition, false) = true and
+				exists (
+					select 1
+					from pg_inherits p
+					where p.inhrelid = c.oid and p.inhparent = $tables.id$
+				)
+			)
+		)
+/* endif version */
+),
+tmp as
+(
+	select (regexp_match(relname, '([^_]+)'))[1] prefix, array_agg(oid) oids, count(*) cnt
+	from c
+	where relname ~ '^[^_]+_'
+	group by (regexp_match(relname, '([^_]+)'))[1]
+	having count(*) > 5
+),
+tg as -- table groups
+(
+	select * from tmp
+	where (select count(*) from tmp) > 1
+)
+select
 	'table' node_type,
 	c.relname || coalesce(' <i><span class="light"> ' ||
-		case 
+		case
 			when c.relpersistence = 'u'::"char" then 'unlogged'
 			when c.relkind = 'f'::"char" then
 				'&larr; ' ||
@@ -20,31 +64,18 @@ select
 	'table.png' icon,
 	c.relname sort1,
 	c.relkind::text || c.relname sort2
-from pg_class c
-where c.relnamespace = $schema.id$ and
-	(c.relkind = any (array['r'::"char", 'f'::"char", 'p'::"char"])) and 
-	not pg_is_other_temp_schema(c.relnamespace) and 
-	(
-		pg_has_role(c.relowner, 'usage'::text) or 
-		has_table_privilege(c.oid, 'select, insert, update, delete, truncate, references, trigger'::text) or 
-		has_any_column_privilege(c.oid, 'select, insert, update, references'::text)
-	)
-/* if version 110000 */
-	and
-	(
-		(
-			$tables.id$ is null  and
-			coalesce(c.relispartition, false) = false
-		)
-		or
-		(
-			coalesce(c.relispartition, false) = true and
-			exists (
-				select 1 
-				from pg_inherits p
-				where p.inhrelid = c.oid and p.inhparent = $tables.id$
-			)
-		)
-	)
-/* endif version */
-order by c.relname desc
+from c
+	left join tg on c.oid = any(tg.oids)
+where tg.prefix is null
+union all
+select
+	'tables_folder' node_type,
+	prefix || ' <i><span class="light">group</span></i>' ui_name,
+	null id,
+	null tag,
+	prefix "name",
+	false allow_multiselect,
+	'table.png' icon,
+	prefix sort1,
+	'_' || prefix sort2
+from tg
