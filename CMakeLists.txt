@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.16)
 project(sqt)
 
 set(OpenGL_GL_PREFERENCE "GLVND")
@@ -144,20 +144,19 @@ else()
     target_include_directories(${PROJECT_NAME} PRIVATE ${OPENSSL_INCLUDE_DIR})
 endif()
 
-# -------------------------------------------------------------------
-set(DECOR_SRC "${CMAKE_CURRENT_SOURCE_DIR}/decor")
-set(SCRIPTS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/scripts")
-set(DECOR_DST "${CMAKE_CURRENT_BINARY_DIR}/decor")
-set(SCRIPTS_DST "${CMAKE_CURRENT_BINARY_DIR}/scripts")
+# ------------------- decor & scripts next to the binary -------------------
+# Symlinked where the platform supports it (so edits in the source tree apply
+# without a rebuild), copied otherwise. See cmake/LinkOrCopyDir.cmake.
+set(LINK_OR_COPY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmake/LinkOrCopyDir.cmake")
 
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${DECOR_DST}
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${DECOR_SRC} ${DECOR_DST}
-    COMMENT "Copying decor to ${DECOR_DST}"
-)
-
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${SCRIPTS_DST}
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${SCRIPTS_SRC} ${SCRIPTS_DST}
-    COMMENT "Copying scripts to ${SCRIPTS_DST}"
-)
+foreach(ASSET_DIR decor scripts)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+                "-DSRC=${CMAKE_CURRENT_SOURCE_DIR}/${ASSET_DIR}"
+                "-DDST=$<TARGET_FILE_DIR:${PROJECT_NAME}>/${ASSET_DIR}"
+                "-DBINARY_DIR=${CMAKE_BINARY_DIR}"
+                -P "${LINK_OR_COPY_DIR}"
+        COMMENT "Linking (or copying) ${ASSET_DIR} next to ${PROJECT_NAME}"
+        VERBATIM
+    )
+endforeach()

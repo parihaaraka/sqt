@@ -28,17 +28,17 @@ union all
 --<search_path>.table,view,etc
 select * from (
 	select distinct on (c.relname) -- first found in search path or specified schema
-		c.relname, 
+		c.relname,
 		jsonb_build_object(
 			'n',  -- name
-			case c.relkind 
+			case c.relkind
 				when 'r'::"char" then 'table'
-				when 'p'::"char" then 'table'
-				when 'f'::"char" then 'table'
-				when 'c'::"char" then 'type'
+				when 'p'::"char" then 'partitioned table'
+				when 'f'::"char" then 'foreign table'
+				when 'c'::"char" then 'composite type'
 				when 'v'::"char" then 'view'
-				when 'm'::"char" then 'view'
-				when 'S'::"char" then 'sequence' 
+				when 'm'::"char" then 'materialized view'
+				when 'S'::"char" then 'sequence'
 				else null
 			end,
 			'd', 	-- description
@@ -46,7 +46,7 @@ select * from (
 		)
 	from target_ns ns
 		join pg_class c on ns.oid = c.relnamespace
-	where c.relkind not in ('i'::"char", 't'::"char") -- not an index or toast table
+	where c.relkind not in ('i'::"char", 'I'::"char", 't'::"char") -- not an index or toast table
 	order by c.relname, ns.ord
 ) tmp
 union all
@@ -64,11 +64,21 @@ select * from (
 				when t.typtype = 'r'::"char" then 'range'
 			end,
 			'd',
-			obj_description(t.oid, 'pg_type')
+			trim(
+				case when t.typbasetype != 0  then '→ ' || pg_catalog.format_type(t.typbasetype, t.typtypmod) || E'\n' else '' end ||
+				case when t2.typbasetype != 0 then '  → ' || pg_catalog.format_type(t2.typbasetype, t2.typtypmod) || E'\n' else '' end ||
+				case when t3.typbasetype != 0 then '    → ' || pg_catalog.format_type(t3.typbasetype, t3.typtypmod) || E'\n' else '' end ||
+				case when t4.typbasetype != 0 then '    → ' || pg_catalog.format_type(t4.typbasetype, t4.typtypmod) || E'\n' else '' end ||
+				E'\n' ||
+				coalesce(obj_description(t.oid, 'pg_type'), ''),
+			E'\n')
 		)
 	from target_ns ns
 		join pg_type t on ns.oid = t.typnamespace
 		left join pg_class c on t.typrelid = c.oid
+		left join pg_type t2 on t.typtype = 'd'::"char" and t.typbasetype != 0 and t.typbasetype = t2.oid
+		left join pg_type t3 on t2.typtype = 'd'::"char" and t2.typbasetype != 0 and t2.typbasetype = t3.oid
+		left join pg_type t4 on t2.typtype = 'b'::"char" and t2.typcategory = 'A' and t2.typelem != 0 and t2.typelem = t4.oid
 	where	c.relkind is null and 	-- see prev subquery
 		t.typname not like '\_%' -- not an array
 	order by t.typname, ns.ord
