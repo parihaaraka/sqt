@@ -260,8 +260,10 @@ void refresh(DbConnection *connection, Context context)
             Scripting::Script {
                 versionSpecificPart(
                     stream.readAll(),
-                    // prevent infinite loop - do not acquire comparable version on root level
-                    context == Context::Root ? -1 : connection->dbmsComparableVersion()),
+                    // prevent infinite loop - odbc data source acquires its version
+                    // through the root level version.sql/qs script
+                    context == Context::Root && qobject_cast<OdbcConnection*>(connection) ?
+                        -1 : connection->dbmsComparableVersion()),
                 suffix == "sql" ? Script::Type::SQL : Script::Type::QS
             });
     }

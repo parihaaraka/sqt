@@ -1,5 +1,7 @@
 __*
+tmp
 *.pro.user*
 .qtcreator
+.cache
 build*/
 /vcpkg*

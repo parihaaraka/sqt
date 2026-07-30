@@ -65,6 +65,7 @@ public slots:
     void fetched(DataTable *table);
     void clearResult();
     void onCompleterRequest();
+    void onScriptObjectRequest();
     //void onCustomGridContextMenuRequested(const QPoint & pos);
     //void on_customEditorContextMenuRequested(const QPoint & pos);
 

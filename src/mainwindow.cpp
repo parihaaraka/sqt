@@ -817,6 +817,25 @@ void MainWindow::on_actionOpen_triggered()
     openFile(fn, _fileDialog.encoding());
 }
 
+QueryWidget *MainWindow::openScriptTab(const QString &text, const QString &title, DbConnection *connection)
+{
+    QueryWidget *w = (connection ?
+                          new QueryWidget(connection, ui->tabWidget) :
+                          new QueryWidget(ui->tabWidget));
+    int ind = ui->tabWidget->addTab(w, title);
+    ui->tabWidget->setCurrentIndex(ind);
+    w->setPlainText(text);
+    w->highlight();
+    connect(w, &QueryWidget::sqlChanged, this, &MainWindow::sqlChanged);
+    w->setReadOnly(false);
+    w->setModified(false);
+
+    if (ui->contentSplitter->isVisible())
+        ui->actionQuery_editor->activate(QAction::Trigger);
+    w->setFocus();
+    return w;
+}
+
 QueryWidget *MainWindow::currentQueryWidget()
 {
     if (!ui->tabWidget->count())

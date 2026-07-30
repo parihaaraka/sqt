@@ -613,6 +613,11 @@ void CodeEditor::keyPressEvent(QKeyEvent *e)
                 emit completerRequest();
             return;
         }
+        else if (e->key() == Qt::Key_F4 && !e->modifiers().testFlag(Qt::AltModifier))
+        {
+            emit scriptObjectRequest();
+            return;
+        }
     }
 
     int prevPos = textCursor().position();

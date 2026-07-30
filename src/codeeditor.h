@@ -62,6 +62,7 @@ private:
 
 signals:
     void completerRequest();
+    void scriptObjectRequest();
 };
 
 #endif // CODEEDITOR_H

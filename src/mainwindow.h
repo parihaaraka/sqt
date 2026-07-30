@@ -33,6 +33,7 @@ public:
     virtual ~MainWindow() override;
     void activateEditorBlock(CodeBlockProperties *blockProperties);
     void queryStateChanged(QueryWidget *w, QueryState state);
+    QueryWidget* openScriptTab(const QString &text, const QString &title, DbConnection *connection = nullptr);
 	
 protected:
     virtual void closeEvent(QCloseEvent *event) override;

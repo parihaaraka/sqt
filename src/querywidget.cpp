@@ -31,6 +31,7 @@
 #include "sqlparser.h"
 #include "datatable.h"
 #include "timechart.h"
+#include <QStatusBar>
 
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 #include <QtCore/QTextCodec>
@@ -457,6 +458,7 @@ void QueryWidget::setPlainText(const QString &text)
 {
     CodeEditor *editor = initEditor<CodeEditor>(&_editor, this);
     connect(editor, &CodeEditor::completerRequest, this, &QueryWidget::onCompleterRequest, Qt::UniqueConnection);
+    connect(editor, &CodeEditor::scriptObjectRequest, this, &QueryWidget::onScriptObjectRequest, Qt::UniqueConnection);
     editor->setPlainText(text);
 }
 
@@ -496,6 +498,11 @@ void QueryWidget::executeOnTimer(const QString &query, int interval)
 
 void QueryWidget::log(const QString &text, QColor color)
 {
+    // widgets created without a connection (the object tree preview pane)
+    // have no messages pane
+    if (!_messages)
+        return;
+
     QTextCharFormat fmt = _messages->currentCharFormat();
     fmt.setForeground(QBrush(color));
     _messages->mergeCurrentCharFormat(fmt);
@@ -923,6 +930,179 @@ void QueryWidget::onCompleterRequest()
                         QItemSelectionModel::SelectCurrent);
         });
     }
+}
+
+void QueryWidget::onScriptObjectRequest()
+{
+    CodeEditor *ed = qobject_cast<CodeEditor*>(sender());
+    if (!ed || !_connection || !_connection->open())
+        return;
+
+    // Split the current line into identifier parts to find the one under cursor.
+    // Unlike autocompletion we need the whole word, not its left part only.
+    struct Part { QString text; bool quoted; int start; int end; bool dotted; };
+    QList<Part> parts;
+    const QString content = ed->textCursor().block().text();
+    bool dotted = false;
+    for (int i = 0; i < content.length(); )
+    {
+        QChar c = content[i];
+        if (c == '"')
+        {
+            int start = i++;
+            while (i < content.length() && content[i] != '"')
+                ++i;
+            if (i == content.length()) // unterminated literal
+                break;
+            parts.append({content.mid(start + 1, i - start - 1), true, start, ++i, dotted});
+            dotted = false;
+        }
+        else if (c.isLetter() || c == '_')
+        {
+            int start = i;
+            while (i < content.length() && (content[i].isLetterOrNumber() || content[i] == '_'))
+                ++i;
+            parts.append({content.mid(start, i - start), false, start, i, dotted});
+            dotted = false;
+        }
+        else
+        {
+            // dot binds the neighbours into a single qualified name
+            dotted = (c == '.' && !parts.isEmpty() && parts.last().end == i);
+            ++i;
+        }
+    }
+
+    int pos = ed->textCursor().positionInBlock();
+    int cur = -1;
+    for (int i = 0; i < parts.count(); ++i)
+    {
+        // cursor sticked to the right border belongs to the part as well
+        if (pos >= parts[i].start && pos <= parts[i].end)
+        {
+            cur = i;
+            break;
+        }
+    }
+    if (cur == -1)
+        return;
+
+    // postgres folds unquoted identifiers to lower case
+    auto fold = [](const Part &p) { return p.quoted ? p.text : p.text.toLower(); };
+    // being pressed on the 3rd part of a name we script its 2-part prefix
+    // (parts[0].dotted is always false, so the qualifier is always in place)
+    if (parts[cur].dotted && parts[cur - 1].dotted)
+        --cur;
+    QString name = fold(parts[cur]);
+    QString qualifier = (parts[cur].dotted ? fold(parts[cur - 1]) : QString());
+
+    // The connection may be shared with other widgets (the object tree lends its
+    // own connection to the preview pane via highlight()), so we must not touch
+    // anybody else's slots nor the resultsets they may still be fetching into.
+    // Widgets created without a connection have no results pane and have never
+    // been subscribed to fetched() - keep them that way.
+    const bool wired = (findChild<QTabWidget*>("results") != nullptr);
+    // Transient notification: neither a modal popup nor a permanent record in the
+    // messages pane (the preview pane has no messages pane at all anyway).
+    auto note = [this](const QString &text) {
+        if (QMainWindow *mw = qobject_cast<QMainWindow*>(window()))
+        {
+            if (mw->statusBar())
+            {
+                mw->statusBar()->showMessage(text, 1000 * 5);
+                return;
+            }
+        }
+        // no status bar to notify through
+        log(text, QPalette().color(QPalette::Text));
+    };
+
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    QString script;
+    try
+    {
+        // detach this widget only, to keep the resultsets of the service queries
+        disconnect(_connection.get(), nullptr, this, nullptr);
+        auto localErrHandler = connect(_connection.get(), &DbConnection::error, this, &QueryWidget::onError);
+
+        auto candidates = Scripting::execute(
+                    _connection.get(), Scripting::Context::Root, "f4",
+                    [&qualifier, &name](const QString &macro) -> QVariant
+        {
+            // the values are inlined into the query, so quotes must be escaped
+            if (macro == "f4.qualifier")
+                return qualifier.isEmpty() ?
+                            QVariant() : QString(qualifier).replace("'", "''");
+            if (macro == "f4.name")
+                return QString(name).replace("'", "''");
+            return QVariant();
+        });
+
+        DataTable *objects = (candidates && !candidates->resultsets.isEmpty() ?
+                                  candidates->resultsets.last() : nullptr);
+        for (int r = 0; objects && r < objects->rowCount(); ++r)
+        {
+            QString type = objects->value(r, "type").toString();
+            auto c = Scripting::execute(
+                        _connection.get(), Scripting::Context::Content, type,
+                        [objects, r, &type](const QString &macro) -> QVariant
+            {
+                // Resultset columns are flat ("schema_name"), while macroses are
+                // dotted ("$schema.name$").
+                // Content scripts refer to the object itself by its type name, so
+                // $table.id$ of table.sql is the object, while $table.id$ of
+                // trigger.sql is its hosting relation.
+                QString column = (macro.startsWith(type + '.') ?
+                                      macro.mid(type.length() + 1) :
+                                      QString(macro).replace('.', '_'));
+                int ord = objects->getColumnOrd(column);
+                if (ord >= 0)
+                    return objects->value(r, ord);
+                // no particular columns are selected
+                if (macro == "children.ids")
+                    return "-1";
+                return QVariant();
+            });
+
+            if (!c)
+                continue;
+#if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
+            for (const QString &s: qAsConst(c->scripts))
+#else
+            for (const QString &s: std::as_const(c->scripts))
+#endif
+            {
+                if (s.trimmed().isEmpty())
+                    continue;
+                if (!script.isEmpty())
+                    script += "\n\n";
+                script += s.trimmed();
+            }
+        }
+
+        disconnect(localErrHandler);
+        if (wired)
+            setDbConnection(_connection.get());
+    }
+    catch (const QString &err)
+    {
+        if (wired)
+            setDbConnection(_connection.get());
+        QApplication::restoreOverrideCursor();
+        onError(err);
+        return;
+    }
+    QApplication::restoreOverrideCursor();
+
+    if (script.isEmpty())
+    {
+        note(tr("%1 not found").arg(qualifier.isEmpty() ? name : qualifier + '.' + name));
+        return;
+    }
+
+    MainWindow *mainWindow = qobject_cast<MainWindow*>(window());
+    if (mainWindow)
+        mainWindow->openScriptTab(script, name, _connection->clone());
 }
 
 /*
