@@ -1,10 +1,10 @@
 /*
-F4 source: resolve 1- or 2-part name of the object under cursor.
+F3 source: resolve 1- or 2-part name of the object under cursor.
 Caller substitutes raw (unquoted, case folded) identifiers:
-	$f4.qualifier$ - the word to the left of the one under cursor ('NULL' if absent),
-	$f4.name$      - the word under cursor.
+	$f3.qualifier$ - the word to the left of the one under cursor ('NULL' if absent),
+	$f3.name$      - the word under cursor.
 Names longer than 2 parts are clamped by caller: being pressed on the 3rd part
-(sch.tbl.col) f4 scripts sch.tbl, so the left neighbour is the only context needed.
+(sch.tbl.col) f3 scripts sch.tbl, so the left neighbour is the only context needed.
 Every row is a candidate to script: "type" is the /content script to execute,
 the rest of columns are its $<type>.<name|id|tag>$, $schema.*$ and $table.*$ macroses.
 Rows are ordered by the schema position within search_path, so the most probable
@@ -27,7 +27,7 @@ scope as
 	-- schemas to search the name in: the qualifier only or every schema
 	select ns.*
 	from ns
-	where '$f4.qualifier$' = 'NULL' or ns.nspname = '$f4.qualifier$'
+	where '$f3.qualifier$' = 'NULL' or ns.nspname = '$f3.qualifier$'
 ),
 host as
 (
@@ -42,8 +42,8 @@ host as
 		ns.ord
 	from ns
 		join pg_catalog.pg_class c on ns.oid = c.relnamespace
-	where '$f4.qualifier$' != 'NULL' and
-		c.relname = '$f4.qualifier$' and
+	where '$f3.qualifier$' != 'NULL' and
+		c.relname = '$f3.qualifier$' and
 		c.relkind in ('r'::"char", 'p'::"char", 'f'::"char", 'v'::"char", 'm'::"char", 'c'::"char")
 ),
 obj as
@@ -60,7 +60,7 @@ obj as
 		null::oid table_id,
 		ns.ord
 	from ns
-	where '$f4.qualifier$' = 'NULL' and ns.nspname = '$f4.name$'
+	where '$f3.qualifier$' = 'NULL' and ns.nspname = '$f3.name$'
 	union all
 	--table, view, materialized view, foreign table, sequence, index
 	select
@@ -81,7 +81,7 @@ obj as
 		s.ord
 	from scope s
 		join pg_catalog.pg_class c on s.oid = c.relnamespace
-	where c.relname = '$f4.name$' and
+	where c.relname = '$f3.name$' and
 		c.relkind in ('r'::"char", 'p'::"char", 'f'::"char", 'v'::"char", 'm'::"char",
 			'S'::"char", 'i'::"char", 'I'::"char")
 	union all
@@ -96,7 +96,7 @@ obj as
 	from scope s
 		join pg_catalog.pg_type t on s.oid = t.typnamespace
 		left join pg_catalog.pg_class c on t.typrelid = c.oid
-	where t.typname = '$f4.name$' and
+	where t.typname = '$f3.name$' and
 		coalesce(c.relkind, 'c'::"char") = 'c'::"char" and -- not a table/view/etc rowtype
 		not exists (select 1 from pg_catalog.pg_type a where a.typarray = t.oid) -- not an array
 	union all
@@ -113,7 +113,7 @@ obj as
 		s.ord
 	from scope s
 		join pg_catalog.pg_proc p on s.oid = p.pronamespace
-	where p.proname = '$f4.name$'
+	where p.proname = '$f3.name$'
 	union all
 	--operator class
 	select
@@ -124,7 +124,7 @@ obj as
 		s.ord
 	from scope s
 		join pg_catalog.pg_opclass op on s.oid = op.opcnamespace
-	where op.opcname = '$f4.name$'
+	where op.opcname = '$f3.name$'
 	union all
 	--trigger
 	select
@@ -137,7 +137,7 @@ obj as
 	from scope s
 		join pg_catalog.pg_class c on s.oid = c.relnamespace
 		join pg_catalog.pg_trigger t on c.oid = t.tgrelid and not t.tgisinternal
-	where t.tgname = '$f4.name$'
+	where t.tgname = '$f3.name$'
 	union all
 	--constraint
 	select
@@ -150,7 +150,7 @@ obj as
 	from scope s
 		join pg_catalog.pg_constraint x on s.oid = x.connamespace
 		left join pg_catalog.pg_class c on nullif(x.conrelid, 0) = c.oid
-	where x.conname = '$f4.name$'
+	where x.conname = '$f3.name$'
 	union all
 	--rule
 	select
@@ -163,7 +163,7 @@ obj as
 	from scope s
 		join pg_catalog.pg_class c on s.oid = c.relnamespace
 		join pg_catalog.pg_rewrite r on c.oid = r.ev_class and r.rulename != '_RETURN'
-	where r.rulename = '$f4.name$'
+	where r.rulename = '$f3.name$'
 	union all
 	--<relation>.<column>
 	select
@@ -176,7 +176,7 @@ obj as
 	from host h
 		join pg_catalog.pg_attribute a on h.oid = a.attrelid
 	where h.relkind != 'c'::"char" and
-		a.attname = '$f4.name$' and
+		a.attname = '$f3.name$' and
 		a.attnum > 0 and not a.attisdropped
 	union all
 	--<composite type>.<field> (there is no per field script, so script the type)
@@ -191,7 +191,7 @@ obj as
 		join pg_catalog.pg_type t on h.oid = t.typrelid
 		join pg_catalog.pg_attribute a on h.oid = a.attrelid
 	where h.relkind = 'c'::"char" and
-		a.attname = '$f4.name$' and
+		a.attname = '$f3.name$' and
 		a.attnum > 0 and not a.attisdropped
 	union all
 	--extension (cluster level object, so a single part name only)
@@ -202,7 +202,7 @@ obj as
 		null, null, null,
 		null
 	from pg_catalog.pg_extension e
-	where '$f4.qualifier$' = 'NULL' and e.extname = '$f4.name$'
+	where '$f3.qualifier$' = 'NULL' and e.extname = '$f3.name$'
 	union all
 	--role (cluster level object, so a single part name only)
 	select
@@ -213,7 +213,7 @@ obj as
 		null
 	-- predefined pg_* roles are listed as well, just like the objects tree does
 	from pg_catalog.pg_roles r
-	where '$f4.qualifier$' = 'NULL' and r.rolname = '$f4.name$'
+	where '$f3.qualifier$' = 'NULL' and r.rolname = '$f3.name$'
 )
 select
 	"type",

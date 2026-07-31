@@ -1026,14 +1026,14 @@ void QueryWidget::onScriptObjectRequest()
         auto localErrHandler = connect(_connection.get(), &DbConnection::error, this, &QueryWidget::onError);
 
         auto candidates = Scripting::execute(
-                    _connection.get(), Scripting::Context::Root, "f4",
+                    _connection.get(), Scripting::Context::Root, "f3",
                     [&qualifier, &name](const QString &macro) -> QVariant
         {
             // the values are inlined into the query, so quotes must be escaped
-            if (macro == "f4.qualifier")
+            if (macro == "f3.qualifier")
                 return qualifier.isEmpty() ?
                             QVariant() : QString(qualifier).replace("'", "''");
-            if (macro == "f4.name")
+            if (macro == "f3.name")
                 return QString(name).replace("'", "''");
             return QVariant();
         });

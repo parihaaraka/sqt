@@ -12,7 +12,7 @@ begin
 		'CREATE DOMAIN ' || _obj_name || E' AS ' || pg_catalog.format_type(t.typbasetype, t.typtypmod) ||
 		case
 			-- do we have a simpler way to detect default collation oid?
-			when t.typcollation = 0 or pg_describe_object('pg_collation'::regclass::oid, t.typcollation, 0) ilike '%default' then ''
+			when t.typcollation = 0 or pg_describe_object('pg_collation'::regclass::oid, t.typcollation, 0) ilike '%default%' then ''
 			else E'\n\tCOLLATE ' || (pg_identify_object('pg_collation'::regclass::oid, t.typcollation, 0)).identity
 		end ||
 		coalesce(E'\n\tDEFAULT ' || t.typdefault, '') ||

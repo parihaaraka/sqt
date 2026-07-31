@@ -17,7 +17,7 @@ Standalone (outdated) [sqt for windows x64](https://drive.google.com/open?id=1pD
 * bookmarks (mark: `Ctrl+M`, previous: `Ctrl+,`, next: `Ctrl+.`, last: `Ctrl+L`);
 * uppercase (`Ctrl+U`), lowercase (`Ctrl+Shift+U`, `Ctrl+Win+U`)
 * code completion support (`Ctrl+Space`);
-* getting into an object script under the cursor (`F4`);
+* getting into an object script under the cursor (`F3`);
 * json viewer with highlighting and extracting json from it's nested text value (`Ctrl+J`);
 * totalling selected cells (`F6`);
 * customizable time charts to display [current](https://github.com/parihaaraka/sqt/blob/master/scripts/postgres/statistics.sql) or [recorded](https://github.com/parihaaraka/sqt/blob/master/scripts/postgres/recorded_statistics.sql) statistics;
