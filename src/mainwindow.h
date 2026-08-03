@@ -16,6 +16,7 @@ namespace Scripting {
 class CppConductor;
 }
 
+class QAction;
 class SqlSyntaxHighlighter;
 class QueryWidget;
 class TableModel;
@@ -77,6 +78,11 @@ private:
     TableModel *_tableModel;
     QueryWidget* currentQueryWidget();
     QueryWidget* _objectScript;
+    // tab under cursor while the tab bar context menu is up, -1 otherwise
+    int _menuTabIndex = -1;
+    // separator + per-file actions, shown only when the target tab has a file
+    QList<QAction*> _fileTabActions;
+    int targetTabIndex() const;
     bool closeTab(int index);
     bool ensureSaved(int index, bool ask_name = false, bool forceWarning = false);
     FindAndReplacePanel *_frPanel;

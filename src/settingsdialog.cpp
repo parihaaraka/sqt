@@ -16,6 +16,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
     ui->highlightCurrentLine->setChecked(SqtSettings::value("highlightCurrentLine", false).toBool());
     ui->tabsIndent->setChecked(SqtSettings::value("tabsIndent", true).toBool());
     ui->visualizeWhitespace->setChecked(SqtSettings::value("visualizeWhitespace", false).toBool());
+    ui->lowercaseKeywords->setChecked(SqtSettings::value("lowercaseKeywords", false).toBool());
     ui->f1url->setText(SqtSettings::value("f1url").toString());
     ui->shiftF1url->setText(SqtSettings::value("shiftF1url").toString());
 }
@@ -34,6 +35,7 @@ void SettingsDialog::on_okBtn_clicked()
     SqtSettings::setValue("highlightCurrentLine", ui->highlightCurrentLine->isChecked());
     SqtSettings::setValue("tabsIndent", ui->tabsIndent->isChecked());
     SqtSettings::setValue("visualizeWhitespace", ui->visualizeWhitespace->isChecked());
+    SqtSettings::setValue("lowercaseKeywords", ui->lowercaseKeywords->isChecked());
     SqtSettings::setValue("f1url", ui->f1url->text());
     SqtSettings::setValue("shiftF1url", ui->shiftF1url->text());
     SqtSettings::setValue("settingsDialogGeometry", saveGeometry());

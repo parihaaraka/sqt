@@ -15,11 +15,16 @@
 #include <QCloseEvent>
 #include <QTextEdit>
 #include <QToolButton>
+#include <QTabBar>
+#include <QMenu>
+#include <QClipboard>
+#include <QFileInfo>
 #include "tablemodel.h"
 #include "dbtreeitemdelegate.h"
 #include "findandreplacepanel.h"
 #include <memory>
 #include "scripting.h"
+#include "sqllexer.h"
 #include "codeeditor.h"
 #include <QScrollBar>
 #include "settingsdialog.h"
@@ -192,19 +197,64 @@ MainWindow::MainWindow(QWidget *parent) :
     });
     ui->tabWidget->tabBar()->addAction(tabWidgetAction);
 
-    // switch to previous tab page
+    // close tab page
     tabWidgetAction = new QAction(tr("close page"), ui->tabWidget);
     tabWidgetAction->setShortcut(QKeySequence::Close);
     connect(tabWidgetAction, &QAction::triggered, [this]()
     {
-        if (ui->tabWidget->currentIndex() >= 0)
-            closeTab(ui->tabWidget->currentIndex());
+        int index = targetTabIndex();
+        if (index >= 0)
+            closeTab(index);
         QWidget *w = ui->tabWidget->currentWidget();
         if (w)
             w->setFocus();
     });
     ui->tabWidget->tabBar()->addAction(tabWidgetAction);
-    ui->tabWidget->tabBar()->setContextMenuPolicy(Qt::ActionsContextMenu);
+
+    // file-related actions of the tab bar context menu
+    // (hidden along with the separator unless the target tab has a file)
+    QAction *tabFilesSeparator = new QAction(ui->tabWidget);
+    tabFilesSeparator->setSeparator(true);
+    ui->tabWidget->tabBar()->addAction(tabFilesSeparator);
+    _fileTabActions.append(tabFilesSeparator);
+
+    // every such action just copies some part of the file name to the clipboard
+    auto addFileNameAction = [this](const QString &title, QString (QFileInfo::*extract)() const)
+    {
+        QAction *action = new QAction(title, ui->tabWidget);
+        connect(action, &QAction::triggered, [this, extract]()
+        {
+            QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(targetTabIndex()));
+            if (!w || w->fileName().isEmpty())
+                return;
+            QFileInfo fi(w->fileName());
+            QApplication::clipboard()->setText((fi.*extract)());
+        });
+        ui->tabWidget->tabBar()->addAction(action);
+        _fileTabActions.append(action);
+    };
+    addFileNameAction(tr("copy file name"), &QFileInfo::fileName);
+    addFileNameAction(tr("copy absolute path"), &QFileInfo::absoluteFilePath);
+
+    // Take the context menu over to let the actions know the tab under cursor.
+    // QMenu::exec() is modal, so an action is triggered within it - the recorded
+    // index is valid exactly while the menu is up.
+    QTabBar *tabBar = ui->tabWidget->tabBar();
+    tabBar->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(tabBar, &QWidget::customContextMenuRequested, [this, tabBar](const QPoint &pos)
+    {
+        int index = tabBar->tabAt(pos);
+        if (index < 0) // beyond the tabs
+            return;
+        _menuTabIndex = index;
+        QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(index));
+        bool hasFileName = (w && !w->fileName().isEmpty());
+        for (QAction *action: _fileTabActions)
+            action->setVisible(hasFileName);
+        QMenu::exec(tabBar->actions(), tabBar->mapToGlobal(pos));
+        _menuTabIndex = -1;
+    });
+    ui->tabWidget->setMovable(true);
 
     // corner buttons
     QWidget *cornerWidget = new QWidget();
@@ -547,6 +597,8 @@ void MainWindow::on_actionRefresh_triggered()
         Scripting::refresh(cn, Scripting::Context::Autocomplete);
 
         Scripting::refresh(cn, Scripting::Context::Tree);
+        // hl.conf may have been edited as well
+        SqlLexer::clearCache();
     }
     catch (const QString &err)
     {
@@ -842,6 +894,13 @@ QueryWidget *MainWindow::currentQueryWidget()
         return nullptr;
     QWidget *w = ui->tabWidget->widget(ui->tabWidget->currentIndex());
     return qobject_cast<QueryWidget*>(w);
+}
+
+// The tab a tab bar action must be applied to: the one under cursor when
+// invoked through the context menu, the current one when invoked by shortcut.
+int MainWindow::targetTabIndex() const
+{
+    return _menuTabIndex >= 0 ? _menuTabIndex : ui->tabWidget->currentIndex();
 }
 
 void MainWindow::on_actionSave_triggered()

@@ -114,11 +114,18 @@ from generate_series(now(), now() + '20min'::interval, '1sec'::interval) as s(ts
 ```
 
 ## Build instruction
-You may build the project by means of QtCreator or execute this sequence of commands from the project's root directory:
+The project is built with CMake (3.16+, C++17). You may open `CMakeLists.txt` in QtCreator, or execute the following from the project's root directory:
 ```
-mkdir build && cd build && qmake ../src/sqt.pro && make
+cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build -j
 ```
-Qt toolchain must be installed and be available via PATH.
+This produces `build/sqt` with `decor` and `scripts` placed next to it.
+
+Qt toolchain must be installed and be available via PATH (it is located via `qmake`, so make sure the intended Qt version comes first). Besides Qt, the build requires libpq (PostgreSQL client library), an ODBC driver manager (unixODBC) and OpenSSL. On Debian/Ubuntu:
+```
+sudo apt install build-essential cmake libpq-dev unixodbc-dev libssl-dev
+```
+On Windows the dependencies are fetched via vcpkg automatically.
 
 ## Todo
 * Improve code completion, prepare scripts to fetch metadata from non-postgresql data sources;
