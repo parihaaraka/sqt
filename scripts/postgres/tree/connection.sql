@@ -54,6 +54,17 @@ select
       false,
       null,
       '06'
+/* if version 140000 */
+union all
+select
+      'dependent_locks',
+      null,
+      '<i>Dependent locks</i>',
+      null,
+      false,
+      null,
+      '07'
+/* endif version */
 union all
 select
       'test_html',

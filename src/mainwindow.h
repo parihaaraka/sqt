@@ -83,6 +83,11 @@ private:
     // separator + per-file actions, shown only when the target tab has a file
     QList<QAction*> _fileTabActions;
     int targetTabIndex() const;
+    // tab captions: composed in a single place, so that the tabs having no file
+    // behind them do not lose their names on the first edit
+    void updateTabCaption(QueryWidget *w);
+    QString autoTabTitle(const QueryWidget *w) const;
+    void retitleOnDatabaseChange(QueryWidget *w);
     bool closeTab(int index);
     bool ensureSaved(int index, bool ask_name = false, bool forceWarning = false);
     FindAndReplacePanel *_frPanel;

@@ -78,6 +78,11 @@ MainWindow::MainWindow(QWidget *parent) :
 
     _objectScript = new QueryWidget(this);
     _objectScript->setReadOnly(true);
+    // The preview pane has no messages pane of its own (it never runs a query),
+    // so everything it has to say goes to the log - unprefixed, as it is not a
+    // tab.
+    connect(_objectScript, &QueryWidget::message, this, &MainWindow::onMessage);
+    connect(_objectScript, &QueryWidget::error, this, &MainWindow::onError);
     ui->contentSplitter->insertWidget(0, _objectScript);
     ui->objectsView->setContextMenuPolicy(Qt::CustomContextMenu);
     ui->objectsView->setItemDelegateForColumn(0, new DbTreeItemDelegate(this));
@@ -292,6 +297,7 @@ MainWindow::MainWindow(QWidget *parent) :
                     dbBtnMenu->addAction(srcIndex.data().toString(), [this, qw, connection](){
                         DbConnection *cn = connection->clone();
                         qw->setDbConnection(cn);
+                        retitleOnDatabaseChange(qw);
                         refreshContextInfo();
                     });
                 }
@@ -305,9 +311,10 @@ MainWindow::MainWindow(QWidget *parent) :
                         if (currentConnection->database() != databases[i])
                         {
                             QAction *a = new QAction(databases[i], dbBtnMenu);
-                            connect(a, &QAction::triggered, [this, a, currentConnection](){
+                            connect(a, &QAction::triggered, [this, a, qw, currentConnection](){
                                 currentConnection->setDatabase(a->text());
                                 currentConnection->open();
+                                retitleOnDatabaseChange(qw);
                                 refreshContextInfo();
                             });
                             actions.append(a);
@@ -328,6 +335,7 @@ MainWindow::MainWindow(QWidget *parent) :
                             DbConnection *cn = connection->clone();
                             cn->setDatabase(db);
                             qw->setDbConnection(cn);
+                            retitleOnDatabaseChange(qw);
                             refreshContextInfo();
                         });
                 }
@@ -733,7 +741,9 @@ void MainWindow::on_actionExecute_query_triggered()
                 return;
             }
         }
-        con->executeAsync(query);
+        // through the widget, so that the connection's output is recognized as
+        // this query's result and lands in the tab's messages pane
+        q->execute(query);
     }
 }
 
@@ -814,6 +824,9 @@ void MainWindow::on_actionNew_triggered()
 
     int ind = ui->tabWidget->addTab(w, QString());
     ui->tabWidget->setCurrentIndex(ind);
+    // a manually created tab has no name of its own to show
+    w->setTitle(autoTabTitle(w), true);
+    updateTabCaption(w);
 
     if (sender() != ui->actionNew && _objectsModel->data(srcIndex, DbObject::ContentTypeRole).toString() == "script")
         w->setPlainText(_objectsModel->data(srcIndex, DbObject::ContentRole).toString());
@@ -822,6 +835,9 @@ void MainWindow::on_actionNew_triggered()
 
     w->highlight();
     connect(w, &QueryWidget::sqlChanged, this, &MainWindow::sqlChanged);
+    // anything not produced by a query run belongs to the log, not to the tab
+    connect(w, &QueryWidget::message, this, &MainWindow::onMessage);
+    connect(w, &QueryWidget::error, this, &MainWindow::onError);
     w->setReadOnly(false);
 
     if (ui->contentSplitter->isVisible())
@@ -834,24 +850,53 @@ void MainWindow::on_tabWidget_tabCloseRequested(int index)
     closeTab(index);
 }
 
-void MainWindow::sqlChanged()
+// The only place a tab caption is composed. Deriving it from the file name here
+// used to wipe the captions of the tabs having no file behind them (created
+// manually or by F4) as soon as they were edited.
+void MainWindow::updateTabCaption(QueryWidget *w)
 {
-    QueryWidget *w = qobject_cast<QueryWidget*>(sender());
     int ind = ui->tabWidget->indexOf(w);
     if (ind == -1)
         return;
-    QString caption = ui->tabWidget->tabText(ind);
-    QString fn = QFileInfo(w->fileName()).fileName();
-    bool isModified = w->isModified();
-    bool captionMarked = caption.endsWith("*");
-    if (!captionMarked && isModified)
+    ui->tabWidget->setTabText(ind, w->title() + (w->isModified() ? " *" : ""));
+}
+
+// A name for a tab having neither a file nor an object behind it. The database
+// tells the tabs apart at a glance, the number keeps the caption unique.
+QString MainWindow::autoTabTitle(const QueryWidget *w) const
+{
+    DbConnection *cn = const_cast<QueryWidget*>(w)->dbConnection();
+    QString db = (cn ? cn->database() : QString());
+    if (db.isEmpty())
+        db = tr("query");
+
+    for (int n = 1; ; ++n)
     {
-        ui->tabWidget->setTabText(ind, fn + " *");
+        QString candidate = db + ' ' + QString::number(n);
+        bool taken = false;
+        for (int i = 0; i < ui->tabWidget->count() && !taken; ++i)
+        {
+            QueryWidget *other = qobject_cast<QueryWidget*>(ui->tabWidget->widget(i));
+            taken = (other && other != w && other->title() == candidate);
+        }
+        if (!taken)
+            return candidate;
     }
-    else if (!isModified && captionMarked)
-    {
-        ui->tabWidget->setTabText(ind, fn);
-    }
+}
+
+// An autogenerated caption names the database, so it must follow a switch to
+// another one. A file or object name is the tab's own and is left alone.
+void MainWindow::retitleOnDatabaseChange(QueryWidget *w)
+{
+    if (!w || !w->titleIsAuto())
+        return;
+    w->setTitle(autoTabTitle(w), true);
+    updateTabCaption(w);
+}
+
+void MainWindow::sqlChanged()
+{
+    updateTabCaption(qobject_cast<QueryWidget*>(sender()));
 }
 
 void MainWindow::on_actionOpen_triggered()
@@ -871,14 +916,39 @@ void MainWindow::on_actionOpen_triggered()
 
 QueryWidget *MainWindow::openScriptTab(const QString &text, const QString &title, DbConnection *connection)
 {
+    // An untouched tab holding this very script is the tab the user is asking
+    // for, so reuse it instead of stacking up duplicates. Comparing the text
+    // rather than the object name covers both a redefined object and the same
+    // name in another database: either way the script differs and deserves a
+    // tab of its own.
+    for (int i = 0; i < ui->tabWidget->count(); ++i)
+    {
+        QueryWidget *existing = qobject_cast<QueryWidget*>(ui->tabWidget->widget(i));
+        if (existing && existing->isGeneratedScript() &&
+            existing->toPlainText().trimmed() == text.trimmed())
+        {
+            ui->tabWidget->setCurrentIndex(i);
+            if (ui->contentSplitter->isVisible())
+                ui->actionQuery_editor->activate(QAction::Trigger);
+            existing->setFocus();
+            return existing;
+        }
+    }
+
     QueryWidget *w = (connection ?
                           new QueryWidget(connection, ui->tabWidget) :
                           new QueryWidget(ui->tabWidget));
     int ind = ui->tabWidget->addTab(w, title);
     ui->tabWidget->setCurrentIndex(ind);
+    // the object name is the tab's own, so it must survive editing
+    w->setTitle(title);
+    w->setGeneratedScript(true);
     w->setPlainText(text);
     w->highlight();
     connect(w, &QueryWidget::sqlChanged, this, &MainWindow::sqlChanged);
+    // anything not produced by a query run belongs to the log, not to the tab
+    connect(w, &QueryWidget::message, this, &MainWindow::onMessage);
+    connect(w, &QueryWidget::error, this, &MainWindow::onError);
     w->setReadOnly(false);
     w->setModified(false);
 
@@ -955,7 +1025,8 @@ bool MainWindow::ensureSaved(int index, bool ask_name, bool forceWarning)
         if (!w->saveFile(fn, encoding))
             return false;
         w->setModified(false);
-        ui->tabWidget->setTabText(index, QFileInfo(fn).fileName());
+        w->setTitle(QFileInfo(fn).fileName());
+        updateTabCaption(w);
         ui->tabWidget->setTabToolTip(index, fn);
     }
     return true;
@@ -1427,7 +1498,8 @@ void MainWindow::openFile(const QString &fileName, const QString &encoding)
         ScopeGuard<void(*)()> cursorGuard(QApplication::restoreOverrideCursor);
         if (w->openFile(fileName, encoding))
         {
-            ui->tabWidget->setTabText(ui->tabWidget->currentIndex(), QFileInfo(fileName).fileName());
+            w->setTitle(QFileInfo(fileName).fileName());
+            updateTabCaption(w);
             ui->tabWidget->setTabToolTip(ui->tabWidget->currentIndex(), fileName);
         }
         _fileDialog.selectFile(fileName);

@@ -733,10 +733,30 @@ void PgConnection::fetch() noexcept
             // disconnection detects here
             if (PQstatus(_conn) == CONNECTION_BAD)
             {
+                QString err = PQerrorMessage(_conn);
                 _copy_context.clear();
                 watchSocket(SocketWatchMode::None);
                 _async_stage = async_stage::none;
                 setQueryState(QueryState::Inactive);
+
+                // A link dropped while nobody was waiting for anything is not a
+                // result of anything the user did, so it is reported as a plain
+                // notice rather than as a query failure (the receiver decides
+                // where to put it - an idle editor sends it to the log).
+                // close() also releases the socket notifier, which would
+                // otherwise keep waking us up on the dead descriptor;
+                // execute()/executeAsync() reconnect and retry, so the link is
+                // usually restored unnoticed on the next query.
+                if (is_notification)
+                {
+                    lk.unlock();
+                    close();
+                    emit error(tr("connection lost while idle, "
+                                  "it will be restored on the next query"));
+                    return;
+                }
+                emit error(err);
+                break;
             }
             emit error(PQerrorMessage(_conn));
             break;  // incorrect processing?

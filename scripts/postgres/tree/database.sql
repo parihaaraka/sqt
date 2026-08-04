@@ -25,3 +25,11 @@ select
 	'layers-small.png' icon,
 	'1' || prefix sort1 --
 from s
+union all
+select
+	'db_locks' node_type,
+	'<i>Locks</i>' ui_name,
+	'locks' "name",
+	null id,
+	null icon,
+	'2' sort1

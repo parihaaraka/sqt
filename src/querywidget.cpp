@@ -204,7 +204,14 @@ void QueryWidget::setDbConnection(DbConnection *connection)
         connect(connection, &DbConnection::queryStateChanged, this, [this](QueryState queryState) {
             // actual query execution time before post-processing
             if (queryState == QueryState::Inactive)
+            {
                 onMessage(tr("%1: done in %2").arg(QTime::currentTime().toString("HH:mm:ss"), _connection->elapsed()));
+                // The last word of the run, so the flag goes down after it and
+                // not before: everything the connection has emitted up to this
+                // point is the query's own output. Queued deliveries from one
+                // sender to one receiver keep their order, hence the guarantee.
+                _queryActive = false;
+            }
 
             if (MainWindow *mainWindow = qobject_cast<MainWindow*>(window()))
                 mainWindow->queryStateChanged(this, queryState);
@@ -490,10 +497,20 @@ void QueryWidget::executeOnTimer(const QString &query, int interval)
     _timer->disconnect();
     connect(_timer, &QTimer::timeout, [this, query] {
         if (_connection->queryState() == QueryState::Inactive)
-            _connection->executeAsync(query);
+            execute(query);
     });
-    _connection->executeAsync(query);
+    execute(query);
     _timer->start(interval);
+}
+
+void QueryWidget::execute(const QString &query)
+{
+    if (!_connection)
+        return;
+    // Raised before the connection can report anything at all, including a
+    // synchronous refusal to start.
+    _queryActive = true;
+    _connection->executeAsync(query);
 }
 
 void QueryWidget::log(const QString &text, QColor color)
@@ -575,8 +592,26 @@ QCompleter* QueryWidget::completer()
     return &c;
 }
 
+// The shared log needs to know which tab is talking; the tab's own messages
+// pane obviously does not, so the prefix is added here and nowhere else.
+QString QueryWidget::logMessage(const QString &text) const
+{
+    return _title.isEmpty() ?
+                text.trimmed() :
+                QString("`%1` tab:\n%2").arg(_title, text.trimmed());
+}
+
 void QueryWidget::onMessage(const QString &text)
 {
+    // The messages pane holds the result of a query run and nothing else.
+    // Anything the connection says on its own (a link established or lost, a
+    // notification received while idle) goes to the log.
+    if (!_queryActive)
+    {
+        emit message(logMessage(text));
+        return;
+    }
+
     if (!isTimerActive())
     {
         const QPalette defaultPalette;
@@ -586,6 +621,15 @@ void QueryWidget::onMessage(const QString &text)
 
 void QueryWidget::onError(const QString &text)
 {
+    // Same rule as above: a failure of the running query is its result and
+    // stays in the pane; a failure of anything else (the connection itself,
+    // a file, an F4 request) is not, and would be read as the result of the
+    // query still displayed there.
+    if (!_queryActive)
+    {
+        emit error(logMessage(text));
+        return;
+    }
     log(text, QColor::fromString("#E0FF4040"));
 }
 
@@ -841,20 +885,23 @@ void QueryWidget::onCompleterRequest()
             return QVariant();
         };
 
-        if (_connection->queryState() == QueryState::Inactive)
+        // The editor's own connection is preferred, as only it knows the current
+        // search_path. A clone is a separate session and does not, so it is used
+        // only when the original is unusable: busy, or inside the user's
+        // transaction, which the service queries have no business entering.
+        if (_connection->queryState() == QueryState::Inactive &&
+            !isTimerActive() &&
+            _connection->transactionStatus().isEmpty())
         {
-            // disconnect all slots
-            disconnect(_connection.get(), nullptr, nullptr, nullptr);
-            auto localErrHandler = connect(_connection.get(), &DbConnection::error, this, &QueryWidget::onError);
+            // The connection may be shared with other widgets, so its slots must
+            // stay in place - just keep the service queries silent. Errors are
+            // thrown by Scripting::execute() rather than signalled, so blocking
+            // the signals hides nothing that matters here.
+            QSignalBlocker blocker(_connection.get());
             c = Scripting::execute(_connection.get(), Scripting::Context::Autocomplete, objectType, env);
-            disconnect(localErrHandler);
-            setDbConnection(_connection.get());
         }
         else
         {
-            // this option does not use current search_path, so you'd better avoid using
-            // autocompletion while query is being executed
-
             std::unique_ptr<DbConnection> tmp_cn(_connection->clone());
             c = Scripting::execute(tmp_cn.get(), Scripting::Context::Autocomplete, objectType, env);
         }
@@ -996,12 +1043,6 @@ void QueryWidget::onScriptObjectRequest()
     QString name = fold(parts[cur]);
     QString qualifier = (parts[cur].dotted ? fold(parts[cur - 1]) : QString());
 
-    // The connection may be shared with other widgets (the object tree lends its
-    // own connection to the preview pane via highlight()), so we must not touch
-    // anybody else's slots nor the resultsets they may still be fetching into.
-    // Widgets created without a connection have no results pane and have never
-    // been subscribed to fetched() - keep them that way.
-    const bool wired = (findChild<QTabWidget*>("results") != nullptr);
     // Transient notification: neither a modal popup nor a permanent record in the
     // messages pane (the preview pane has no messages pane at all anyway).
     auto note = [this](const QString &text) {
@@ -1017,16 +1058,41 @@ void QueryWidget::onScriptObjectRequest()
         log(text, QPalette().color(QPalette::Text));
     };
 
+    // The editor's own connection is preferred: same session, hence the same
+    // search_path and visibility of the objects created within its uncommitted
+    // transaction. It is unusable while busy, and running the service queries
+    // inside the user's transaction would be an uninvited side effect, so in
+    // those cases a private clone (a separate session) is used instead.
+    DbConnection *cn = _connection.get();
+    std::unique_ptr<DbConnection> tmpConnection;
+    if (_connection->queryState() != QueryState::Inactive ||
+        isTimerActive() ||
+        !_connection->transactionStatus().isEmpty())
+    {
+        tmpConnection.reset(_connection->clone());
+        if (!tmpConnection->open())
+        {
+            note(tr("unable to open a service connection to script %1").
+                 arg(qualifier.isEmpty() ? name : qualifier + '.' + name));
+            return;
+        }
+        cn = tmpConnection.get();
+    }
+
     QApplication::setOverrideCursor(Qt::WaitCursor);
     QString script;
     try
     {
-        // detach this widget only, to keep the resultsets of the service queries
-        disconnect(_connection.get(), nullptr, this, nullptr);
-        auto localErrHandler = connect(_connection.get(), &DbConnection::error, this, &QueryWidget::onError);
+        // The connection may be shared with other widgets (the object tree lends
+        // its own connection to the preview pane via highlight()), so its slots
+        // must stay in place. Blocking the signals keeps the service queries out
+        // of everybody's messages pane without unwiring anything, and restores
+        // itself on every exit path, exceptions included. Scripting::execute()
+        // reports failures by throwing, so no error is lost here.
+        QSignalBlocker blocker(cn);
 
         auto candidates = Scripting::execute(
-                    _connection.get(), Scripting::Context::Root, "f4",
+                    cn, Scripting::Context::Root, "f4",
                     [&qualifier, &name](const QString &macro) -> QVariant
         {
             // the values are inlined into the query, so quotes must be escaped
@@ -1044,7 +1110,7 @@ void QueryWidget::onScriptObjectRequest()
         {
             QString type = objects->value(r, "type").toString();
             auto c = Scripting::execute(
-                        _connection.get(), Scripting::Context::Content, type,
+                        cn, Scripting::Context::Content, type,
                         [objects, r, &type](const QString &macro) -> QVariant
             {
                 // Resultset columns are flat ("schema_name"), while macroses are
@@ -1079,17 +1145,14 @@ void QueryWidget::onScriptObjectRequest()
                 script += s.trimmed();
             }
         }
-
-        disconnect(localErrHandler);
-        if (wired)
-            setDbConnection(_connection.get());
     }
     catch (const QString &err)
     {
-        if (wired)
-            setDbConnection(_connection.get());
         QApplication::restoreOverrideCursor();
-        onError(err);
+        // the failure belongs to the F4 request, not to the user's script, so it
+        // must name the object it was about
+        onError(tr("unable to script %1: %2").
+                arg(qualifier.isEmpty() ? name : qualifier + '.' + name, err));
         return;
     }
     QApplication::restoreOverrideCursor();
