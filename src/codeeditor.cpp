@@ -8,9 +8,12 @@
 #include <QDesktopServices>
 #include <QCompleter>
 #include <QAbstractItemView>
+#include <QApplication>
+#include <QMouseEvent>
 #include "settings.h"
 #include "styling.h"
 #include <QDebug>
+#include <qclipboard.h>
 
 #define RIGHT_MARGIN 2
 #define ICON_PLACE_WIDTH 13
@@ -48,6 +51,15 @@ CodeEditor::CodeEditor(QWidget *parent) : QPlainTextEdit(parent)
     _hlTimer->setInterval(20);
     _hlTimer->setSingleShot(true);
     connect(_hlTimer, &QTimer::timeout, this, &CodeEditor::onHlTimerTimeout);
+
+    // blinking caret for every cursor beyond the main one - QPlainTextEdit
+    // only ever draws its own single native cursor, so extra carets are
+    // painted by us in CodeEditor::paintEvent and need their own blink timer
+    _caretBlinkTimer = new QTimer(this);
+    int flash = QApplication::cursorFlashTime();
+    _caretBlinkTimer->setInterval(flash > 0 ? flash / 2 : 500);
+    connect(_caretBlinkTimer, &QTimer::timeout, this, &CodeEditor::onCaretBlink);
+
     connect(this, &CodeEditor::blockCountChanged, this, &CodeEditor::updateLeftSideBarWidth);
     connect(this, &CodeEditor::updateRequest, this, &CodeEditor::updateLeftSideBar);
     connect(this, &CodeEditor::cursorPositionChanged, [this]() {
@@ -56,16 +68,18 @@ CodeEditor::CodeEditor(QWidget *parent) : QPlainTextEdit(parent)
         // remove old line indicator
         if (!selections.isEmpty() && selections.back().format.property(QTextFormat::FullWidthSelection).toBool())
             selections.pop_back();
-        // add new line indicator
-        selections += currentLineSelection();
-        setExtraSelections(selections);
+        // add new line indicator (+ multi-cursor highlights)
+        setExtraSelections(selections + baseExtraSelections());
         _hlTimer->start();
     });
     connect(this, &CodeEditor::textChanged, [this]() {
-        setExtraSelections(currentLineSelection());
+        setExtraSelections(baseExtraSelections());
         _hlTimer->start();
     });
     connect(this, &CodeEditor::selectionChanged, _hlTimer, static_cast<void(QTimer::*)(void)>(&QTimer::start));
+
+    _multiCursor.setCursors(textCursor());
+    _nativeCursorWidth = cursorWidth(); // remember it before we ever touch it via setCursorWidth(0)
 
     updateLeftSideBarWidth();
     installEventFilter(this);
@@ -180,6 +194,651 @@ void CodeEditor::resizeEvent(QResizeEvent *event)
     _leftSideBar->setGeometry(QRect(cr.left(), cr.top(), leftSideBarWidth(), cr.height()));
 }
 
+// ---------------------------------------------------------------------
+// Multi-cursor plumbing
+// ---------------------------------------------------------------------
+
+void CodeEditor::syncFromNativeCursor()
+{
+    // Something moved/edited via QPlainTextEdit's own machinery (a plain
+    // click, or any key we don't give special multi-cursor treatment to,
+    // e.g. Ctrl+A/C/V/X/Z/Y) - that only ever touches the single native
+    // cursor, so we drop back to single-cursor mode to match reality.
+    _multiCursor.setCursors(textCursor());
+    _caretBlinkTimer->stop();
+    _caretBlinkVisible = true;
+    setCursorWidth(_nativeCursorWidth);
+    // Back to a single, natively-driven cursor: hand overwrite mode back
+    // to Qt so it resumes drawing/blinking its own block caret correctly.
+    setOverwriteMode(_overwriteMode);
+    viewport()->update(); // clear any extra carets we painted ourselves
+}
+
+void CodeEditor::syncToNativeCursor()
+{
+    setTextCursor(_multiCursor.mainCursor());
+    if (_multiCursor.isMultiple())
+    {
+        // Hide Qt's own blinking caret and draw every cursor - including
+        // the main one - ourselves in paintEvent(), all off the same
+        // timer/flag. Otherwise the native caret keeps its own blink
+        // cycle (reset on every setTextCursor call) and drifts out of
+        // phase with the carets we paint for the other cursors.
+        setCursorWidth(0);
+        // Qt's overwrite caret ignores cursorWidth(0) and draws itself
+        // anyway, on its own blink cycle - so with several cursors, take
+        // overwrite fully into our own hands and keep Qt's flag off.
+        setOverwriteMode(false);
+        if (!_caretBlinkTimer->isActive())
+            _caretBlinkTimer->start();
+    }
+    else
+    {
+        setCursorWidth(_nativeCursorWidth);
+        setOverwriteMode(_overwriteMode);
+        _caretBlinkTimer->stop();
+        _caretBlinkVisible = true;
+    }
+    viewport()->update();
+}
+
+void CodeEditor::collapseToSingleCursor()
+{
+    if (!_multiCursor.isMultiple())
+        return;
+    QTextCursor c = _multiCursor.mainCursor();
+    c.clearSelection();
+    _multiCursor.setCursors(c);
+    setTextCursor(c);
+    setCursorWidth(_nativeCursorWidth);
+    setOverwriteMode(_overwriteMode);
+    _caretBlinkTimer->stop();
+    _caretBlinkVisible = true;
+    viewport()->update();
+}
+
+void CodeEditor::onCaretBlink()
+{
+    _caretBlinkVisible = !_caretBlinkVisible;
+    viewport()->update();
+}
+
+bool CodeEditor::isNavigationKey(int key)
+{
+    switch (key)
+    {
+    case Qt::Key_Left:
+    case Qt::Key_Right:
+    case Qt::Key_Up:
+    case Qt::Key_Down:
+    case Qt::Key_Home:
+    case Qt::Key_End:
+    case Qt::Key_PageUp:
+    case Qt::Key_PageDown:
+        return true;
+    default:
+        return false;
+    }
+}
+
+QTextCursor::MoveOperation CodeEditor::moveOperationForKey(int key, bool ctrl)
+{
+    switch (key)
+    {
+    case Qt::Key_Left:  return ctrl ? QTextCursor::PreviousWord : QTextCursor::Left;
+    case Qt::Key_Right: return ctrl ? QTextCursor::NextWord     : QTextCursor::Right;
+    case Qt::Key_Up:    return QTextCursor::Up;
+    case Qt::Key_Down:  return QTextCursor::Down;
+    case Qt::Key_Home:  return ctrl ? QTextCursor::Start : QTextCursor::StartOfLine;
+    case Qt::Key_End:   return ctrl ? QTextCursor::End   : QTextCursor::EndOfLine;
+    default:            return QTextCursor::NoMove;
+    }
+}
+
+// Ctrl+D: select the word under the (main) cursor, or - if something is
+// already selected - add a new cursor on the next occurrence of that
+// selection further down in the document (wrapping around at the end).
+void CodeEditor::selectNextOccurrence()
+{
+    QTextCursor main = _multiCursor.mainCursor();
+    QTextCursor searchFrom = main;
+    QString needle;
+
+    if (main.hasSelection())
+    {
+        needle = main.selectedText();
+    }
+    else
+    {
+        QTextCursor word = main;
+        word.select(QTextCursor::WordUnderCursor);
+        if (word.selectedText().isEmpty())
+            return;
+
+        if (!_multiCursor.isMultiple())
+        {
+            // first Ctrl+D on a bare cursor just selects the word, like
+            // most editors do - the next press adds a cursor
+            _multiCursor.setCursors(word);
+            syncToNativeCursor();
+            return;
+        }
+
+        needle = word.selectedText();
+        searchFrom = word;
+    }
+
+    if (needle.isEmpty())
+        return;
+
+    QTextCursor found = document()->find(needle, searchFrom.selectionEnd(), QTextDocument::FindCaseSensitively);
+    if (found.isNull())
+        found = document()->find(needle, 0, QTextDocument::FindCaseSensitively);
+    if (found.isNull())
+        return;
+
+    _multiCursor.addCursor(found);
+    syncToNativeCursor();
+    ensureCursorVisible();
+}
+
+// Ctrl+Alt+Up / Ctrl+Alt+Down: add a cursor directly above/below the main
+// one, at the same visual column (clamped to the target line's length).
+void CodeEditor::addCursorOnAdjacentLine(bool below)
+{
+    QTextCursor main = _multiCursor.mainCursor();
+    QTextBlock block = main.block();
+    QTextBlock target = below ? block.next() : block.previous();
+    if (!target.isValid())
+        return;
+
+    QTextDocument *doc = main.document();
+    int indent = indentSize();
+
+    // A raw character count isn't the same thing as a screen column once
+    // tabs are involved: a tab is one character but several columns wide,
+    // and the two lines can be indented with a different number of tabs.
+    // Using the character count directly landed the new cursor at the
+    // wrong visual position (and even inside the indentation) whenever
+    // that differed - so expand tabs (see visualColumnAt()) and work in
+    // visual columns instead.
+    int wantedCol = visualColumnAt(doc, block.position(), main.position(), indent);
+    int targetLen = target.length() > 0 ? target.length() - 1 : 0; // exclude the block's paragraph separator
+
+    // Walk the target line, expanding tabs the same way, until its visual
+    // column reaches (or would pass) the wanted one.
+    int offset = 0;
+    int col = 0;
+    while (offset < targetLen && col < wantedCol)
+    {
+        col += (doc->characterAt(target.position() + offset) == '\t') ? indent - (col % indent) : 1;
+        ++offset;
+    }
+
+    QTextCursor c(target);
+    c.setPosition(target.position() + offset);
+
+    _multiCursor.addCursor(c);
+    syncToNativeCursor();
+    ensureCursorVisible();
+}
+
+// ---- per-cursor editing primitives -----------------------------------
+// Each of these takes the cursor it operates on by reference. They are
+// used exactly the same way whether there is one active cursor (called
+// once) or several (called once per cursor from a MultiTextCursor loop).
+
+int CodeEditor::indentSize() const
+{
+    return SqtSettings::value("indentSize", 3).toInt();
+}
+
+// Visual column of `pos` within its block, counting from `blockStart`,
+// expanding tabs to the next multiple of indentSize - shared by every
+// place that needs to reason about indentation in screen columns rather
+// than raw character counts (a tab is one character but several columns).
+int CodeEditor::visualColumnAt(QTextDocument *doc, int blockStart, int pos, int indentSize)
+{
+    int col = 0;
+    for (int p = blockStart; p < pos; ++p)
+        col += (doc->characterAt(p) == '\t') ? indentSize - (col % indentSize) : 1;
+    return col;
+}
+
+void CodeEditor::applySingleCursorEdit(QTextCursor &c)
+{
+    setTextCursor(c);
+    _multiCursor.setCursors(c);
+    _multiUndoAvailable = false;
+    _multiRedoAvailable = false;
+}
+
+bool CodeEditor::applySmartBackspace(QTextCursor &c)
+{
+    if (c.hasSelection())
+        return false;
+
+    QTextDocument *doc = c.document();
+    int indent = indentSize();
+    int pos = c.position();
+    int blockStart = c.block().position();
+
+    int col = visualColumnAt(doc, blockStart, pos, indent);
+
+    int prevBoundary;
+    if (col % indent == 0 && col > 0)
+        prevBoundary = col - indent;
+    else
+        prevBoundary = (col / indent) * indent;
+
+    int toRemove = col - prevBoundary;
+    if (toRemove == 0)
+        return false;
+
+    int spacesBefore = 0;
+    QTextCursor back(c);
+    back.setPosition(pos);
+    while (back.position() > blockStart)
+    {
+        back.movePosition(QTextCursor::PreviousCharacter);
+        QChar ch = doc->characterAt(back.position());
+        if (ch == ' ')
+            spacesBefore++;
+        else
+            break;
+    }
+
+    if (spacesBefore >= toRemove)
+    {
+        // delete toRemove spaces before the cursor
+        c.setPosition(pos - toRemove);
+        c.setPosition(pos, QTextCursor::KeepAnchor);
+        c.removeSelectedText();
+        return true;
+    }
+
+    // lack of spaces - caller should fall back to a plain single-char delete
+    return false;
+}
+
+void CodeEditor::applyReturnWithIndent(QTextCursor &c)
+{
+    QTextDocument *doc = c.document();
+
+    // previous indentation
+    c.removeSelectedText();
+    QRegularExpression indentRegex("(^\\s*)(?=[^\\s\\r\\n]+)");
+    QTextCursor prevC = doc->find(indentRegex, c, QTextDocument::FindBackward);
+
+    if (!prevC.isNull())
+    {
+        // all leading characters are \s => shift start search point up
+        if (prevC.selectionEnd() >= c.position())
+        {
+            QTextCursor upper(doc);
+            upper.setPosition(prevC.selectionStart());
+            prevC = doc->find(indentRegex, upper, QTextDocument::FindBackward);
+        }
+
+        if (!prevC.isNull())
+        {
+            // remove subsequent \s
+            QTextCursor nextC = doc->find(QRegularExpression("(\\s+)(?=\\S+)"), c);
+            if (nextC.selectionStart() == c.selectionStart())
+                nextC.removeSelectedText();
+        }
+    }
+
+    // insert indentation
+    c.insertText("\n" + prevC.selectedText());
+}
+
+void CodeEditor::applyHome(QTextCursor &c, bool keepAnchor)
+{
+    QTextDocument *doc = c.document();
+    int startOfText = c.block().position();
+    QTextCursor notSpace = doc->find(QRegularExpression("\\S"), startOfText);
+    if (!notSpace.isNull() && notSpace.block() == c.block() && notSpace.position() - 1 > startOfText)
+        startOfText = notSpace.position() - 1;
+    int nextPos = startOfText;
+    if (c.position() <= startOfText && c.position() > c.block().position())
+        nextPos = c.block().position();
+    c.setPosition(nextPos, keepAnchor ? QTextCursor::KeepAnchor : QTextCursor::MoveAnchor);
+}
+
+void CodeEditor::applyMultiLineIndent(QTextCursor &c, bool forward)
+{
+    int start = c.selectionStart();
+    int end = c.selectionEnd();
+    bool cursorToStart = (start == c.position());
+
+    c.movePosition(QTextCursor::StartOfBlock);
+    c.beginEditBlock();
+    bool firstPass = true;
+    int indentW = indentSize();
+
+    if (!forward) // Backtab
+    {
+        do
+        {
+            if (!firstPass)
+            {
+                if (!c.movePosition(QTextCursor::NextBlock))
+                    break;
+            }
+            else
+                firstPass = false;
+
+            if (c.position() >= end)
+                break;
+
+            int tab = indentW;
+            while (tab > 0)
+            {
+                QChar curChar = c.document()->characterAt(c.position());
+                if (QString(" \t").contains(curChar))
+                {
+                    int pos = c.position();
+                    c.setPosition(pos + 1, QTextCursor::KeepAnchor);
+                    c.removeSelectedText();
+
+                    if (pos < start)
+                        --start;
+                    if (pos < end)
+                        --end;
+
+                    tab -= (curChar == '\t' ? indentW : 1);
+                }
+                else
+                    break;
+            }
+        }
+        while (true);
+    }
+    else // Tab
+    {
+        QString indentStr = SqtSettings::value("tabsIndent", true).toBool()
+                         ? "\t"
+                         : QString(indentW, ' ');
+        int indentLen = indentStr.length();
+
+        do
+        {
+            if (!firstPass)
+            {
+                if (!c.movePosition(QTextCursor::NextBlock))
+                    break;
+            }
+            else
+                firstPass = false;
+
+            if (c.position() >= end)
+                break;
+
+            int pos = c.position();
+            c.insertText(indentStr);
+
+            if (pos <= start)
+                start += indentLen;
+            end += indentLen;
+        }
+        while (true);
+    }
+
+    c.endEditBlock();
+
+    if (cursorToStart)
+    {
+        c.setPosition(end);
+        c.setPosition(start < 0 ? 0 : start, QTextCursor::KeepAnchor);
+    }
+    else
+    {
+        c.setPosition(start < 0 ? 0 : start);
+        c.setPosition(end, QTextCursor::KeepAnchor);
+    }
+}
+
+void CodeEditor::applySingleLineTab(QTextCursor &c)
+{
+    int indent = indentSize();
+    bool useTabs = SqtSettings::value("tabsIndent", true).toBool();
+
+    if (c.hasSelection())
+        c.removeSelectedText();
+
+    QTextDocument *doc = c.document();
+    int pos = c.position();
+    int blockStart = c.block().position();
+
+    int col = visualColumnAt(doc, blockStart, pos, indent);
+
+    int targetCol = ((col / indent) + 1) * indent;
+    int spacesToAdd = targetCol - col;
+    if (spacesToAdd == 0)
+        spacesToAdd = indent;
+
+    QString insertText = useTabs ? "\t" : QString(spacesToAdd, ' ');
+    c.insertText(insertText);
+}
+
+void CodeEditor::applySingleLineBacktab(QTextCursor &c)
+{
+    int indent = indentSize();
+
+    bool hasSelection = c.hasSelection();
+    int selStart = c.selectionStart();
+    int selEnd = c.selectionEnd();
+    int cursorPos = c.position();
+
+    QTextDocument *doc = c.document();
+    int blockStart = c.block().position();
+
+    QVector<QChar> chars;
+    QVector<int> widths;
+    int totalWidth = 0;
+    QTextCursor scan(doc);
+    scan.setPosition(blockStart);
+    while (true)
+    {
+        QChar ch = doc->characterAt(scan.position());
+        if (ch == ' ')
+        {
+            chars.append(ch);
+            widths.append(1);
+            totalWidth += 1;
+            scan.movePosition(QTextCursor::NextCharacter);
+        }
+        else if (ch == '\t')
+        {
+            int w = indent - (totalWidth % indent);
+            chars.append(ch);
+            widths.append(w);
+            totalWidth += w;
+            scan.movePosition(QTextCursor::NextCharacter);
+        }
+        else
+            break;
+    }
+    int indentEndPos = scan.position();
+
+    if (totalWidth == 0)
+        return;
+
+    int newTotalWidth = ((totalWidth - 1) / indent) * indent;
+    if (newTotalWidth == totalWidth)
+        return;
+
+    int toRemoveWidth = totalWidth - newTotalWidth;
+    int accumulated = 0;
+    int removeCount = 0;
+    for (int i = chars.size() - 1; i >= 0; --i)
+    {
+        accumulated += widths[i];
+        removeCount++;
+        if (accumulated >= toRemoveWidth)
+            break;
+    }
+
+    int removeStart = indentEndPos - removeCount;
+
+    c.setPosition(removeStart);
+    c.setPosition(indentEndPos, QTextCursor::KeepAnchor);
+    c.removeSelectedText();
+
+    auto adjustPos = [&](int pos) -> int {
+        if (pos >= removeStart && pos < indentEndPos)
+            return removeStart;          // inside deleted block - move to the beginning of the block
+        else if (pos >= indentEndPos)
+            return pos - removeCount;    // after deleted block - move left
+        else
+            return pos;                  // before deleted block - don't move
+    };
+
+    int newCursor = adjustPos(cursorPos);
+    c.setPosition(newCursor);
+
+    if (hasSelection)
+    {
+        int newStart = adjustPos(selStart);
+        int newEnd = adjustPos(selEnd);
+        c.setPosition(newStart);
+        c.setPosition(newEnd, QTextCursor::KeepAnchor);
+    }
+}
+
+// ---- multi-cursor-aware undo/redo -------------------------------------
+
+QVector<QPair<int,int>> CodeEditor::snapshotCursors(const MultiTextCursor &mc)
+{
+    QVector<QPair<int,int>> result;
+    for (const QTextCursor &c : mc.cursors())
+        result.append(qMakePair(c.anchor(), c.position()));
+    return result;
+}
+
+void CodeEditor::restoreCursorSnapshot(const QVector<QPair<int,int>> &snapshot)
+{
+    if (snapshot.isEmpty())
+        return;
+
+    auto makeCursor = [this](const QPair<int,int> &p) {
+        QTextCursor c(document());
+        c.setPosition(p.first);
+        c.setPosition(p.second, QTextCursor::KeepAnchor);
+        return c;
+    };
+
+    _multiCursor.setCursors(makeCursor(snapshot.first()));
+    for (int i = 1; i < snapshot.size(); ++i)
+        _multiCursor.addCursor(makeCursor(snapshot[i]));
+}
+
+// Performs an edit through every active cursor (see MultiTextCursor::editBlock)
+// and remembers the cursor set from just before/after it, so a subsequent
+// Ctrl+Z / Ctrl+Y can restore the whole set instead of collapsing to one.
+void CodeEditor::performMultiEdit(std::function<void(QTextCursor&)> fn)
+{
+    QVector<QPair<int,int>> preState = snapshotCursors(_multiCursor);
+    _multiCursor.editBlock(fn);
+    syncToNativeCursor();
+
+    _preMultiEditCursorState = preState;
+    _postMultiEditCursorState = snapshotCursors(_multiCursor);
+    _multiUndoAvailable = true;
+    _multiRedoAvailable = false;
+}
+
+// Indices into _multiCursor.cursors(), ascending by selectionStart() - the
+// document order in which several cursors' text should be joined/consumed
+// (copy/cut, and distributing pasted lines one-per-cursor).
+QVector<int> CodeEditor::cursorsOrderedByPosition() const
+{
+    QVector<int> order(_multiCursor.count());
+    for (int i = 0; i < order.size(); ++i) order[i] = i;
+    std::sort(order.begin(), order.end(), [this](int a, int b) {
+        return _multiCursor.cursors()[a].selectionStart() < _multiCursor.cursors()[b].selectionStart();
+    });
+    return order;
+}
+
+// Every cursor's selected text, in document order, joined by '\n' - used
+// for Ctrl+C / Ctrl+X with several cursors. QTextCursor::selectedText()
+// uses U+2029 (paragraph separator) instead of '\n' for multi-line
+// selections, so that gets normalized too.
+QString CodeEditor::multiCursorSelectedText() const
+{
+    QStringList parts;
+    for (int i : cursorsOrderedByPosition())
+    {
+        const QTextCursor &c = _multiCursor.cursors()[i];
+        if (c.hasSelection())
+            parts << QString(c.selectedText()).replace(QChar::ParagraphSeparator, QLatin1Char('\n'));
+    }
+    return parts.join(QLatin1Char('\n'));
+}
+
+// The single place that decides what a copy (or cut, or drag) out of this
+// editor yields. Overriding it - instead of only special-casing Ctrl+C -
+// means *every* copy path goes through the multi-cursor logic, including
+// QPlainTextEdit's own copy()/cut() and any menu action bound to them.
+QMimeData *CodeEditor::createMimeDataFromSelection() const
+{
+    if (!_multiCursor.isMultiple())
+        return QPlainTextEdit::createMimeDataFromSelection();
+
+    QString joined = multiCursorSelectedText();
+    if (joined.isEmpty()) // several carets, but nothing actually selected
+        return QPlainTextEdit::createMimeDataFromSelection();
+
+    QMimeData *result = new QMimeData;
+    result->setText(joined);
+    return result;
+}
+
+// Copies the current selection(s) to the clipboard. Leaves the clipboard
+// alone (and reports false) when there is nothing selected at all, so an
+// accidental Ctrl+C on a bare caret doesn't wipe what's already there.
+bool CodeEditor::copySelectionToClipboard() const
+{
+    QMimeData *data = createMimeDataFromSelection();
+    if (!data)
+        return false;
+    if (data->text().isEmpty())
+    {
+        delete data;
+        return false;
+    }
+    QApplication::clipboard()->setMimeData(data);
+    return true;
+}
+
+// ---------------------------------------------------------------------
+
+// Whether this key event is the Copy shortcut (Ctrl+C or Ctrl+Insert).
+// Shared between the ShortcutOverride and KeyPress handling below so the
+// two can never drift out of sync with each other.
+static bool isCopyShortcut(const QKeyEvent *e)
+{
+    if (e->matches(QKeySequence::Copy))
+        return true;
+    const bool ctrl = e->modifiers().testFlag(Qt::ControlModifier);
+    const bool alt = e->modifiers().testFlag(Qt::AltModifier);
+    const bool shift = e->modifiers().testFlag(Qt::ShiftModifier);
+    return ctrl && !alt && !shift && e->key() == Qt::Key_Insert;
+}
+
+// Whether this key event is the Cut shortcut (Ctrl+X or Shift+Delete).
+static bool isCutShortcut(const QKeyEvent *e)
+{
+    if (e->matches(QKeySequence::Cut))
+        return true;
+    const bool ctrl = e->modifiers().testFlag(Qt::ControlModifier);
+    const bool alt = e->modifiers().testFlag(Qt::AltModifier);
+    const bool shift = e->modifiers().testFlag(Qt::ShiftModifier);
+    return shift && !ctrl && !alt && e->key() == Qt::Key_Delete;
+}
+
 bool CodeEditor::eventFilter(QObject *object, QEvent *event)
 {
     switch (event->type())
@@ -188,9 +847,39 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
         _leftSideBar->setFont(font());
         updateLeftSideBarWidth();
         break;
+    case QEvent::ShortcutOverride:
+    {
+        // Qt asks the focused widget "is this yours?" via ShortcutOverride
+        // before delivering the matching KeyPress - and before falling
+        // back to any *global* shortcut bound to the same key sequence
+        // (e.g. an Edit > Copy menu action). QPlainTextEdit's own internal
+        // handling only claims Copy/Cut here when the single *native*
+        // QTextCursor has a selection - but with several active cursors
+        // that native cursor (whichever one is "main") can easily be a
+        // plain caret while other cursors hold the real selections. Qt
+        // then declines the override, the key sequence gets treated as a
+        // global shortcut instead, and our KeyPress handling below never
+        // even runs. Claim it ourselves whenever several cursors are
+        // active so Ctrl+C / Ctrl+Insert / Ctrl+X / Shift+Delete actually
+        // reach us.
+        QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+        if (_multiCursor.isMultiple() && (isCopyShortcut(keyEvent) || isCutShortcut(keyEvent)))
+        {
+            event->accept();
+            return true;
+        }
+        break;
+    }
     case QEvent::KeyPress:
     {
         QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+
+        if (keyEvent->key() == Qt::Key_Escape && _multiCursor.isMultiple())
+        {
+            collapseToSingleCursor();
+            return true;
+        }
+
         if (keyEvent->key() == Qt::Key_F1)
         {
             QString url = SqtSettings::value(keyEvent->modifiers().testFlag(Qt::ShiftModifier) ?
@@ -199,358 +888,245 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
             return true;
         }
 
+        // ---- Copy with several cursors: copy every selection, joined by
+        // newlines in document order (like VS Code), instead of just the
+        // main cursor's selection. Works even in read-only mode, same as a
+        // normal copy would. ----
+        if (isCopyShortcut(keyEvent) && _multiCursor.isMultiple())
+        {
+            copySelectionToClipboard();
+            return true;
+        }
+
         if (isReadOnly())
             break;
 
-        if (keyEvent->key() == Qt::Key_Insert && keyEvent->modifiers() == Qt::NoModifier)
+        bool ctrl = keyEvent->modifiers().testFlag(Qt::ControlModifier);
+        bool alt = keyEvent->modifiers().testFlag(Qt::AltModifier);
+        bool shift = keyEvent->modifiers().testFlag(Qt::ShiftModifier);
+
+        if ((keyEvent->key() == Qt::Key_Up || keyEvent->key() == Qt::Key_Down) &&
+                ((alt && shift && !ctrl) ||     // Alt+Shift+Up/Down, VS Code's default
+                 (ctrl && shift && !alt)))      // Ctrl+Shift+Up/Down, VS Code's other default
         {
-            setOverwriteMode(!overwriteMode());
+            addCursorOnAdjacentLine(keyEvent->key() == Qt::Key_Down);
             return true;
         }
 
-        QTextCursor c = textCursor();
-
-        if (keyEvent->key() == Qt::Key_Backspace && !c.hasSelection())
+        if (ctrl && !alt && keyEvent->key() == Qt::Key_D)
         {
-            int indentSize = SqtSettings::value("indentSize", 3).toInt();
-            int pos = c.position();
-            int blockStart = c.block().position();
+            selectNextOccurrence();
+            return true;
+        }
 
-            int col = 0;
-            QTextCursor scan(c.document());
-            scan.setPosition(blockStart);
-            while (scan.position() < pos)
+        // ---- Cut with several cursors: same idea as copy above, but also
+        // removes each selection. ----
+        if (isCutShortcut(keyEvent) && _multiCursor.isMultiple())
+        {
+            copySelectionToClipboard();
+
+            performMultiEdit([](QTextCursor &cur) {
+                if (cur.hasSelection())
+                    cur.removeSelectedText();
+            });
+            return true;
+        }
+
+        // ---- multi-cursor-aware undo/redo ----
+        if (ctrl && !alt && !shift && keyEvent->key() == Qt::Key_Z && _multiUndoAvailable)
+        {
+            undo();
+            restoreCursorSnapshot(_preMultiEditCursorState);
+            syncToNativeCursor();
+            _multiUndoAvailable = false;
+            _multiRedoAvailable = true;
+            return true;
+        }
+        if (ctrl && !alt &&
+                ((keyEvent->key() == Qt::Key_Y) || (shift && keyEvent->key() == Qt::Key_Z)) &&
+                _multiRedoAvailable)
+        {
+            redo();
+            restoreCursorSnapshot(_postMultiEditCursorState);
+            syncToNativeCursor();
+            _multiRedoAvailable = false;
+            _multiUndoAvailable = true;
+            return true;
+        }
+
+        if (keyEvent->key() == Qt::Key_Insert && keyEvent->modifiers() == Qt::NoModifier)
+        {
+            _overwriteMode = !_overwriteMode;
+            // With one cursor, hand it straight to Qt - its own overwrite
+            // handling and block-caret painting are correct and there's
+            // nothing else on screen to clash with. With several cursors
+            // the native flag stays off; see the comment by _overwriteMode.
+            setOverwriteMode(_multiCursor.isMultiple() ? false : _overwriteMode);
+            viewport()->update();
+            return true;
+        }
+
+        // ---- navigation: only intercepted here when there is more than
+        // one cursor. A single cursor still gets native, battle-tested
+        // navigation from QPlainTextEdit further down the pipeline. ----
+        if (_multiCursor.isMultiple() && isNavigationKey(keyEvent->key()) && keyEvent->key() != Qt::Key_Home)
+        {
+            QTextCursor::MoveMode mode = shift ? QTextCursor::KeepAnchor : QTextCursor::MoveAnchor;
+
+            if (keyEvent->key() == Qt::Key_PageUp || keyEvent->key() == Qt::Key_PageDown)
             {
-                QChar ch = document()->characterAt(scan.position());
-                col += ch == '\t' ? indentSize - (col % indentSize) : 1;
-                scan.movePosition(QTextCursor::NextCharacter);
+                int page = qMax(1, viewport()->height() / qMax(1, fontMetrics().height()));
+                QTextCursor::MoveOperation op = (keyEvent->key() == Qt::Key_PageUp) ? QTextCursor::Up : QTextCursor::Down;
+                _multiCursor.forEachCursor([mode, op, page](QTextCursor &cur) { cur.movePosition(op, mode, page); });
             }
-
-            int prevBoundary;
-            if (col % indentSize == 0 && col > 0)
-                prevBoundary = col - indentSize;
             else
-                prevBoundary = (col / indentSize) * indentSize;
-
-            int toRemove = col - prevBoundary;
-            if (toRemove == 0)
-                break;
-
-            int spacesBefore = 0;
-            QTextCursor back(c);
-            back.setPosition(pos);
-            while (back.position() > blockStart)
             {
-                back.movePosition(QTextCursor::PreviousCharacter);
-                QChar ch = document()->characterAt(back.position());
-                if (ch == ' ')
-                    spacesBefore++;
-                else
-                    break;
+                QTextCursor::MoveOperation op = moveOperationForKey(keyEvent->key(), ctrl);
+                _multiCursor.forEachCursor([op, mode](QTextCursor &cur) { cur.movePosition(op, mode); });
             }
+            syncToNativeCursor();
+            return true;
+        }
 
-            if (spacesBefore >= toRemove)
+        // ---- smart Backspace (indent-aware) ----
+        if (keyEvent->key() == Qt::Key_Backspace)
+        {
+            if (_multiCursor.isMultiple())
             {
-                // delete toRemove spaces before the cursor
-                c.setPosition(pos - toRemove);
-                c.setPosition(pos, QTextCursor::KeepAnchor);
-                c.removeSelectedText();
+                performMultiEdit([this](QTextCursor &cur) {
+                    if (cur.hasSelection())
+                        cur.removeSelectedText();
+                    else if (!applySmartBackspace(cur))
+                        cur.deletePreviousChar();
+                });
                 return true;
             }
-            // lack of spaces - call default Backspace handler
+
+            QTextCursor c = textCursor();
+            if (!c.hasSelection() && applySmartBackspace(c))
+            {
+                applySingleCursorEdit(c);
+                return true;
+            }
+            // no selection to fall back to, or a plain single-char delete
+            // is enough (lack of spaces to remove) - let the default,
+            // native Backspace handler take it from here
             break;
         }
 
+        // ---- Delete: only needs custom handling with several cursors;
+        // a single cursor already gets a correct Delete from Qt. ----
+        if (keyEvent->key() == Qt::Key_Delete && _multiCursor.isMultiple())
+        {
+            performMultiEdit([](QTextCursor &cur) {
+                if (cur.hasSelection())
+                    cur.removeSelectedText();
+                else
+                    cur.deleteChar();
+            });
+            return true;
+        }
+
+        // ---- Return with auto-indent ----
         if (keyEvent->key() == Qt::Key_Return)
         {
-            // previous indentation
-            c.removeSelectedText();
-            QRegularExpression indent_regex("(^\\s*)(?=[^\\s\\r\\n]+)");
-            QTextCursor prev_c = document()->find(indent_regex, c, QTextDocument::FindBackward);
-
-            if (!prev_c.isNull())
+            if (_multiCursor.isMultiple())
             {
-                // all leading characters are \s => shift start search point up
-                if (prev_c.selectionEnd() >= c.position())
-                {
-                    QTextCursor upper(document());
-                    upper.setPosition(prev_c.selectionStart());
-                    prev_c = document()->find(indent_regex, upper, QTextDocument::FindBackward);
-                }
-
-                if (!prev_c.isNull())
-                {
-                    // remove subsequent \s
-                    QTextCursor next_c = document()->find(QRegularExpression("(\\s+)(?=\\S+)"), c);
-                    if (next_c.selectionStart() == c.selectionStart())
-                        next_c.removeSelectedText();
-                }
+                performMultiEdit([this](QTextCursor &cur) { applyReturnWithIndent(cur); });
+                return true;
             }
-            // insert indentation
-            c.insertText("\n" + prev_c.selectedText());
+
+            QTextCursor c = textCursor();
+            applyReturnWithIndent(c);
+            applySingleCursorEdit(c);
             return true;
         }
 
-        if (keyEvent->key() == Qt::Key_Home && !keyEvent->modifiers().testFlag(Qt::ControlModifier))
+        // ---- smart Home ----
+        if (keyEvent->key() == Qt::Key_Home && !ctrl)
         {
-            int startOfText = c.block().position();
-            QTextCursor notSpace = document()->find(QRegularExpression("\\S"), startOfText);
-            if (!notSpace.isNull() && notSpace.block() == c.block() && notSpace.position() - 1 > startOfText)
-                startOfText = notSpace.position() - 1;
-            int nextPos = startOfText;
-            if (c.position() <= startOfText && c.position() > c.block().position())
-                nextPos = c.block().position();
-            c.setPosition(nextPos, keyEvent->modifiers().testFlag(Qt::ShiftModifier) ?
-                              QTextCursor::KeepAnchor :
-                              QTextCursor::MoveAnchor);
+            if (_multiCursor.isMultiple())
+            {
+                _multiCursor.forEachCursor([this, shift](QTextCursor &cur) { applyHome(cur, shift); });
+                syncToNativeCursor();
+                return true;
+            }
+
+            QTextCursor c = textCursor();
+            applyHome(c, shift);
             setTextCursor(c);
+            _multiCursor.setCursors(c);
             return true;
         }
+
+        // ---- Tab / Backtab indentation ----
+        if (keyEvent->key() == Qt::Key_Tab || keyEvent->key() == Qt::Key_Backtab)
+        {
+            bool forward = (keyEvent->key() == Qt::Key_Tab);
+            auto applyOne = [this, forward](QTextCursor &cur)
+            {
+                int start = cur.selectionStart();
+                int end = cur.selectionEnd();
+                cur.setPosition(end);
+                int lastBlock = cur.blockNumber();
+                cur.setPosition(start);
+                bool multiLine = (cur.blockNumber() != lastBlock);
+                cur.setPosition(start);
+                cur.setPosition(end, QTextCursor::KeepAnchor);
+
+                if (multiLine)
+                    applyMultiLineIndent(cur, forward);
+                else if (forward)
+                    applySingleLineTab(cur);
+                else
+                    applySingleLineBacktab(cur);
+            };
+
+            if (_multiCursor.isMultiple())
+            {
+                performMultiEdit([&applyOne](QTextCursor &cur) { applyOne(cur); });
+                return true;
+            }
+
+            QTextCursor c = textCursor();
+            applyOne(c);
+            applySingleCursorEdit(c);
+            return true;
+        }
+
+        // ---- plain typed text: only needs custom handling with several
+        // cursors - a single cursor is typed into natively below. ----
+        if (_multiCursor.isMultiple() && !ctrl && !alt && !keyEvent->modifiers().testFlag(Qt::MetaModifier))
+        {
+            QString t = keyEvent->text();
+            if (!t.isEmpty() && t.at(0).isPrint())
+            {
+                performMultiEdit([t, this](QTextCursor &cur) {
+                    if (cur.hasSelection())
+                        cur.removeSelectedText();
+                    else if (_overwriteMode && !cur.atBlockEnd())
+                        cur.deleteChar();
+                    cur.insertText(t);
+                });
+                return true;
+            }
+        }
+
+        if (_multiCursor.isMultiple())
+            break; // any other key: let it fall through, acting on the main cursor only
+
+        QTextCursor c = textCursor();
+        if (!c.hasSelection())
+            break;
 
         int start = c.selectionStart();
         int end = c.selectionEnd();
 
-        if (keyEvent->key() == Qt::Key_Tab || keyEvent->key() == Qt::Key_Backtab)
-        {
-            bool cursorToStart = (start == c.position());
-
-            c.setPosition(end);
-            int lastBlock = c.blockNumber();
-            c.setPosition(start);
-            bool multiLine = (c.blockNumber() != lastBlock);
-
-            if (multiLine)
-            {
-                c.movePosition(QTextCursor::StartOfBlock);
-                c.beginEditBlock();
-                bool firstPass = true;
-                int indentSize = SqtSettings::value("indentSize", 3).toInt();
-
-                if (keyEvent->key() == Qt::Key_Backtab)
-                {
-                    do
-                    {
-                        if (!firstPass)
-                        {
-                            if (!c.movePosition(QTextCursor::NextBlock))
-                                break;
-                        }
-                        else
-                            firstPass = false;
-
-                        if (c.position() >= end)
-                            break;
-
-                        int tab = indentSize;
-                        while (tab > 0)
-                        {
-                            QChar curChar = document()->characterAt(c.position());
-                            if (QString(" \t").contains(curChar))
-                            {
-                                int pos = c.position();
-                                c.setPosition(pos + 1, QTextCursor::KeepAnchor);
-                                c.removeSelectedText();
-
-                                if (pos < start)
-                                    --start;
-                                if (pos < end)
-                                    --end;
-
-                                tab -= (curChar == '\t' ? indentSize : 1);
-                            }
-                            else
-                                break;
-                        }
-                    }
-                    while (true);
-                }
-                else // Tab
-                {
-                    QString indent = SqtSettings::value("tabsIndent", true).toBool()
-                                     ? "\t"
-                                     : QString(indentSize, ' ');
-                    int indentLen = indent.length();
-
-                    do
-                    {
-                        if (!firstPass)
-                        {
-                            if (!c.movePosition(QTextCursor::NextBlock))
-                                break;
-                        }
-                        else
-                            firstPass = false;
-
-                        if (c.position() >= end)
-                            break;
-
-                        int pos = c.position();
-                        c.insertText(indent);
-
-                        if (pos <= start)
-                            start += indentLen;
-                        end += indentLen;
-                    }
-                    while (true);
-                }
-
-                c.endEditBlock();
-
-                if (cursorToStart)
-                {
-                    c.setPosition(end);
-                    c.setPosition(start < 0 ? 0 : start, QTextCursor::KeepAnchor);
-                }
-                else
-                {
-                    c.setPosition(start < 0 ? 0 : start);
-                    c.setPosition(end, QTextCursor::KeepAnchor);
-                }
-                setTextCursor(c);
-                return true;
-            }
-            else
-            {
-                // single line
-                if (keyEvent->key() == Qt::Key_Tab)
-                {
-                    int indentSize = SqtSettings::value("indentSize", 3).toInt();
-                    bool useTabs = SqtSettings::value("tabsIndent", true).toBool();
-
-                    QTextCursor cursor = textCursor();
-                    bool hasSelection = cursor.hasSelection();
-                    int selStart = cursor.selectionStart();
-                    int selEnd = cursor.selectionEnd();
-
-                    // delete selection if exists
-                    if (hasSelection)
-                    {
-                        cursor.setPosition(selStart);
-                        cursor.setPosition(selEnd, QTextCursor::KeepAnchor);
-                        cursor.removeSelectedText();
-                    }
-
-                    int pos = cursor.position();
-                    int blockStart = cursor.block().position();
-
-                    int col = 0;
-                    QTextCursor scan(cursor.document());
-                    scan.setPosition(blockStart);
-                    while (scan.position() < pos)
-                    {
-                        QChar ch = document()->characterAt(scan.position());
-                        col += ch == '\t' ? indentSize - (col % indentSize) : 1;
-                        scan.movePosition(QTextCursor::NextCharacter);
-                    }
-
-                    int targetCol = ((col / indentSize) + 1) * indentSize;
-                    int spacesToAdd = targetCol - col;
-                    if (spacesToAdd == 0)
-                        spacesToAdd = indentSize;
-
-                    QString insertText = useTabs ? "\t" : QString(spacesToAdd, ' ');
-                    cursor.insertText(insertText);
-                    setTextCursor(cursor);
-                }
-                else if (keyEvent->key() == Qt::Key_Backtab)
-                {
-                    int indentSize = SqtSettings::value("indentSize", 3).toInt();
-
-                    QTextCursor cursor = textCursor();
-                    bool hasSelection = cursor.hasSelection();
-                    int selStart = cursor.selectionStart();
-                    int selEnd = cursor.selectionEnd();
-                    int cursorPos = cursor.position();
-
-                    int blockStart = cursor.block().position();
-
-                    // analyze indentation
-                    QVector<QChar> chars;
-                    QVector<int> widths;
-                    int totalWidth = 0;
-                    QTextCursor scan(cursor.document());
-                    scan.setPosition(blockStart);
-                    while (true)
-                    {
-                        QChar ch = document()->characterAt(scan.position());
-                        if (ch == ' ')
-                        {
-                            chars.append(ch);
-                            widths.append(1);
-                            totalWidth += 1;
-                            scan.movePosition(QTextCursor::NextCharacter);
-                        }
-                        else if (ch == '\t')
-                        {
-                            int w = indentSize - (totalWidth % indentSize);
-                            chars.append(ch);
-                            widths.append(w);
-                            totalWidth += w;
-                            scan.movePosition(QTextCursor::NextCharacter);
-                        }
-                        else
-                            break;
-                    }
-                    int indentEndPos = scan.position();
-
-                    if (totalWidth == 0)
-                        return true;
-
-                    int newTotalWidth = ((totalWidth - 1) / indentSize) * indentSize;
-                    if (newTotalWidth == totalWidth)
-                        return true;
-
-                    int toRemoveWidth = totalWidth - newTotalWidth;
-                    int accumulated = 0;
-                    int removeCount = 0;
-                    for (int i = chars.size() - 1; i >= 0; --i)
-                    {
-                        accumulated += widths[i];
-                        removeCount++;
-                        if (accumulated >= toRemoveWidth)
-                            break;
-                    }
-
-                    int removeStart = indentEndPos - removeCount;
-
-                    cursor.setPosition(removeStart);
-                    cursor.setPosition(indentEndPos, QTextCursor::KeepAnchor);
-                    cursor.removeSelectedText();
-
-                    auto adjustPos = [&](int pos) -> int {
-                        if (pos >= removeStart && pos < indentEndPos)
-                            return removeStart;          // inside deleted block – move on the beginning of the block
-                        else if (pos >= indentEndPos)
-                            return pos - removeCount;    // after deleted block – move left
-                        else
-                            return pos;                  // before deleted block – don't move
-                    };
-
-                    int newCursor = adjustPos(cursorPos);
-                    cursor.setPosition(newCursor);
-
-                    if (hasSelection)
-                    {
-                        int newStart = adjustPos(selStart);
-                        int newEnd = adjustPos(selEnd);
-                        cursor.setPosition(newStart);
-                        cursor.setPosition(newEnd, QTextCursor::KeepAnchor);
-                    }
-
-                    setTextCursor(cursor);
-                }
-                return true;
-            }
-        }
-
-        if (!c.hasSelection())
-            break;
-
         if (keyEvent->key() == Qt::Key_U)
         {
-            if (keyEvent->modifiers().testFlag(Qt::ControlModifier))
+            if (ctrl)
             {
-                if (keyEvent->modifiers().testFlag(Qt::ShiftModifier) ||
+                if (shift ||
                         // Ubuntu uses Ctrl+Shift+U to enter character by unicode character number,
                         // so we may use Ctrl+Win+U to lowercase selection
                         keyEvent->modifiers().testFlag(Qt::MetaModifier))
@@ -562,7 +1138,7 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
                 break;
             c.setPosition(start);
             c.setPosition(end, QTextCursor::KeepAnchor);
-            setTextCursor(c);
+            applySingleCursorEdit(c);
             return true;
         }
         break;
@@ -609,7 +1185,7 @@ void CodeEditor::keyPressEvent(QKeyEvent *e)
         }
         else if (e->key() == Qt::Key_Space && e->modifiers().testFlag(Qt::ControlModifier))
         {
-            if (!isEnveloped(textCursor().position()))
+            if (!_multiCursor.isMultiple() && !isEnveloped(textCursor().position()))
                 emit completerRequest();
             return;
         }
@@ -620,9 +1196,29 @@ void CodeEditor::keyPressEvent(QKeyEvent *e)
         }
     }
 
-    int prevPos = textCursor().position();
+    int prevRevision = document()->revision();
+    QTextCursor prevCursor = textCursor();
+    int prevPos = prevCursor.position();
     QPlainTextEdit::keyPressEvent(e);
-    int newPos = textCursor().position();
+    QTextCursor afterCursor = textCursor();
+    int newPos = afterCursor.position();
+
+    if (document()->revision() != prevRevision)
+    {
+        // A genuine edit happened through Qt's own single-cursor machinery
+        // (typing, a plain Backspace, Ctrl+V, ...) - any snapshot we saved
+        // for multi-cursor undo/redo no longer sits on top of the
+        // document's undo stack, so forget it.
+        _multiUndoAvailable = false;
+        _multiRedoAvailable = false;
+    }
+
+    // Only resync (which collapses to a single cursor) if the native cursor
+    // actually moved or its selection changed. A bare modifier key press
+    // (e.g. pressing Alt down before an Alt+Click) also reaches this point
+    // but must NOT wipe out an existing multi-cursor selection.
+    if (newPos != prevPos || afterCursor.anchor() != prevCursor.anchor())
+        syncFromNativeCursor();
     if (prevPos == newPos)
         return;
 
@@ -659,32 +1255,170 @@ void CodeEditor::insertFromMimeData(const QMimeData *source)
 {
     if (!source->hasText())
         return;
-    insertPlainText(source->text());
 
-//  should be rethinked  :/
-/*
+    if (!_multiCursor.isMultiple())
+    {
+        insertPlainText(source->text());
+        return;
+    }
 
-    // count distance from the beginning of the line to the insertion position (chars)
-    QTextCursor c = textCursor();
-    QString block = c.block().text();
-    int distance = 0;
-    int indentSize = SqtSettings::value("indentSize", 3).toInt();
-    for (int i = 0; i < c.positionInBlock(); ++i)
-        distance += (block[i] == '\t' ? indentSize : 1);
+    // Multi-cursor paste: if the clipboard has exactly as many lines as
+    // there are cursors, distribute one line per cursor (top-to-bottom),
+    // like VS Code. Otherwise paste the whole text into every cursor.
+    QStringList lines = source->text().split('\n');
+    bool perCursor = (lines.size() == _multiCursor.count());
 
-    // prepend every line of the inserted text with the following prefix
-    QString prefix = QString(distance / indentSize, '\t') + (distance % indentSize ? "\t" : "");
-    QString data = source->text();
-    if (distance % indentSize)
-        data = '\t' + data;
-    data.replace('\n', '\n' + prefix);
+    QVector<int> ascending = cursorsOrderedByPosition();
+    QVector<int> lineForCursor(_multiCursor.count());
+    for (int rank = 0; rank < ascending.size(); ++rank)
+        lineForCursor[ascending[rank]] = rank;
 
-    // TODO evaluate correct indentation according to surrounding code,
-    // find shortest indent within the text being inserted and make corresponding
-    // replacements before insertion
+    QVector<int> order = ascending;
+    std::reverse(order.begin(), order.end()); // edit highest position first
 
-    insertPlainText(data);
-*/
+    QVector<QPair<int,int>> preState = snapshotCursors(_multiCursor);
+
+    _multiCursor.cursors()[order.first()].beginEditBlock();
+    for (int i : std::as_const(order))
+    {
+        QTextCursor &c = _multiCursor.cursors()[i];
+        QString t = perCursor ? lines[lineForCursor[i]] : source->text();
+        if (c.hasSelection())
+            c.removeSelectedText();
+        c.insertText(t);
+    }
+    _multiCursor.cursors()[order.first()].endEditBlock();
+    _multiCursor.mergeOverlapping();
+
+    syncToNativeCursor();
+
+    _preMultiEditCursorState = preState;
+    _postMultiEditCursorState = snapshotCursors(_multiCursor);
+    _multiUndoAvailable = true;
+    _multiRedoAvailable = false;
+}
+
+void CodeEditor::paintEvent(QPaintEvent *event)
+{
+    QPlainTextEdit::paintEvent(event);
+
+    if (!_multiCursor.isMultiple() || !_caretBlinkVisible)
+        return;
+
+    QPainter painter(viewport());
+    QColor color = palette().text().color();
+    painter.setPen(QPen(color, _nativeCursorWidth));
+
+    // In overwrite mode Qt normally swaps the thin caret for a block the
+    // width of the character it's about to replace; we mimic that here
+    // for every extra cursor too, not just the (hidden) native one. Note:
+    // _overwriteMode, not overwriteMode() - the native flag is forced off
+    // while several cursors are active (see syncToNativeCursor).
+    bool overwrite = _overwriteMode;
+    QColor bg = viewport()->palette().color(QPalette::Base);
+
+    // Native cursor rendering is disabled (cursorWidth 0) while multiple
+    // cursors are active, so we paint every one of them here, including
+    // the main cursor - all sharing the same blink flag, so they blink
+    // in sync.
+    for (const QTextCursor &cur : _multiCursor.cursors())
+    {
+        QRect r = cursorRect(cur);
+        // NOTE: don't use QRect::isValid() here - with cursorWidth(0) (set
+        // above so the native caret doesn't also draw) the rect's width is
+        // always 0, which makes isValid() false for every cursor. Height is
+        // what actually tells us whether this is a real, laid-out line.
+        if (r.height() <= 0)
+            continue;
+
+        if (overwrite)
+        {
+            // Character that would be overwritten, and its width - fall
+            // back to a plain space's width at end of line/document, same
+            // as Qt's own overwrite caret does. Read it strictly from
+            // cur.position() (clearing any selection on the copy first) so
+            // a selected cursor doesn't pull in the whole selected range.
+            QTextCursor charCur(cur);
+            charCur.clearSelection();
+            charCur.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
+            QString ch = charCur.selectedText();
+            bool realChar = !ch.isEmpty() && ch.at(0) != QChar::ParagraphSeparator;
+            int w = realChar ? fontMetrics().horizontalAdvance(ch.at(0))
+                              : fontMetrics().horizontalAdvance(QLatin1Char(' '));
+
+            // Solid block, like a terminal cursor, with the character
+            // redrawn in the editor's background color on top so it stays
+            // crisp instead of fading into a translucent smear. Drawn the
+            // same way whether or not this cursor has a selection - with
+            // the block blinking, it's still clearly distinguishable from
+            // the (static) selection highlight, and a thin line here would
+            // be easy to lose against the selection background.
+            QRect block(r.left(), r.top(), w, r.height());
+            painter.fillRect(block, color);
+            if (realChar)
+            {
+                painter.setPen(bg);
+                painter.drawText(QPoint(r.left(), r.top() + fontMetrics().ascent()), ch.left(1));
+                painter.setPen(QPen(color, _nativeCursorWidth));
+            }
+        }
+        else
+        {
+            painter.drawLine(r.topLeft(), r.bottomLeft());
+        }
+    }
+}
+
+void CodeEditor::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton && event->modifiers().testFlag(Qt::AltModifier))
+    {
+        _multiCursor.addCursor(cursorForPosition(event->pos()));
+        syncToNativeCursor();
+        event->accept();
+        return;
+    }
+
+    QPlainTextEdit::mousePressEvent(event);
+    syncFromNativeCursor();
+}
+
+void CodeEditor::mouseMoveEvent(QMouseEvent *event)
+{
+    if (event->buttons().testFlag(Qt::LeftButton) && event->modifiers().testFlag(Qt::AltModifier))
+    {
+        // An Alt+Click that starts a drag is meant to give the *new* cursor
+        // a real selection, not just a caret. mousePressEvent skipped the
+        // base class entirely for that Alt+Click (so nothing there is
+        // tracking a drag), so without this override the mouse motion was
+        // simply dropped: the added cursor stayed a zero-length caret,
+        // hasSelection() was false, and multiCursorSelectedText() (rightly)
+        // ignored it - which is why copying a multi-cursor selection made
+        // this way silently lost whatever was dragged out with Alt held.
+        QTextCursor &cur = _multiCursor.cursors()[_multiCursor.mainIndex()];
+        QTextCursor moved = cursorForPosition(event->pos());
+        cur.setPosition(moved.position(), QTextCursor::KeepAnchor);
+        syncToNativeCursor();
+        event->accept();
+        return;
+    }
+
+    QPlainTextEdit::mouseMoveEvent(event);
+}
+
+void CodeEditor::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (event->modifiers().testFlag(Qt::AltModifier))
+    {
+        // mousePressEvent skipped the base class entirely for an Alt+Click
+        // (no drag/press state was ever registered there), so skip the
+        // matching release too instead of letting Qt act on stale state.
+        event->accept();
+        return;
+    }
+
+    QPlainTextEdit::mouseReleaseEvent(event);
+    syncFromNativeCursor();
 }
 
 void CodeEditor::updateLeftSideBarWidth()
@@ -830,7 +1564,7 @@ void CodeEditor::onHlTimerTimeout()
         }
     }
 
-    selections += right_bracket_selections + left_bracket_selections + currentLineSelection();
+    selections += right_bracket_selections + left_bracket_selections + baseExtraSelections();
     setExtraSelections(selections);
 }
 
@@ -938,6 +1672,36 @@ QList<QTextEdit::ExtraSelection> CodeEditor::currentLineSelection() const
     s.cursor = textCursor();
     s.cursor.clearSelection();
     return QList<QTextEdit::ExtraSelection> {s};
+}
+
+QList<QTextEdit::ExtraSelection> CodeEditor::baseExtraSelections() const
+{
+    return currentLineSelection() + multiCursorSelections();
+}
+
+QList<QTextEdit::ExtraSelection> CodeEditor::multiCursorSelections() const
+{
+    QList<QTextEdit::ExtraSelection> result;
+    if (!_multiCursor.isMultiple())
+        return result;
+
+    QColor highlight = palette().highlight().color();
+    QColor highlightedText = palette().highlightedText().color();
+
+    for (int i = 0; i < _multiCursor.cursors().size(); ++i)
+    {
+        if (i == _multiCursor.mainIndex())
+            continue; // the main cursor's selection is already painted natively
+        const QTextCursor &c = _multiCursor.cursors()[i];
+        if (!c.hasSelection())
+            continue;
+        QTextEdit::ExtraSelection s;
+        s.cursor = c;
+        s.format.setBackground(highlight);
+        s.format.setForeground(highlightedText);
+        result.append(s);
+    }
+    return result;
 }
 
 bool CodeEditor::isEnveloped(int pos) const

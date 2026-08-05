@@ -298,6 +298,16 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
         {
             if (keyEvent->matches(QKeySequence::Copy) && edit->textCursor().hasSelection())
             {
+                // Application event filters run before the receiver's own
+                // event filters, so this used to swallow Ctrl+C before
+                // CodeEditor ever saw it - and edit->textCursor() is just
+                // the *main* cursor, which is why copying a multi-cursor
+                // selection only ever yielded the main cursor's part.
+                // Let the editor handle those itself.
+                CodeEditor *codeEdit = qobject_cast<CodeEditor*>(edit);
+                if (codeEdit && codeEdit->hasMultipleCursors())
+                    return QObject::eventFilter(obj, event);
+
                 QApplication::clipboard()->setText(edit->textCursor().selectedText().replace(QChar::ParagraphSeparator, '\n'));
                 return true;
             }

@@ -11,9 +11,10 @@ Standalone (outdated) [sqt for windows x64](https://drive.google.com/open?id=1pD
 * Customizable objects tree and textual/tabular content view (see [scripts/README.md](https://github.com/parihaaraka/sqt/blob/master/scripts/README.md)) let you build you own tree with application-specific nodes;
 * adjustable sql highlighting (see any existing `hl.conf` for more details);
 * alternative sorting (e.g., sort table columns in original/alphabetical order);
-* multiple selection to generate appropriate SQL code (e.g., select/insert/update commands with selected columns only); 
+* multiple selection to generate appropriate SQL code (e.g., select/insert/update commands with selected columns only);
 * convenient (Qt Creator-like) search/replace panel;
 * multiple resultsets support;
+* multicursor;
 * bookmarks (mark: `Ctrl+M`, previous: `Ctrl+,`, next: `Ctrl+.`, last: `Ctrl+L`);
 * uppercase (`Ctrl+U`), lowercase (`Ctrl+Shift+U`, `Ctrl+Win+U`)
 * code completion support (`Ctrl+Space`);
