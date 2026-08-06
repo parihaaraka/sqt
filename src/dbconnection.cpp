@@ -91,7 +91,7 @@ QString DbConnection::elapsed() const noexcept
 {
     int elapsed_ms = _elapsed_ms;
     int precision = 3;
-    if (_query_state != QueryState::Inactive)
+    if (_query_state == QueryState::Running || _query_state == QueryState::Cancelling)
     {
         // round milliseconds during execution because of refresh period 0.2 sec
         elapsed_ms = _timer.elapsed() / 100 * 100;

@@ -708,7 +708,8 @@ void MainWindow::on_actionExecute_query_triggered()
     if (!con)
         return;
     auto qState = con->queryState();
-    if (qState == QueryState::Running || qState == QueryState::Cancelling || q->isTimerActive())
+    if (qState == QueryState::Running || qState == QueryState::Reconnecting ||
+        qState == QueryState::Cancelling || q->isTimerActive())
     {
         q->stopTimer();
         if (qState == QueryState::Inactive)
@@ -1431,6 +1432,8 @@ void MainWindow::refreshConnectionState()
     DbConnection *con = (w ? w->dbConnection() : nullptr);
     if (ui->tabWidget->isHidden() || !con)
         _durationLabel.clear();
+    else if (con->queryState() == QueryState::Reconnecting)
+        _durationLabel.setText("<font color='red'>" + tr("reconnecting...") + "</font>");
     else
     {
         QString cn_status = con->transactionStatus();

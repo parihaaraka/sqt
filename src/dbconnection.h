@@ -13,7 +13,7 @@
 
 #define FETCH_COUNT_NOTIFY 1000
 
-enum class QueryState : int { Inactive, Running, Cancelling };
+enum class QueryState : int { Inactive, Reconnecting, Running, Cancelling };
 enum SocketWatchMode { None = 0, Read, Write };
 
 Q_DECLARE_METATYPE(QueryState)

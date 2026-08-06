@@ -74,6 +74,13 @@ private:
     bool isEnveloped(int pos) const;
     int indentSize() const; // small wrapper so the setting key/default lives in one place
 
+    // Force the caret(s) fully visible and restart the blink countdown from
+    // zero. Called on every key press while multiple cursors are active, so
+    // the caret stays solid during movement/typing/deletion (incl. held-key
+    // autorepeat) and only starts blinking once the keyboard goes idle -
+    // matching VS Code, terminals, and Qt's own single-cursor behavior.
+    void resetCaretBlink();
+
     // ---- multi-cursor plumbing ----
     void syncFromNativeCursor();   // native textCursor() -> _multiCursor (call after anything that moved the native cursor without going through us)
     void syncToNativeCursor();     // _multiCursor's main cursor -> native textCursor() (call after anything that changed _multiCursor ourselves)
@@ -85,6 +92,18 @@ private:
     static bool isNavigationKey(int key);
     static QTextCursor::MoveOperation moveOperationForKey(int key, bool ctrl);
 
+    // Ctrl+Left/Right word jump, VS Code style: a run of whitespace is
+    // always swallowed on the way but never itself a stopping point - the
+    // cursor lands right where a word/punctuation run ends (nextWordBoundary)
+    // or begins (previousWordBoundary), so Ctrl+Shift+Right selecting a word
+    // doesn't pull in the space after it. One exception: a single separator
+    // glued directly onto a word with no space between (the '.' in
+    // "qwe.rty") isn't its own stop - it merges into that word, matching VS
+    // Code. QTextCursor::NextWord/PreviousWord give us neither of this, so
+    // this walks the document by hand instead.
+    static int nextWordBoundary(QTextDocument *doc, int pos);
+    static int previousWordBoundary(QTextDocument *doc, int pos);
+
     // ---- per-cursor editing primitives ----
     // Identical logic whether there is one active cursor or many: with a
     // single cursor these are called once directly, with several cursors
@@ -94,7 +113,6 @@ private:
     void applyHome(QTextCursor &c, bool keepAnchor);
     void applyMultiLineIndent(QTextCursor &c, bool forward);
     void applySingleLineTab(QTextCursor &c);
-    void applySingleLineBacktab(QTextCursor &c);
     static int visualColumnAt(QTextDocument *doc, int blockStart, int pos, int indentSize);
 
     // Common tail shared by every single-cursor edit handler below (Backspace,

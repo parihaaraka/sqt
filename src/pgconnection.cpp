@@ -151,8 +151,17 @@ void PgConnection::cancel() noexcept
         return;
     }
 
-    char errbuf[256];
+    // a connection has no cancellation key until it is established, so there is
+    // nothing to cancel yet and dropping it is the only way to end such a run
     std::unique_ptr<PGcancel,decltype(&PQfreeCancel)> cancel(PQgetCancel(_conn), PQfreeCancel);
+    if (_async_stage == async_stage::connecting || !cancel)
+    {
+        lk.unlock();
+        emit closeConnectionWanted();
+        return;
+    }
+
+    char errbuf[256];
     int cancelResult = PQcancel(cancel.get(), errbuf, sizeof(errbuf));
     lk.unlock();
     if (cancelResult)
@@ -338,18 +347,25 @@ QMetaType::Type PgConnection::sqlTypeToVariant(int sqlType) const noexcept
     }
     return var_type;
 }
-#include <QDebug>
 void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *params) noexcept
 {
-    qDebug() << QTime::currentTime().toString();
-    // save transaction status to avoid reconnects within transaction
-    _connectionGuard.lock();
-    PGTransactionStatusType initial_state = PQtransactionStatus(_conn);
-    _connectionGuard.unlock();
-    if (initial_state == PQTRANS_ACTIVE)
+    // an empty query is not a new request, but the resend of the current one
+    // (see asyncConnectionProceed()), so it must pass the check below
+    if (!query.isEmpty())
     {
-        emit error(tr("another command is already in progress"));
-        return;
+        // save transaction status to avoid reconnects within transaction
+        _connectionGuard.lock();
+        PGTransactionStatusType initial_state = PQtransactionStatus(_conn);
+        _connectionGuard.unlock();
+        // refuse a new query only if the current one is still in flight
+        // (an opened transaction does not block anything);
+        // the transaction status is unknown while reconnecting, hence the
+        // query state check
+        if (initial_state == PQTRANS_ACTIVE || queryState() != QueryState::Inactive)
+        {
+            emit error(tr("another command is already in progress"));
+            return;
+        }
     }
 
     auto run_query = [this, query, params]()
@@ -357,6 +373,9 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
         QMutexLocker lk(&_connectionGuard);
         bool was_in_transaction = (PQtransactionStatus(_conn) == PQTRANS_INTRANS);
         _async_stage = async_stage::sending_query;
+        // the query starts here, so the preceding reconnect (if any) is not a
+        // part of its execution time
+        _timer.start();
         setQueryState(QueryState::Running);
 
         if (!query.isEmpty())
@@ -394,6 +413,11 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
         // disconnected or connection broken => reconnect and try again
         if (PQstatus(_conn) == CONNECTION_BAD)
         {
+            // the query is not sent yet, so the messages to follow belong to the
+            // connection being restored
+            if (!was_in_transaction)
+                setQueryState(QueryState::Reconnecting);
+
             if (_conn) // to avoid "connection pointer is NULL"
             {
                 emit error(PQerrorMessage(_conn));
@@ -499,7 +523,6 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
 
         emit queryFinished();
     });
-    _timer.start();
     thread->start();
 }
 
@@ -739,14 +762,9 @@ void PgConnection::fetch() noexcept
                 _async_stage = async_stage::none;
                 setQueryState(QueryState::Inactive);
 
-                // A link dropped while nobody was waiting for anything is not a
-                // result of anything the user did, so it is reported as a plain
-                // notice rather than as a query failure (the receiver decides
-                // where to put it - an idle editor sends it to the log).
-                // close() also releases the socket notifier, which would
-                // otherwise keep waking us up on the dead descriptor;
-                // execute()/executeAsync() reconnect and retry, so the link is
-                // usually restored unnoticed on the next query.
+                // nobody waits for a result here, so close() the link to release
+                // the socket notifier (it would keep firing on a dead descriptor)
+                // and let the next query restore it
                 if (is_notification)
                 {
                     lk.unlock();
@@ -905,7 +923,7 @@ void PgConnection::asyncConnectionProceed()
         emit message(tr("connection established\n"));
 
         // connection restored during query execution
-        if (queryState() == QueryState::Running)
+        if (queryState() == QueryState::Reconnecting)
         {
             lk.unlock();
             executeAsync("");

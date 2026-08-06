@@ -367,7 +367,6 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
             edit->document()->setDefaultTextOption(textOption);
             if (qw && flagsChanged)
                 qw->rehighlight();
-            edit->setCursorWidth(2);
         }
         else if (QTableView *tv = qobject_cast<QTableView*>(obj))
         {

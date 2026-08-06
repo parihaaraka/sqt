@@ -263,6 +263,19 @@ void CodeEditor::onCaretBlink()
     viewport()->update();
 }
 
+void CodeEditor::resetCaretBlink()
+{
+    if (!_caretBlinkTimer->isActive())
+        return; // single cursor: Qt handles its own caret/blinking, nothing to reset here
+
+    if (!_caretBlinkVisible)
+    {
+        _caretBlinkVisible = true;
+        viewport()->update();
+    }
+    _caretBlinkTimer->start(); // restart the countdown so it doesn't blink again until idle
+}
+
 bool CodeEditor::isNavigationKey(int key)
 {
     switch (key)
@@ -285,14 +298,101 @@ QTextCursor::MoveOperation CodeEditor::moveOperationForKey(int key, bool ctrl)
 {
     switch (key)
     {
-    case Qt::Key_Left:  return ctrl ? QTextCursor::PreviousWord : QTextCursor::Left;
-    case Qt::Key_Right: return ctrl ? QTextCursor::NextWord     : QTextCursor::Right;
+    case Qt::Key_Left:  return ctrl ? QTextCursor::NoMove : QTextCursor::Left;  // ctrl case handled separately, see nextWordBoundary/previousWordBoundary
+    case Qt::Key_Right: return ctrl ? QTextCursor::NoMove : QTextCursor::Right; // ditto
     case Qt::Key_Up:    return QTextCursor::Up;
     case Qt::Key_Down:  return QTextCursor::Down;
     case Qt::Key_Home:  return ctrl ? QTextCursor::Start : QTextCursor::StartOfLine;
     case Qt::Key_End:   return ctrl ? QTextCursor::End   : QTextCursor::EndOfLine;
     default:            return QTextCursor::NoMove;
     }
+}
+
+namespace
+{
+    enum class WordCharClass { Space, Word, Other };
+
+    WordCharClass classifyWordChar(QChar ch)
+    {
+        // QChar::isSpace() already covers QChar::ParagraphSeparator (the
+        // character QTextDocument uses between blocks), so word jumps cross
+        // line boundaries the same way Qt's own NextWord/PreviousWord do.
+        if (ch.isSpace())
+            return WordCharClass::Space;
+        if (ch.isLetterOrNumber() || ch == QLatin1Char('_'))
+            return WordCharClass::Word;
+        return WordCharClass::Other;
+    }
+}
+
+int CodeEditor::nextWordBoundary(QTextDocument *doc, int pos)
+{
+    // characterCount() counts one extra (implicit, non-printable) trailing
+    // character; the last real, addressable position is one before it.
+    const int end = doc->characterCount() - 1;
+    if (pos >= end)
+        return end;
+
+    // Swallow whitespace on the way, but never stop inside it.
+    while (pos < end && classifyWordChar(doc->characterAt(pos)) == WordCharClass::Space)
+        ++pos;
+    if (pos >= end)
+        return end;
+
+    // Then cross exactly one run of same-class characters (a word, or a
+    // punctuation/operator run) and stop right where it ends.
+    WordCharClass cls = classifyWordChar(doc->characterAt(pos));
+    int runEnd = pos;
+    while (runEnd < end && classifyWordChar(doc->characterAt(runEnd)) == cls)
+        ++runEnd;
+
+    // Exception: a single separator glued directly onto a following word,
+    // with no whitespace in between - the '.' in "qwe.rty", the '=' in
+    // "a=b" - isn't its own stop. VS Code treats it as glue and jumps
+    // straight through it into that word (so "qwe.rty" is two Ctrl+Right
+    // presses, not three). A *run* of separators (e.g. "..."), or one
+    // bounded by whitespace on the far side (e.g. "foo = bar"), still gets
+    // its own stop same as before - only a lone, word-adjacent one merges.
+    if (cls == WordCharClass::Other && runEnd - pos == 1 &&
+        runEnd < end && classifyWordChar(doc->characterAt(runEnd)) == WordCharClass::Word)
+    {
+        int wordEnd = runEnd;
+        while (wordEnd < end && classifyWordChar(doc->characterAt(wordEnd)) == WordCharClass::Word)
+            ++wordEnd;
+        return wordEnd;
+    }
+
+    return runEnd;
+}
+
+int CodeEditor::previousWordBoundary(QTextDocument *doc, int pos)
+{
+    if (pos <= 0)
+        return 0;
+
+    int p = pos - 1;
+    while (p > 0 && classifyWordChar(doc->characterAt(p)) == WordCharClass::Space)
+        --p;
+    if (classifyWordChar(doc->characterAt(p)) == WordCharClass::Space)
+        return 0; // ran into the very start of the document, still in whitespace
+
+    WordCharClass cls = classifyWordChar(doc->characterAt(p));
+    int runStart = p;
+    while (runStart > 0 && classifyWordChar(doc->characterAt(runStart - 1)) == cls)
+        --runStart;
+
+    // Mirror of the forward exception above: a lone separator glued
+    // directly onto a preceding word is glue, not its own stop.
+    if (cls == WordCharClass::Other && p == runStart &&
+        runStart > 0 && classifyWordChar(doc->characterAt(runStart - 1)) == WordCharClass::Word)
+    {
+        int wordStart = runStart;
+        while (wordStart > 0 && classifyWordChar(doc->characterAt(wordStart - 1)) == WordCharClass::Word)
+            --wordStart;
+        return wordStart;
+    }
+
+    return runStart;
 }
 
 // Ctrl+D: select the word under the (main) cursor, or - if something is
@@ -512,48 +612,111 @@ void CodeEditor::applyMultiLineIndent(QTextCursor &c, bool forward)
     int end = c.selectionEnd();
     bool cursorToStart = (start == c.position());
 
+    // Which blocks (lines) are affected: every line the selection touches
+    // at all, or - with no selection - just the line the caret is on.
+    // Using block numbers rather than raw positions makes the boundary
+    // unambiguous: a (non-empty) selection that ends exactly at the start
+    // of a line, with nothing of that line actually highlighted, does not
+    // pull that line in.
+    QTextCursor endCur(c);
+    endCur.setPosition(end);
+    int endBlockNumber = endCur.blockNumber();
+    if (end > start && endCur.atBlockStart())
+        --endBlockNumber;
+
+    c.setPosition(start);
     c.movePosition(QTextCursor::StartOfBlock);
     c.beginEditBlock();
-    bool firstPass = true;
     int indentW = indentSize();
 
-    if (!forward) // Backtab
+    if (!forward) // Backtab / Shift+Tab
     {
-        do
-        {
-            if (!firstPass)
-            {
-                if (!c.movePosition(QTextCursor::NextBlock))
-                    break;
-            }
-            else
-                firstPass = false;
+        QTextDocument *doc = c.document();
 
-            if (c.position() >= end)
+        while (true)
+        {
+            if (c.blockNumber() > endBlockNumber)
                 break;
 
-            int tab = indentW;
-            while (tab > 0)
+            // Walk the line's leading run of spaces/tabs from its start,
+            // recording each character's *visual* width (a tab advances to
+            // the next tab stop, so its width depends on what came before
+            // it) so we know both the total indent width and, later, which
+            // characters to drop from the end of that run.
+            int lineStart = c.position();
+            QVector<int> charWidths;
+            int width = 0;
+            int scanPos = lineStart;
+            while (true)
             {
-                QChar curChar = c.document()->characterAt(c.position());
-                if (QString(" \t").contains(curChar))
+                QChar ch = doc->characterAt(scanPos);
+                if (ch == QLatin1Char(' '))
                 {
-                    int pos = c.position();
-                    c.setPosition(pos + 1, QTextCursor::KeepAnchor);
-                    c.removeSelectedText();
-
-                    if (pos < start)
-                        --start;
-                    if (pos < end)
-                        --end;
-
-                    tab -= (curChar == '\t' ? indentW : 1);
+                    charWidths.append(1);
+                    width += 1;
+                }
+                else if (ch == QLatin1Char('\t'))
+                {
+                    int w = indentW - (width % indentW);
+                    charWidths.append(w);
+                    width += w;
                 }
                 else
                     break;
+                ++scanPos;
             }
+            int indentEnd = scanPos; // one past the last space/tab, i.e. where real text starts
+
+            if (width > 0)
+            {
+                // Target: the previous tab stop below the current width -
+                // e.g. 5 columns of indent with indentW=4 snaps to 4, not
+                // to 1 ("remove up to indentW characters"). Remove just
+                // enough characters to get there, taken from the *end* of
+                // the indent run (the side touching the real text), not
+                // the start - so 5 spaces loses the 5th one, and
+                // "\t " (tab + one space, width 4+1=5 with indentW=4)
+                // loses that trailing space, not the tab.
+                int targetWidth = ((width - 1) / indentW) * indentW;
+                int toRemove = width - targetWidth;
+
+                int accumulated = 0;
+                int removeCount = 0;
+                for (int i = charWidths.size() - 1; i >= 0; --i)
+                {
+                    accumulated += charWidths[i];
+                    ++removeCount;
+                    if (accumulated >= toRemove)
+                        break;
+                }
+
+                int removeStart = indentEnd - removeCount;
+                c.setPosition(removeStart);
+                c.setPosition(indentEnd, QTextCursor::KeepAnchor);
+                c.removeSelectedText();
+
+                // Keep start/end (and hence the cursor/selection restored
+                // at the end of the function) pinned to the same real
+                // character they pointed at before this line's removal:
+                // positions before the removed span don't move, positions
+                // after it shift left by however much was removed, and any
+                // position that was inside the removed span (only possible
+                // for a selection edge sitting inside this line's own
+                // indent) collapses to the start of that span.
+                auto adjust = [&](int pos) {
+                    if (pos <= removeStart)
+                        return pos;
+                    if (pos >= indentEnd)
+                        return pos - removeCount;
+                    return removeStart;
+                };
+                start = adjust(start);
+                end = adjust(end);
+            }
+
+            if (!c.movePosition(QTextCursor::NextBlock))
+                break;
         }
-        while (true);
     }
     else // Tab
     {
@@ -562,17 +725,9 @@ void CodeEditor::applyMultiLineIndent(QTextCursor &c, bool forward)
                          : QString(indentW, ' ');
         int indentLen = indentStr.length();
 
-        do
+        while (true)
         {
-            if (!firstPass)
-            {
-                if (!c.movePosition(QTextCursor::NextBlock))
-                    break;
-            }
-            else
-                firstPass = false;
-
-            if (c.position() >= end)
+            if (c.blockNumber() > endBlockNumber)
                 break;
 
             int pos = c.position();
@@ -581,8 +736,10 @@ void CodeEditor::applyMultiLineIndent(QTextCursor &c, bool forward)
             if (pos <= start)
                 start += indentLen;
             end += indentLen;
+
+            if (!c.movePosition(QTextCursor::NextBlock))
+                break;
         }
-        while (true);
     }
 
     c.endEditBlock();
@@ -620,91 +777,6 @@ void CodeEditor::applySingleLineTab(QTextCursor &c)
 
     QString insertText = useTabs ? "\t" : QString(spacesToAdd, ' ');
     c.insertText(insertText);
-}
-
-void CodeEditor::applySingleLineBacktab(QTextCursor &c)
-{
-    int indent = indentSize();
-
-    bool hasSelection = c.hasSelection();
-    int selStart = c.selectionStart();
-    int selEnd = c.selectionEnd();
-    int cursorPos = c.position();
-
-    QTextDocument *doc = c.document();
-    int blockStart = c.block().position();
-
-    QVector<QChar> chars;
-    QVector<int> widths;
-    int totalWidth = 0;
-    QTextCursor scan(doc);
-    scan.setPosition(blockStart);
-    while (true)
-    {
-        QChar ch = doc->characterAt(scan.position());
-        if (ch == ' ')
-        {
-            chars.append(ch);
-            widths.append(1);
-            totalWidth += 1;
-            scan.movePosition(QTextCursor::NextCharacter);
-        }
-        else if (ch == '\t')
-        {
-            int w = indent - (totalWidth % indent);
-            chars.append(ch);
-            widths.append(w);
-            totalWidth += w;
-            scan.movePosition(QTextCursor::NextCharacter);
-        }
-        else
-            break;
-    }
-    int indentEndPos = scan.position();
-
-    if (totalWidth == 0)
-        return;
-
-    int newTotalWidth = ((totalWidth - 1) / indent) * indent;
-    if (newTotalWidth == totalWidth)
-        return;
-
-    int toRemoveWidth = totalWidth - newTotalWidth;
-    int accumulated = 0;
-    int removeCount = 0;
-    for (int i = chars.size() - 1; i >= 0; --i)
-    {
-        accumulated += widths[i];
-        removeCount++;
-        if (accumulated >= toRemoveWidth)
-            break;
-    }
-
-    int removeStart = indentEndPos - removeCount;
-
-    c.setPosition(removeStart);
-    c.setPosition(indentEndPos, QTextCursor::KeepAnchor);
-    c.removeSelectedText();
-
-    auto adjustPos = [&](int pos) -> int {
-        if (pos >= removeStart && pos < indentEndPos)
-            return removeStart;          // inside deleted block - move to the beginning of the block
-        else if (pos >= indentEndPos)
-            return pos - removeCount;    // after deleted block - move left
-        else
-            return pos;                  // before deleted block - don't move
-    };
-
-    int newCursor = adjustPos(cursorPos);
-    c.setPosition(newCursor);
-
-    if (hasSelection)
-    {
-        int newStart = adjustPos(selStart);
-        int newEnd = adjustPos(selEnd);
-        c.setPosition(newStart);
-        c.setPosition(newEnd, QTextCursor::KeepAnchor);
-    }
 }
 
 // ---- multi-cursor-aware undo/redo -------------------------------------
@@ -874,6 +946,13 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
     {
         QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
 
+        // Same reasoning as the call at the top of keyPressEvent(): keep the
+        // caret(s) solid during keyboard activity. Needed here too because
+        // multi-cursor navigation/creation (arrows, Ctrl+Alt+Up/Down, Ins,
+        // etc.) is handled entirely in this filter and returns true before
+        // the event ever reaches keyPressEvent().
+        resetCaretBlink();
+
         if (keyEvent->key() == Qt::Key_Escape && _multiCursor.isMultiple())
         {
             collapseToSingleCursor();
@@ -963,6 +1042,37 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
             // the native flag stays off; see the comment by _overwriteMode.
             setOverwriteMode(_multiCursor.isMultiple() ? false : _overwriteMode);
             viewport()->update();
+            return true;
+        }
+
+        // ---- Ctrl(+Shift)+Left/Right: word jump, VS Code style (see
+        // nextWordBoundary/previousWordBoundary). Intercepted unconditionally,
+        // single cursor included - Qt's own Ctrl+Left/Right (which we'd
+        // otherwise fall through to for a single cursor) pulls the trailing
+        // space into the selection, which is exactly what this replaces. ----
+        if (ctrl && !alt && (keyEvent->key() == Qt::Key_Left || keyEvent->key() == Qt::Key_Right))
+        {
+            QTextCursor::MoveMode mode = shift ? QTextCursor::KeepAnchor : QTextCursor::MoveAnchor;
+            bool forward = keyEvent->key() == Qt::Key_Right;
+            QTextDocument *doc = document();
+
+            auto moveWord = [doc, forward, mode](QTextCursor &cur) {
+                int newPos = forward ? nextWordBoundary(doc, cur.position())
+                                      : previousWordBoundary(doc, cur.position());
+                cur.setPosition(newPos, mode);
+            };
+
+            if (_multiCursor.isMultiple())
+            {
+                _multiCursor.forEachCursor(moveWord);
+                syncToNativeCursor();
+            }
+            else
+            {
+                QTextCursor cur = textCursor();
+                moveWord(cur);
+                setTextCursor(cur);
+            }
             return true;
         }
 
@@ -1065,6 +1175,18 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
             bool forward = (keyEvent->key() == Qt::Key_Tab);
             auto applyOne = [this, forward](QTextCursor &cur)
             {
+                if (!forward)
+                {
+                    // Shift+Tab always outdents by line, no matter the
+                    // selection's shape - a bare caret with no selection
+                    // outdents its own line, a same-line selection outdents
+                    // that one line, a multi-line selection outdents every
+                    // line it touches. Unlike Tab, there's no separate
+                    // "replace the selection" behavior to special-case.
+                    applyMultiLineIndent(cur, false);
+                    return;
+                }
+
                 int start = cur.selectionStart();
                 int end = cur.selectionEnd();
                 cur.setPosition(end);
@@ -1076,10 +1198,8 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
 
                 if (multiLine)
                     applyMultiLineIndent(cur, forward);
-                else if (forward)
-                    applySingleLineTab(cur);
                 else
-                    applySingleLineBacktab(cur);
+                    applySingleLineTab(cur);
             };
 
             if (_multiCursor.isMultiple())
@@ -1152,6 +1272,11 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
 
 void CodeEditor::keyPressEvent(QKeyEvent *e)
 {
+    // Keep the caret(s) solid for the duration of keyboard activity (typing,
+    // navigation, deletion, autorepeat included) and only let them resume
+    // blinking once input goes idle - see resetCaretBlink().
+    resetCaretBlink();
+
     // QCompleter cals event() directly, so eventFilter is not called
     if (_completer && _completer->popup()->isVisible())
     {
