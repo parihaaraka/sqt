@@ -218,7 +218,7 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                 bool ok;
                 int count = 0;
                 QString res;
-                QModelIndexList il = tv->selectionModel()->selectedIndexes();
+                const QModelIndexList il = tv->selectionModel()->selectedIndexes();
                 for (const QModelIndex &i: il)
                 {
                     double val = i.data(Qt::EditRole).toDouble(&ok);

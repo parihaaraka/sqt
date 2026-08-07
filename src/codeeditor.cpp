@@ -1,4 +1,9 @@
+#include <QTextLayout>
+#include <QScrollBar>
+#include <utility>
 #include <QtGlobal>
+#include <QPlainTextDocumentLayout>
+#include <QAbstractTextDocumentLayout>
 #include "codeeditor.h"
 #include <QPainter>
 #include <QTextBlock>
@@ -509,8 +514,8 @@ void CodeEditor::applySingleCursorEdit(QTextCursor &c)
 {
     setTextCursor(c);
     _multiCursor.setCursors(c);
-    _multiUndoAvailable = false;
-    _multiRedoAvailable = false;
+    _multiUndoHistory.clear();
+    _multiRedoHistory.clear();
 }
 
 bool CodeEditor::applySmartBackspace(QTextCursor &c)
@@ -720,22 +725,58 @@ void CodeEditor::applyMultiLineIndent(QTextCursor &c, bool forward)
     }
     else // Tab
     {
-        QString indentStr = SqtSettings::value("tabsIndent", true).toBool()
-                         ? "\t"
-                         : QString(indentW, ' ');
-        int indentLen = indentStr.length();
+        QTextDocument *doc = c.document();
+        bool useTabs = SqtSettings::value("tabsIndent", true).toBool();
 
         while (true)
         {
             if (c.blockNumber() > endBlockNumber)
                 break;
 
-            int pos = c.position();
-            c.insertText(indentStr);
+            // Same tab-aware width scan as Backtab, to find this line's
+            // current indent width - so we know which tab stop is next.
+            int lineStart = c.position();
+            int width = 0;
+            int scanPos = lineStart;
+            while (true)
+            {
+                QChar ch = doc->characterAt(scanPos);
+                if (ch == QLatin1Char(' '))
+                    width += 1;
+                else if (ch == QLatin1Char('\t'))
+                    width += indentW - (width % indentW);
+                else
+                    break;
+                ++scanPos;
+            }
+            int indentEnd = scanPos;
 
-            if (pos <= start)
-                start += indentLen;
-            end += indentLen;
+            // Target: the next tab stop above the current width - always a
+            // full step forward, even when already sitting exactly on one
+            // (VS Code: a line already at column 4 with indentW=4 lands on
+            // 8, not stays put). The whole existing indent run is replaced
+            // by a canonical one of that width, rather than just having
+            // something appended to it - so mixed leftover spacing from
+            // earlier edits doesn't accumulate, and a line's indent always
+            // ends up an exact, clean multiple of the tab stop.
+            int targetWidth = ((width / indentW) + 1) * indentW;
+            QString newIndent = useTabs ? QString(targetWidth / indentW, QLatin1Char('\t'))
+                                         : QString(targetWidth, QLatin1Char(' '));
+
+            c.setPosition(lineStart);
+            c.setPosition(indentEnd, QTextCursor::KeepAnchor);
+            c.insertText(newIndent); // replaces the old indent (the active selection) in one go
+
+            int delta = newIndent.length() - (indentEnd - lineStart);
+            auto adjust = [&](int pos) {
+                if (pos <= lineStart)
+                    return pos;
+                if (pos >= indentEnd)
+                    return pos + delta;
+                return lineStart + int(newIndent.length()); // was inside the old indent run
+            };
+            start = adjust(start);
+            end = adjust(end);
 
             if (!c.movePosition(QTextCursor::NextBlock))
                 break;
@@ -806,19 +847,25 @@ void CodeEditor::restoreCursorSnapshot(const QVector<QPair<int,int>> &snapshot)
         _multiCursor.addCursor(makeCursor(snapshot[i]));
 }
 
+void CodeEditor::recordMultiEditUndo(const QVector<QPair<int,int>> &preState)
+{
+    MultiEditCursorHistory entry;
+    entry.pre = preState;
+    entry.post = snapshotCursors(_multiCursor);
+
+    _multiUndoHistory.append(entry);
+    _multiRedoHistory.clear();
+}
+
 // Performs an edit through every active cursor (see MultiTextCursor::editBlock)
-// and remembers the cursor set from just before/after it, so a subsequent
-// Ctrl+Z / Ctrl+Y can restore the whole set instead of collapsing to one.
+// and remembers the cursor set from just before/after it, so consecutive
+// Ctrl+Z / Ctrl+Y operations restore the whole set in lockstep.
 void CodeEditor::performMultiEdit(std::function<void(QTextCursor&)> fn)
 {
     QVector<QPair<int,int>> preState = snapshotCursors(_multiCursor);
     _multiCursor.editBlock(fn);
     syncToNativeCursor();
-
-    _preMultiEditCursorState = preState;
-    _postMultiEditCursorState = snapshotCursors(_multiCursor);
-    _multiUndoAvailable = true;
-    _multiRedoAvailable = false;
+    recordMultiEditUndo(preState);
 }
 
 // Indices into _multiCursor.cursors(), ascending by selectionStart() - the
@@ -1012,24 +1059,33 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
         }
 
         // ---- multi-cursor-aware undo/redo ----
-        if (ctrl && !alt && !shift && keyEvent->key() == Qt::Key_Z && _multiUndoAvailable)
+        // Keep consuming Ctrl+Z while our parallel history has entries, so
+        // several consecutive undos restore the corresponding cursor sets
+        // instead of letting QPlainTextEdit collapse back to one cursor.
+        if (ctrl && !alt && !shift && keyEvent->key() == Qt::Key_Z &&
+            !_multiUndoHistory.isEmpty())
         {
+            const MultiEditCursorHistory entry = _multiUndoHistory.takeLast();
             undo();
-            restoreCursorSnapshot(_preMultiEditCursorState);
+
+            restoreCursorSnapshot(entry.pre);
             syncToNativeCursor();
-            _multiUndoAvailable = false;
-            _multiRedoAvailable = true;
+
+            _multiRedoHistory.append(entry);
             return true;
         }
+
         if (ctrl && !alt &&
                 ((keyEvent->key() == Qt::Key_Y) || (shift && keyEvent->key() == Qt::Key_Z)) &&
-                _multiRedoAvailable)
+                !_multiRedoHistory.isEmpty())
         {
+            const MultiEditCursorHistory entry = _multiRedoHistory.takeLast();
             redo();
-            restoreCursorSnapshot(_postMultiEditCursorState);
+
+            restoreCursorSnapshot(entry.post);
             syncToNativeCursor();
-            _multiRedoAvailable = false;
-            _multiUndoAvailable = true;
+
+            _multiUndoHistory.append(entry);
             return true;
         }
 
@@ -1334,8 +1390,8 @@ void CodeEditor::keyPressEvent(QKeyEvent *e)
         // (typing, a plain Backspace, Ctrl+V, ...) - any snapshot we saved
         // for multi-cursor undo/redo no longer sits on top of the
         // document's undo stack, so forget it.
-        _multiUndoAvailable = false;
-        _multiRedoAvailable = false;
+        _multiUndoHistory.clear();
+        _multiRedoHistory.clear();
     }
 
     // Only resync (which collapses to a single cursor) if the native cursor
@@ -1416,81 +1472,259 @@ void CodeEditor::insertFromMimeData(const QMimeData *source)
     _multiCursor.mergeOverlapping();
 
     syncToNativeCursor();
+    recordMultiEditUndo(preState);
+}
 
-    _preMultiEditCursorState = preState;
-    _postMultiEditCursorState = snapshotCursors(_multiCursor);
-    _multiUndoAvailable = true;
-    _multiRedoAvailable = false;
+namespace
+{
+    // Same background handling used by QPlainTextEdit for block backgrounds.
+    // Keeping the brush origin/gradient transform matters for styles that use
+    // gradients and for WaveUnderline rendering.
+    static void fillEditorBackground(QPainter *painter,
+                                      const QRectF &rect,
+                                      QBrush brush,
+                                      const QRectF &gradientRect = QRectF())
+    {
+        painter->save();
+
+        if (brush.style() >= Qt::LinearGradientPattern
+            && brush.style() <= Qt::ConicalGradientPattern
+            && !gradientRect.isNull())
+        {
+            QTransform transform = QTransform::fromTranslate(
+                gradientRect.left(), gradientRect.top());
+            transform.scale(gradientRect.width(), gradientRect.height());
+            brush.setTransform(transform);
+
+            if (brush.gradient())
+                const_cast<QGradient *>(brush.gradient())->setCoordinateMode(
+                    QGradient::LogicalMode);
+        }
+        else
+        {
+            painter->setBrushOrigin(rect.topLeft());
+        }
+
+        painter->fillRect(rect, brush);
+        painter->restore();
+    }
 }
 
 void CodeEditor::paintEvent(QPaintEvent *event)
 {
-    QPlainTextEdit::paintEvent(event);
-
-    if (!_multiCursor.isMultiple() || !_caretBlinkVisible)
-        return;
-
-    QPainter painter(viewport());
-    QColor color = palette().text().color();
-    painter.setPen(QPen(color, _nativeCursorWidth));
-
-    // In overwrite mode Qt normally swaps the thin caret for a block the
-    // width of the character it's about to replace; we mimic that here
-    // for every extra cursor too, not just the (hidden) native one. Note:
-    // _overwriteMode, not overwriteMode() - the native flag is forced off
-    // while several cursors are active (see syncToNativeCursor).
-    bool overwrite = _overwriteMode;
-    QColor bg = viewport()->palette().color(QPalette::Base);
-
-    // Native cursor rendering is disabled (cursorWidth 0) while multiple
-    // cursors are active, so we paint every one of them here, including
-    // the main cursor - all sharing the same blink flag, so they blink
-    // in sync.
-    for (const QTextCursor &cur : _multiCursor.cursors())
+    if (!_multiCursor.isMultiple())
     {
-        QRect r = cursorRect(cur);
-        // NOTE: don't use QRect::isValid() here - with cursorWidth(0) (set
-        // above so the native caret doesn't also draw) the rect's width is
-        // always 0, which makes isValid() false for every cursor. Height is
-        // what actually tells us whether this is a real, laid-out line.
-        if (r.height() <= 0)
-            continue;
+        // Keep the complete native QPlainTextEdit implementation for the
+        // ordinary single-cursor case.
+        QPlainTextEdit::paintEvent(event);
+        return;
+    }
 
-        if (overwrite)
+    // Do NOT call QPlainTextEdit::paintEvent() here. Its implementation uses
+    // getPaintContext().cursorPosition and eventually calls
+    // QTextLayout::drawCursor() for the native cursor. On Windows/Fusion that
+    // cursor can survive cursorWidth(0), and it has its own blink/geometry.
+    //
+    // Instead, this is the relevant QPlainTextEdit paint path with exactly
+    // the same document/layout/selection machinery, but with the native
+    // cursor disabled. Our synchronized cursors are drawn below using the
+    // very same QTextLayout::drawCursor() implementation.
+    QPainter painter(viewport());
+    Q_ASSERT(qobject_cast<QPlainTextDocumentLayout *>(document()->documentLayout()));
+
+    QPointF offset = contentOffset();
+    QRect er = event->rect();
+    QRect viewportRect = viewport()->rect();
+
+    QTextBlock block = firstVisibleBlock();
+    const qreal maximumWidth = document()->documentLayout()->documentSize().width();
+
+    painter.setBrushOrigin(offset);
+
+    // Keep right margin clean from full-width selections.
+    const int maxX = int(offset.x()
+                        + qMax(qreal(viewportRect.width()), maximumWidth)
+                        - document()->documentMargin()
+                        + cursorWidth());
+    er.setRight(qMin(er.right(), maxX));
+    painter.setClipRect(er);
+
+    if (document()->isEmpty() && !placeholderText().isEmpty())
+    {
+        const QColor col = palette().placeholderText().color();
+        painter.setPen(col);
+        painter.setClipRect(event->rect());
+
+        const int margin = int(document()->documentMargin());
+        QRectF textRect = viewportRect.adjusted(margin, margin, 0, 0);
+        painter.drawText(textRect,
+                         Qt::AlignTop | Qt::TextWordWrap,
+                         placeholderText());
+    }
+
+    QAbstractTextDocumentLayout::PaintContext context = getPaintContext();
+
+    // This is the crucial part: let Qt draw the text and all ExtraSelections,
+    // but explicitly suppress its native caret. In Qt's own paintEvent(),
+    // cursorPosition is what causes QTextLayout::drawCursor() to be called.
+    context.cursorPosition = -1;
+
+    painter.setPen(context.palette.text().color());
+
+    const bool overwrite = _overwriteMode;
+
+    while (block.isValid())
+    {
+        QRectF r = blockBoundingRect(block).translated(offset);
+        QTextLayout *layout = block.layout();
+
+        if (!block.isVisible())
         {
-            // Character that would be overwritten, and its width - fall
-            // back to a plain space's width at end of line/document, same
-            // as Qt's own overwrite caret does. Read it strictly from
-            // cur.position() (clearing any selection on the copy first) so
-            // a selected cursor doesn't pull in the whole selected range.
-            QTextCursor charCur(cur);
-            charCur.clearSelection();
-            charCur.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor);
-            QString ch = charCur.selectedText();
-            bool realChar = !ch.isEmpty() && ch.at(0) != QChar::ParagraphSeparator;
-            int w = realChar ? fontMetrics().horizontalAdvance(ch.at(0))
-                              : fontMetrics().horizontalAdvance(QLatin1Char(' '));
+            offset.ry() += r.height();
+            block = block.next();
+            continue;
+        }
 
-            // Solid block, like a terminal cursor, with the character
-            // redrawn in the editor's background color on top so it stays
-            // crisp instead of fading into a translucent smear. Drawn the
-            // same way whether or not this cursor has a selection - with
-            // the block blinking, it's still clearly distinguishable from
-            // the (static) selection highlight, and a thin line here would
-            // be easy to lose against the selection background.
-            QRect block(r.left(), r.top(), w, r.height());
-            painter.fillRect(block, color);
-            if (realChar)
+        if (r.bottom() >= er.top() && r.top() <= er.bottom())
+        {
+            QTextBlockFormat blockFormat = block.blockFormat();
+            QBrush bg = blockFormat.background();
+
+            if (bg != Qt::NoBrush)
             {
-                painter.setPen(bg);
-                painter.drawText(QPoint(r.left(), r.top() + fontMetrics().ascent()), ch.left(1));
-                painter.setPen(QPen(color, _nativeCursorWidth));
+                QRectF contentsRect = r;
+                contentsRect.setWidth(qMax(r.width(), maximumWidth));
+                fillEditorBackground(&painter, contentsRect, bg, contentsRect);
+            }
+
+            QList<QTextLayout::FormatRange> selections;
+            const int blpos = block.position();
+            const int bllen = block.length();
+
+            // In overwrite mode, Qt paints the character under the caret
+            // using the caret color and redraws the character itself using
+            // the editor background color.  Add these masks to the
+            // QTextLayout::FormatRange list for THIS block.  They must not
+            // be appended to context.selections: that list contains
+            // QAbstractTextDocumentLayout::Selection objects, not
+            // QTextLayout::FormatRange objects.
+            if (overwrite)
+            {
+                const QPalette &pal = context.palette;
+
+                for (const QTextCursor &cur : std::as_const(_multiCursor.cursors()))
+                {
+                    if (cur.block() != block)
+                        continue;
+
+                    QTextCursor charCur(cur);
+                    charCur.clearSelection();
+
+                    const int cpos = charCur.position() - blpos;
+                    if (cpos < 0 || cpos >= bllen - 1)
+                        continue; // EOL: draw a normal thin caret below.
+
+                    QTextLayout::FormatRange mask;
+                    mask.start = cpos;
+                    mask.length = 1;
+                    mask.format.setForeground(pal.base());
+                    mask.format.setBackground(pal.text());
+                    selections.append(mask);
+                }
+            }
+
+            for (const QAbstractTextDocumentLayout::Selection &range : std::as_const(context.selections))
+            {
+                const int selStart = range.cursor.selectionStart() - blpos;
+                const int selEnd = range.cursor.selectionEnd() - blpos;
+
+                if (selStart < bllen && selEnd > 0 && selEnd > selStart)
+                {
+                    QTextLayout::FormatRange o;
+                    o.start = selStart;
+                    o.length = selEnd - selStart;
+                    o.format = range.format;
+                    selections.append(o);
+                }
+                else if (!range.cursor.hasSelection()
+                         && range.format.hasProperty(QTextFormat::FullWidthSelection)
+                         && block.contains(range.cursor.position()))
+                {
+                    // Same full-width selection handling as QPlainTextEdit.
+                    QTextLayout::FormatRange o;
+                    QTextLine line = layout->lineForTextPosition(
+                        range.cursor.position() - blpos);
+                    o.start = line.textStart();
+                    o.length = line.textLength();
+
+                    if (o.start + o.length == bllen - 1)
+                        ++o.length; // include newline
+
+                    o.format = range.format;
+                    selections.append(o);
+                }
+            }
+
+            // QTextLayout::draw() uses the exact same fractional text
+            // geometry as Qt's native caret. No QRect/toRect conversion is
+            // involved here.
+            layout->draw(&painter, offset, selections, er);
+
+            if (_caretBlinkVisible)
+            {
+                painter.setPen(context.palette.text().color());
+
+                for (const QTextCursor &cur : _multiCursor.cursors())
+                {
+                    if (cur.block() != block)
+                        continue;
+
+                    const int cpos = cur.position() - blpos;
+
+                    if (cpos < 0 || cpos > bllen - 1)
+                        continue;
+
+                    if (overwrite)
+                    {
+                        // Qt's overwrite caret is represented by the masked
+                        // character above. At EOL it falls back to a normal
+                        // thin caret, so only draw the thin caret there.
+                        if (cpos < bllen - 1)
+                            continue;
+                    }
+
+                    // This is deliberately QTextLayout::drawCursor(), not
+                    // QPainter::drawLine()/fillRect(). Qt performs all the
+                    // fractional-DPI rounding and bidi-aware cursor geometry
+                    // here, so our caret lands exactly where Qt's native caret
+                    // would have landed.
+                    layout->drawCursor(
+                        &painter,
+                        offset,
+                        cpos,
+                        qMax(1, _nativeCursorWidth));
+                }
             }
         }
-        else
-        {
-            painter.drawLine(r.topLeft(), r.bottomLeft());
-        }
+
+        offset.ry() += r.height();
+
+        if (offset.y() > viewportRect.height())
+            break;
+
+        block = block.next();
+    }
+
+    // Match QPlainTextEdit's background handling below the last document block.
+    if (backgroundVisible()
+        && !block.isValid()
+        && offset.y() <= er.bottom()
+        && (centerOnScroll()
+            || verticalScrollBar()->maximum() == verticalScrollBar()->minimum()))
+    {
+        painter.fillRect(
+            QRect(QPoint(er.left(), int(offset.y())), er.bottomRight()),
+            palette().window());
     }
 }
 
@@ -1578,8 +1812,9 @@ void CodeEditor::onHlTimerTimeout()
     {
         // prevent search for not a word
         bool mayBeWord = true;
-        for (const QChar &c: selectedText)
+        for (int i = 0; i < selectedText.size(); ++i)
         {
+            const QChar c = selectedText.at(i);
             if (!c.isLetterOrNumber() && c != '_')
             {
                 mayBeWord = false;

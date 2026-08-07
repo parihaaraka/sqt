@@ -11,7 +11,7 @@ SqlLexer::SqlLexer(const QJsonDocument &settings)
     _delimiters = " \t\r\n``'\";:()[]<>{}/\\^&$|!?~,.-+*%=" + settings["add_separators"].toString();
     _tsqlBrackets = settings["identifier"].toObject()["brackets"].toBool(false);
 
-    QJsonArray fnDict = settings["function"].toObject()["dict"].toArray();
+    const QJsonArray fnDict = settings["function"].toObject()["dict"].toArray();
     for (const QJsonValue &v: fnDict)
     {
         QString kw = v.toString();
@@ -20,10 +20,10 @@ SqlLexer::SqlLexer(const QJsonDocument &settings)
     }
 
     // keywords, operator-like functions, data types and so on
-    QJsonArray kwPartition = settings["keyword"].toArray();
+    const QJsonArray kwPartition = settings["keyword"].toArray();
     for (const QJsonValue &p: kwPartition)
     {
-        QJsonArray kwDict = p.toObject()["dict"].toArray();
+        const QJsonArray kwDict = p.toObject().value("dict").toArray();
         int group = _keywordGroupCount++;
         for (const QJsonValue &v: kwDict)
         {

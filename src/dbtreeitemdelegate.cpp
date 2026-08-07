@@ -4,8 +4,8 @@
 #include <QAbstractTextDocumentLayout>
 #include <QTreeView>
 #include <QSortFilterProxyModel>
-#include "dbobject.h"
 #include "dbconnection.h"
+#include "dbobject.h"
 #include "dbconnectionfactory.h"
 #include "styling.h"
 
@@ -60,7 +60,7 @@ void DbTreeItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
             auto con = DbConnectionFactory::connection(QString::number(std::intptr_t(obj)));
             if (con)
             {
-                QColor color = (con->isOpened() ? Qt::green : QColor::fromString("#E0FF4040"));
+                QColor color = (con->isOpened() ? Qt::green : QColor::fromString("#E0FF4040")); // NOLINT
                 painter->setBrush(QBrush(color));
                 painter->setPen(color.darker(160));
                 painter->drawEllipse(option.rect.topLeft() + QPoint(17, 4), 2, 2);
@@ -120,8 +120,8 @@ MyProxyStyle::MyProxyStyle(QStyle *style) : QProxyStyle(style)
 
     QString appPath = QApplication::applicationDirPath();
     QString scheme = isDarkMode() ? "dark" : "light";
-    QFileInfo fi_c(QString("%1%2-%3.svg").arg(appPath).arg("/decor/branch-closed").arg(scheme));
-    QFileInfo fi_o(QString("%1%2-%3.svg").arg(appPath).arg("/decor/branch-opened").arg(scheme));
+    QFileInfo fi_c(QString("%1%2-%3.svg").arg(appPath, "/decor/branch-closed", scheme));
+    QFileInfo fi_o(QString("%1%2-%3.svg").arg(appPath, "/decor/branch-opened", scheme));
     //QFileInfo fi_c(QApplication::applicationDirPath() + "/decor/branch-closed.png");
     //QFileInfo fi_o(QApplication::applicationDirPath() + "/decor/branch-open.png");
     if (fi_c.exists() && fi_o.exists())

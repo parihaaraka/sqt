@@ -4,7 +4,10 @@
 #include <QToolTip>
 #include "querywidget.h"
 #include "codeeditor.h"
-#include "set"
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#include <QStringView>
+#endif
+
 
 FindAndReplacePanel::FindAndReplacePanel(QWidget *parent) :
     QWidget(parent),
@@ -449,7 +452,7 @@ void FindAndReplacePanel::on_btnReplaceAll_clicked()
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
             dst.append(src_text.midRef(prevPos, match.capturedStart() - prevPos));
 #else
-            dst.append(src_text.mid(prevPos, match.capturedStart() - prevPos));
+            dst.append(QStringView(src_text).mid(prevPos, match.capturedStart() - prevPos));
 #endif
             dst.append(tmp);
             prevPos = match.capturedEnd();
@@ -479,7 +482,7 @@ void FindAndReplacePanel::on_btnReplaceAll_clicked()
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
         dst.append(src_text.midRef(prevPos));
 #else
-        dst.append(src_text.mid(prevPos));
+        dst.append(QStringView(src_text).mid(prevPos));
 #endif
         Bookmarks::suspend();
 

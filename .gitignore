@@ -5,3 +5,4 @@ tmp
 .cache
 build*/
 /vcpkg*
+.gigacode*

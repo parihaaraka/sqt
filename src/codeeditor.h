@@ -125,18 +125,22 @@ private:
 
     // ---- multi-cursor-aware undo/redo ----
     // Qt's document undo/redo is a single stack shared by everything; it
-    // has no idea several cursors were involved in an edit. So we keep our
-    // own one-step-deep memory of "the cursor set right before/after the
-    // last multi-cursor edit" and intercept Ctrl+Z/Ctrl+Y ourselves to
-    // restore it in lockstep with the document undo/redo.
+    // has no idea several cursors were involved in an edit. Keep a parallel
+    // stack of cursor snapshots so consecutive Ctrl+Z/Ctrl+Y operations can
+    // restore the whole multi-cursor set, not just the most recent edit.
     void performMultiEdit(std::function<void(QTextCursor&)> fn);
+    void recordMultiEditUndo(const QVector<QPair<int,int>> &preState);
     static QVector<QPair<int,int>> snapshotCursors(const MultiTextCursor &mc); // {anchor, position} per cursor
     void restoreCursorSnapshot(const QVector<QPair<int,int>> &snapshot);
 
-    QVector<QPair<int,int>> _preMultiEditCursorState;
-    QVector<QPair<int,int>> _postMultiEditCursorState;
-    bool _multiUndoAvailable = false;
-    bool _multiRedoAvailable = false;
+    struct MultiEditCursorHistory
+    {
+        QVector<QPair<int,int>> pre;
+        QVector<QPair<int,int>> post;
+    };
+
+    QVector<MultiEditCursorHistory> _multiUndoHistory;
+    QVector<MultiEditCursorHistory> _multiRedoHistory;
 
     QWidget *_leftSideBar;
     QTimer *_hlTimer;
@@ -144,11 +148,10 @@ private:
     bool _caretBlinkVisible = true;
 
     // Logical overwrite (Ins) state. Mirrors QPlainTextEdit's own
-    // overwriteMode() *except* while several cursors are active: Qt's
-    // native overwrite caret ignores setCursorWidth(0) and keeps drawing
-    // itself (on its own blink cycle) regardless, so with multiple cursors
-    // we turn the native flag off and do the block-caret drawing and the
-    // "eat next character" typing logic ourselves, driven by this flag.
+    // overwriteMode() except while several cursors are active: the native
+    // cursor is completely suppressed by our paintEvent(), and overwrite
+    // caret rendering is handled for every active cursor using the same
+    // QTextLayout geometry as Qt's own renderer.
     bool _overwriteMode = false;
     QCompleter *_completer = nullptr;
     MultiTextCursor _multiCursor;

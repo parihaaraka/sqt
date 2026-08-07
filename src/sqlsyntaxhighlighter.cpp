@@ -52,7 +52,7 @@ void SqlSyntaxHighlighter::initFormats(const QJsonDocument &settings)
     formats[int(SqlLexer::Token::Number)] =
             hlFormat(settings["number"], "code", Qt::darkMagenta, true, false);
     formats[int(SqlLexer::Token::Variable)] =
-            hlFormat(settings["variable"], "code", {"#4f2b2a"}, false, false);
+            hlFormat(settings["variable"], "code", {"#4f2b2a"}, false, false); // NOLINT
     formats[int(SqlLexer::Token::Function)] =
             hlFormat(settings["function"], "code", Qt::darkBlue, true, false);
 

@@ -22,7 +22,7 @@ PgConnection::~PgConnection()
         delete _temp_result;
         _temp_result = nullptr;
     }
-    close();
+    PgConnection::close();
 }
 
 DbConnection *PgConnection::clone()

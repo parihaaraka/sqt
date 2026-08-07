@@ -166,7 +166,7 @@ MainWindow::MainWindow(QWidget *parent) :
 
     restoreGeometry(SqtSettings::value("mainWindowGeometry").toByteArray());
     restoreState(SqtSettings::value("mainWindowState").toByteArray());
-    QList<RecentFile> fList = SqtSettings::value("recentFiles").value<QList<RecentFile>>();
+    const QList<RecentFile> fList = SqtSettings::value("recentFiles").value<QList<RecentFile>>();
     for (const auto &f: fList)
     {
         QAction *a = ui->menuOpen_recent->addAction(f.fileName);
@@ -204,7 +204,7 @@ MainWindow::MainWindow(QWidget *parent) :
 
     // close tab page
     tabWidgetAction = new QAction(tr("close page"), ui->tabWidget);
-    tabWidgetAction->setShortcut(QKeySequence::Close);
+    tabWidgetAction->setShortcuts(QKeySequence::Close);
     connect(tabWidgetAction, &QAction::triggered, [this]()
     {
         int index = targetTabIndex();
@@ -254,7 +254,7 @@ MainWindow::MainWindow(QWidget *parent) :
         _menuTabIndex = index;
         QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(index));
         bool hasFileName = (w && !w->fileName().isEmpty());
-        for (QAction *action: _fileTabActions)
+        for (QAction *action: std::as_const(_fileTabActions))
             action->setVisible(hasFileName);
         QMenu::exec(tabBar->actions(), tabBar->mapToGlobal(pos));
         _menuTabIndex = -1;
@@ -304,7 +304,8 @@ MainWindow::MainWindow(QWidget *parent) :
                 else if (currentConnection && connection->connectionString() == currentConnection->connectionString())
                 {
                     // put databases of current connection on top level
-                    QAction *next = dbBtnMenu->actions().isEmpty() ? nullptr : dbBtnMenu->actions().first();
+                    auto actionsList = dbBtnMenu->actions();
+                    QAction *next = actionsList.isEmpty() ? nullptr : actionsList.first();
                     QList<QAction*> actions;
                     for (int i = 0; i < databases.size(); ++i)
                     {
@@ -650,7 +651,7 @@ void MainWindow::selectionChanged(const QItemSelection &selected, const QItemSel
     Q_UNUSED(selected)
     Q_UNUSED(deselected)
     QItemSelectionModel *selectionModel = qobject_cast<QItemSelectionModel*>(sender());
-    QModelIndexList si = selectionModel->selectedIndexes();
+    const QModelIndexList si = selectionModel->selectedIndexes();
     QModelIndex cur = selectionModel->currentIndex();
 
     // We have to allow *single* parent for all selected nodes,
@@ -1058,7 +1059,7 @@ QVariant MainWindow::current(const QString &nodeType, const QString &field)
 QVariantList MainWindow::selected(const QString &nodeType, const QString &field)
 {
     QVariantList res;
-    QModelIndexList indexes = ui->objectsView->selectionModel()->selectedIndexes();
+    const QModelIndexList indexes = ui->objectsView->selectionModel()->selectedIndexes();
     for (const QModelIndex &i: indexes)
     {
         if (i.data(DbObject::TypeRole).toString() != nodeType)
@@ -1168,7 +1169,7 @@ void MainWindow::scriptSelectedObjects()
         return;
     }
     QItemSelectionModel *selectionModel = qobject_cast<QItemSelectionModel*>(ui->objectsView->selectionModel());
-    QModelIndexList si = selectionModel->selectedIndexes();
+    const QModelIndexList si = selectionModel->selectedIndexes();
 
     std::shared_ptr<DbConnection> con = _objectsModel->dbConnection(srcIndex);
     if  (
@@ -1559,7 +1560,7 @@ void MainWindow::onError(const QString &err)
         _hideTimer->start();
 
     QTextCharFormat fmt = ui->log->currentCharFormat();
-    fmt.setForeground(QBrush(QColor::fromString("#E0FF4040")));
+    fmt.setForeground(QBrush(QColor::fromString("#E0FF4040"))); // NOLINT
     ui->log->mergeCurrentCharFormat(fmt);
     log(err);
 }

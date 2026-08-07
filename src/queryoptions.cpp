@@ -34,10 +34,12 @@ QJsonObject QueryOptions::Extract(const QString &query)
 
         // merge result with last options scope
         QJsonObject tmp;
-        const auto keys = doc.object().keys();
-        for (const QString &k: keys)
+        const QJsonObject obj = doc.object();
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it)
         {
-            QJsonValue v = doc.object()[k];
+            const QString &k = it.key();
+            const QJsonValue &v = it.value();
+
             if (k == "interval" && !result.contains(k))
                 tmp.insert(k, v);
             else if (k == "copy_src" || k == "copy_dst" || k == "charts")

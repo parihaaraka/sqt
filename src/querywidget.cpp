@@ -630,7 +630,7 @@ void QueryWidget::onError(const QString &text)
         emit error(logMessage(text));
         return;
     }
-    log(text, QColor::fromString("#E0FF4040"));
+    log(text, QColor::fromString("#E0FF4040")); // NOLINT
 }
 
 void QueryWidget::fetched(DataTable *table)
@@ -658,7 +658,7 @@ void QueryWidget::fetched(DataTable *table)
         if (!_resSplitter->count())
         {
             // create charts
-            QJsonArray jCharts = _querySettings["charts"].toArray();
+            const QJsonArray jCharts = _querySettings["charts"].toArray();
             for (auto g: jCharts)
             {
                 auto gObj = g.toObject();

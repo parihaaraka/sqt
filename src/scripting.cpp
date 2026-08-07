@@ -60,7 +60,7 @@ QString dbmsScriptPath(DbConnection *con, Context context)
     if (!dir.exists())
         throw QObject::tr("directory %1 does not exist").arg(startPath);
 
-    QStringList subdirs = dir.entryList(QStringList(), QDir::AllDirs | QDir::NoDotAndDotDot);
+    const QStringList subdirs = dir.entryList(QStringList(), QDir::AllDirs | QDir::NoDotAndDotDot);
     QString dbmsName = con->dbmsName();
     if (dbmsName.isEmpty())
         throw QObject::tr("unable to get dbms name");
@@ -151,7 +151,7 @@ QString versionSpecificPart(const QString &script, int version)
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
             res.append(script.midRef(pos, match.capturedStart() - pos));
 #else
-            res.append(script.mid(pos, match.capturedStart() - pos));
+            res.append(QStringView(script).mid(pos, match.capturedStart() - pos));
 #endif
             if (cond == "if")
             {
@@ -221,7 +221,7 @@ QString versionSpecificPart(const QString &script, int version)
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
         res.append(script.midRef(pos));
 #else
-        res.append(script.mid(pos));
+        res.append(QStringView(script).mid(pos));
 #endif
 	};
 	fill();
@@ -239,8 +239,8 @@ void refresh(DbConnection *connection, Context context)
     auto &bunch = _scripts[connection->dbmsScriptingID() + context2str(context)];
     bunch.clear();
 
-    QFileInfoList files = QDir(path).entryInfoList({"*.*"}, QDir::Files);
-    for (const auto &f : files)
+    const QFileInfoList files = QDir(path).entryInfoList({"*.*"}, QDir::Files);
+    for (const auto &f: files)
     {
         QString suffix = f.suffix().toLower();
         if (suffix != "sql" && suffix != "qs")
