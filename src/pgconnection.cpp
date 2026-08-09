@@ -347,7 +347,7 @@ QMetaType::Type PgConnection::sqlTypeToVariant(int sqlType) const noexcept
     }
     return var_type;
 }
-void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *params) noexcept
+bool PgConnection::executeAsync(const QString &query, const QVector<QVariant> *params) noexcept
 {
     // an empty query is not a new request, but the resend of the current one
     // (see asyncConnectionProceed()), so it must pass the check below
@@ -364,11 +364,14 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
         if (initial_state == PQTRANS_ACTIVE || queryState() != QueryState::Inactive)
         {
             emit error(tr("another command is already in progress"));
-            return;
+            return false;
         }
     }
 
-    auto run_query = [this, query, params]()
+    // run_query() is executed in another thread, so the caller's params must
+    // not be referenced from there: they may be long gone by then
+    const QVector<QVariant> params_copy = (params ? *params : QVector<QVariant>());
+    auto run_query = [this, query, params_copy]()
     {
         QMutexLocker lk(&_connectionGuard);
         bool was_in_transaction = (PQtransactionStatus(_conn) == PQTRANS_INTRANS);
@@ -382,11 +385,8 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
         {
             _query_tmp = query;
             _params_tmp.clear();
-            if (params)
-            {
-                for (const QVariant &v: *params)
-                    _params_tmp.add(v);
-            }
+            for (const QVariant &v: params_copy)
+                _params_tmp.add(v);
         }
 
         int async_sent_ok = 0;
@@ -463,7 +463,7 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
     if (query.isEmpty())
     {
         run_query();
-        return;
+        return true;
     }
 
     clearResultsets();
@@ -524,6 +524,7 @@ void PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
         emit queryFinished();
     });
     thread->start();
+    return true;
 }
 
 bool PgConnection::execute(const QString &query, const QVector<QVariant> *params)

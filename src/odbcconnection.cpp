@@ -548,11 +548,14 @@ void OdbcConnection::clarifyTableStructure(DataTable &)
     // TODO
 }
 
-void OdbcConnection::executeAsync(const QString &query, const QVector<QVariant> *params) noexcept
+bool OdbcConnection::executeAsync(const QString &query, const QVector<QVariant> *params) noexcept
 {
+    // the lambda outlives this call and runs in another thread, hence the copy:
+    // the caller's params may be gone by the time the query starts
+    const QVector<QVariant> params_copy = (params ? *params : QVector<QVariant>());
     QThread* thread = new QThread();
-    connect(thread, &QThread::started, thread, [this, query, thread, params]() {
-        execute(query, params);
+    connect(thread, &QThread::started, thread, [this, query, thread, params_copy]() {
+        execute(query, params_copy.isEmpty() ? nullptr : &params_copy);
         thread->quit();
     });
     connect(thread, &QThread::finished, [this, thread]() {
@@ -560,6 +563,7 @@ void OdbcConnection::executeAsync(const QString &query, const QVector<QVariant> 
         emit queryFinished();
     });
     thread->start();
+    return true;
 }
 
 bool OdbcConnection::open()

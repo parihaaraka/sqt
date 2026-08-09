@@ -1,4 +1,5 @@
 #include "appeventhandler.h"
+#include "decimalsum.h"
 #include <QTableView>
 #include <QKeyEvent>
 #include <QApplication>
@@ -56,7 +57,11 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
 
             QString stringValue;
             if (QTableView *tv = qobject_cast<QTableView*>(obj))
-                stringValue = tv->selectionModel()->currentIndex().data().toString();
+            {
+                // no model - no selection model to ask
+                if (QItemSelectionModel *sm = tv->selectionModel())
+                    stringValue = sm->currentIndex().data().toString();
+            }
             else if (QPlainTextEdit *ed = qobject_cast<QPlainTextEdit*>(obj))
             {
                 stringValue = ed->textCursor().selectedText();
@@ -172,7 +177,10 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
             return true;
         }
 
-        if (QTableView *tv = qobject_cast<QTableView*>(obj))
+        QTableView *tv = qobject_cast<QTableView*>(obj);
+        // both branches below work with the selection, which a view
+        // without a model does not have
+        if (tv && tv->selectionModel())
         {
             if (keyEvent->matches(QKeySequence::Copy))
             {
@@ -210,76 +218,24 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
             }
             else if (keyCode == Qt::Key_F6) // sum numerical values of selected cells
             {
-                // lets try to sum big numerics precisely
-                double sumDouble = 0;
-                qlonglong sumInt = 0;
-                qlonglong sumFrac = 0;
-                int maxScale = 0;
-                bool ok;
-                int count = 0;
+                // Values are summed exactly as they are printed: a decimal
+                // accumulator is bound neither by the range of int64 nor by the
+                // precision of double, so a wide numeric survives intact and
+                // NaN/Infinity are simply not numbers to sum.
+                DecimalSum sum;
                 QString res;
                 const QModelIndexList il = tv->selectionModel()->selectedIndexes();
                 for (const QModelIndex &i: il)
                 {
-                    double val = i.data(Qt::EditRole).toDouble(&ok);
-                    if (ok)
-                    {
-                        QString tmp = i.data(Qt::EditRole).toString();
-                        int dotPos = tmp.indexOf('.');
-                        if (tmp.indexOf('e') != -1 || (dotPos == -1 && val != static_cast<qlonglong>(val))) // floating point exponential form
-                        {
-                            sumDouble += val;
-                            maxScale = std::max(maxScale, 6);
-                        }
-                        else if (dotPos == -1) // integer
-                        {
-                            sumInt += val;
-                        }
-                        else    // decimal
-                        {
-                            maxScale = std::max(maxScale, (int) tmp.length() - dotPos - 1);
-                            qlonglong frac = (tmp + "000000000000000000").mid(dotPos + 1, 18).toLongLong() * (val < 0 ? -1 : 1);
-
-                            sumInt += tmp.mid(0, dotPos).toLongLong();
-                            sumFrac += frac;
-                            if (llabs(sumFrac) >= 1000000000000000000LL)
-                            {
-                                sumInt += (sumFrac < 0 ? -1 : 1);
-                                sumFrac = sumFrac - 1000000000000000000LL * (sumFrac < 0 ? -1 : 1);
-                            }
-
-                        }
-                        ++count;
-                        res += (res.isEmpty() ? "" : " + ") + tmp;
-                    }
+                    const QString tmp = i.data(Qt::EditRole).toString();
+                    if (!sum.add(tmp))
+                        continue;
+                    res += (res.isEmpty() ? "" : " + ") + tmp;
                 }
 
-                QString totalAmount;
-                QLocale locale;
-                if (sumDouble != 0) //if there was a floating point, cast result to double
-                {
-                    double sum = sumDouble + sumInt + sumFrac/1000000000000000000.0;
-                    totalAmount = locale.toString(sum, 'f', maxScale);
-                }
-                else
-                {
-                    if ((sumInt > 0 && sumFrac < 0) || (sumInt < 0 && sumFrac > 0))
-                    {
-                        sumInt += (sumFrac < 0 ? -1 : 1);
-                        sumFrac = sumFrac - 1000000000000000000LL * (sumFrac < 0 ? -1 : 1);
-                    }
+                const int count = sum.count();
+                const QString totalAmount = sum.toString(QLocale());
 
-                    if (sumInt < 0 || sumFrac < 0)
-                        totalAmount = '-';
-
-                    totalAmount += locale.toString(llabs(sumInt));
-                    if (maxScale)
-                    {
-                        totalAmount +=
-                                locale.decimalPoint() +
-                                ("000000000000000000" + QString::number(llabs(sumFrac))).right(18).mid(0, maxScale);
-                    }
-                }
 
                 if (count)
                     QApplication::clipboard()->setText(res);

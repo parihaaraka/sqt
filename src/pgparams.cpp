@@ -2,7 +2,7 @@
 
 PgParams &PgParams::add(std::string &&param)
 {
-    _temps.push_back(param);
+    _temps.push_back(std::move(param));
     return addref(_temps.back().data(), static_cast<int>(_temps.back().size()));
 }
 
@@ -24,7 +24,7 @@ PgParams &PgParams::add(const char *param, int size)
 
 PgParams &PgParams::operator<<(std::string &&param)
 {
-    return add(param);
+    return add(std::move(param));
 }
 
 PgParams &PgParams::operator<<(const std::string &param)
@@ -39,12 +39,13 @@ PgParams &PgParams::operator<<(const char *param)
 
 PgParams &PgParams::addref(std::string &&param)
 {
-    return add(param);
+    // a temporary would not survive the call, so it has to be copied
+    return add(std::move(param));
 }
 
 PgParams &PgParams::addref(const std::string &param)
 {
-    return addref(param.data(), param.size());
+    return addref(param.data(), static_cast<int>(param.size()));
 }
 
 PgParams &PgParams::addref(const char *param, int size)

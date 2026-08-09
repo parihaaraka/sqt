@@ -27,13 +27,14 @@ bool PgCopyContext::nextSource()
 {
     if (_file.isOpen())
         _file.close();
-    if (++_curSrcIndex > _srcFiles.size() - 1)
+    if (_curSrcIndex + 1 >= _srcFiles.size())
     {
         emit error(tr("COPY source file is not specified.\n"
                       "  Use special comment to pass source file: /*sqt { \"copy_src\": [\"<file1>\", \"<file2>\"...] } */"
                       "  In case of single COPY FROM query non-array form is allowed: /*sqt { \"copy_src\": \"<file>\" } */\n"));
         return false;
     }
+    ++_curSrcIndex;
     _file.setFileName(_srcFiles[_curSrcIndex]);
     if (!_file.open(QIODevice::ReadOnly))
     {
@@ -47,7 +48,7 @@ bool PgCopyContext::nextDestination()
 {
     if (_file.isOpen())
         _file.close();
-    if (++_curDstIndex > _dstFiles.size() - 1)
+    if (_curDstIndex + 1 >= _dstFiles.size())
     {
         emit error(tr("COPY destination file is not specified.\n"
                       "  Use special comment to pass destination files: /*sqt { \"copy_dst\": [\"<file1>\", \"<file2>\"...] } */\n"
@@ -55,6 +56,7 @@ bool PgCopyContext::nextDestination()
                       "  Specify an empty string instead of file name for output to the log widget."));
         return false;
     }
+    ++_curDstIndex;
 
     // empty string as file name => use log widget for output
     if (_dstFiles[_curDstIndex].isEmpty())
@@ -71,8 +73,19 @@ bool PgCopyContext::nextDestination()
 
 bool PgCopyContext::write(const char *data, qint64 size)
 {
+    // nextDestination() must have succeeded first
+    if (_curDstIndex < 0 || _curDstIndex >= _dstFiles.size())
+    {
+        emit error(tr("COPY destination file is not selected"));
+        return false;
+    }
+
     if (_dstFiles[_curDstIndex].isEmpty())
-        emit message(QString::fromStdString(data));
+    {
+        // libpq hands out a chunk of a row, which is neither zero terminated
+        // nor a whole utf8 sequence necessarily
+        emit message(QString::fromUtf8(data, static_cast<int>(size)));
+    }
     else
     {
         qint64 bytesWritten = _file.write(data, size);
@@ -81,7 +94,7 @@ bool PgCopyContext::write(const char *data, qint64 size)
         else if (bytesWritten < 0)
             emit error(_file.errorString());
         else
-            emit error(tr("% bytes out of % were sucessfully written").arg(bytesWritten).arg(size));
+            emit error(tr("%1 bytes out of %2 were successfully written").arg(bytesWritten).arg(size));
         return false;
     }
     return true;

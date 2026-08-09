@@ -1,6 +1,7 @@
 #ifndef PGPARAMS_H
 #define PGPARAMS_H
 
+#include <deque>
 #include <vector>
 #include <string>
 #include <QString>
@@ -32,7 +33,11 @@ public:
 private:
     std::vector<const char*> _param_pointers;
     std::vector<int> _param_lengths;
-    std::vector<std::string> _temps;
+    // A deque, because _param_pointers point into the elements stored here.
+    // Unlike vector's, its growth never relocates the existing ones, and a
+    // short string keeps its buffer inside the object itself, so relocation
+    // would leave libpq with a dangling pointer.
+    std::deque<std::string> _temps;
 };
 
 

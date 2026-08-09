@@ -107,7 +107,9 @@ bool DbObjectsModel::insertRows(int pos, int count, const QModelIndex &parent)
                 static_cast<DbObject*>(parent.internalPointer()) :
                 _rootItem;
 
-    if (count > parentItem->childCount())
+    // the position must land within the existing children (or right past the
+    // last one), while the amount of rows being inserted is not limited by it
+    if (count <= 0 || pos < 0 || pos > parentItem->childCount())
         return false;
     beginInsertRows(parent, pos, pos + count - 1);
     for (int i = 0; i < count; ++i)

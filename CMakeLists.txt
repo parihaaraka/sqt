@@ -160,3 +160,11 @@ foreach(ASSET_DIR decor scripts)
         VERBATIM
     )
 endforeach()
+
+# ------------------- tests -------------------
+option(SQT_BUILD_TESTS "Build unit tests" ON)
+if(SQT_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
+

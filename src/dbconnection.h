@@ -75,7 +75,10 @@ public:
     /*!
      * \brief asynchronous query execution from within query editor
      */
-    virtual void executeAsync(const QString &query, const QVector<QVariant> *params = nullptr) noexcept = 0;
+    /// Starts a query and returns false if it was refused right away.
+    /// A refused query reports nothing afterwards - no state change and no
+    /// queryFinished() - so the caller must not wait for it.
+    virtual bool executeAsync(const QString &query, const QVector<QVariant> *params = nullptr) noexcept = 0;
     /*!
      * \brief synchronous query execution used by objects tree and so on
      */

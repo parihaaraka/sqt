@@ -10,6 +10,7 @@
 #include "datatable.h"
 #include "settings.h"
 #include "sqllexer.h"
+#include "scriptversionfilter.h"
 #include <QJSEngine>
 #include <QJSValueList>
 #include <QQmlEngine>
@@ -88,148 +89,6 @@ QString dbmsScriptPath(DbConnection *con, Context context)
     return startPath + contextFolder;
 }
 
-///
-/// \brief dbms The function extracts version specific part of script or entire content.
-/// \param script Content of script file.
-/// \param version Current dbms comparable version (or db-level compartibility level).
-/// \return dbms Version specific part of script.
-///
-/// A script may contain comments corresponding to regexp:
-/// \/\*\s*(if|elif|else|endif)\s+version\s*(\d+)?\s*\*\/
-/// For example:
-/// /* if version 100000 */
-/// select s.datname, s.pid, s.backend_type, s.usename --, ...
-/// from pg_stat_activity
-///
-/// /* elif version 90600 */
-/// select s.datname, s.pid, s.usename --, ...
-/// from pg_stat_activity s
-/// /* endif version */
-///
-/// Such boundaries split a script into parts acording to dbms minimal version.
-/// Nesting is ok, order matters.
-/// PostgreSQL uses libpq's PQserverVersion(), ODBC data sources must provide
-/// version.sql or version.qs to return this value if used within scripts.
-/// E.g. scripts/odbc/microsoft sql/version.sql
-/// (uses compartibility_level as a comparable version).
-///
-QString versionSpecificPart(const QString &script, int version)
-{
-
-/* if version 90000 */
-/* elif version 80000 */
-/* else version */
-/* endif version */
-
-    QRegularExpression re(R"(\/\*\s*(if|elif|else|endif)\s+version\s*(\d+)?\s*\*\/)");
-
-    //QRegularExpression re(R"((?=\/\*\s*V(\d+)\+\s*\*\/))");
-    QRegularExpressionMatchIterator i = re.globalMatch(script);
-
-    // return whole script body if boundaries are not found
-    if (!i.hasNext())
-        return script;
-
-    QString res;
-    res.reserve(script.size());
-	int pos = 0;
-	int level = 0;
-    auto decrement_level = [&level]()
-    {
-        --level;
-        if (level < 0)
-            throw QObject::tr("invalid dbms version boundaries");
-    };
-
-    std::function<void()> fill = [&]()
-    {
-        while (i.hasNext())
-        {
-            int run_level = level;
-            QRegularExpressionMatch match = i.next();
-            QString cond = match.captured(1);
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-            res.append(script.midRef(pos, match.capturedStart() - pos));
-#else
-            res.append(QStringView(script).mid(pos, match.capturedStart() - pos));
-#endif
-            if (cond == "if")
-            {
-                ++level;
-                int block_ver = match.captured(2).toInt();
-                if (version >= block_ver)
-                {
-                    // ok
-                    pos = match.capturedEnd();
-                    fill(); // to process nested ifs
-                }
-                else
-                {
-                    // search for suitable sibling
-                    while (i.hasNext())
-                    {
-                        QRegularExpressionMatch match = i.next();
-                        QString cond = match.captured(1);
-                        if (cond == "if")
-                            ++level;
-                        else if (cond == "endif")
-                        {
-                            decrement_level();
-                            pos = match.capturedEnd();
-                            if (level < run_level) // suitable sibling is not found
-                                return;
-                        }
-                        else if (level == run_level)
-                        {
-                            if (cond == "else" || version >= match.captured(2).toInt())
-                            {
-                                // ok
-                                pos = match.capturedEnd();
-                                fill(); // to process nested ifs
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            else if (cond == "endif")
-            {
-                decrement_level();
-                pos = match.capturedEnd();
-                return;
-            }
-            else
-            {
-                // block filled - need to skip the rest
-                while (i.hasNext())
-                {
-                    QRegularExpressionMatch match = i.next();
-                    QString cond = match.captured(1);
-                    if (cond == "if")
-                        ++level;
-                    else if (cond == "endif")
-                        decrement_level();
-
-                    if (level < run_level)
-                    {
-                        pos = match.capturedEnd();
-                        return;
-                    }
-                }
-            }
-        }
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-        res.append(script.midRef(pos));
-#else
-        res.append(QStringView(script).mid(pos));
-#endif
-	};
-	fill();
-    if (level)
-        throw QObject::tr("invalid dbms version boundaries");
-    return res;
-}
-
 void refresh(DbConnection *connection, Context context)
 {
     if (!connection)
@@ -248,7 +107,7 @@ void refresh(DbConnection *connection, Context context)
 
         QFile scriptFile(f.filePath());
         if (!scriptFile.open(QIODevice::ReadOnly))
-            throw QObject::tr("can't open %1").arg(files.at(0).filePath());
+            throw QObject::tr("can't open %1").arg(f.filePath());
 
         QTextStream stream(&scriptFile);
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)

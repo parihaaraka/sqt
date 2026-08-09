@@ -143,11 +143,13 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
                 save_stream << '\n';
 
             QString line = it.text();
-            size_t len = line.size();
+            qsizetype len = line.size();
 
             int whitespace_count = 0;
             int any_space_count = 0;
-            while (len > 0)
+            // the counter is the loop variable here: a line made of spaces only
+            // used to run the index past the front of the line
+            while (any_space_count < len)
             {
                 QChar c = line.at(len - any_space_count - 1);
                 if (!c.isSpace())
@@ -159,7 +161,7 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
             if (whitespace_count != 3 || whitespace_count != any_space_count)
                 len -= any_space_count;
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-            save_stream << line.midRef(0, len);
+            save_stream << line.midRef(0, static_cast<int>(len));
 #else
             save_stream << line.mid(0, len);
 #endif
@@ -510,7 +512,14 @@ void QueryWidget::execute(const QString &query)
     // Raised before the connection can report anything at all, including a
     // synchronous refusal to start.
     _queryActive = true;
-    _connection->executeAsync(query);
+    if (!_connection->executeAsync(query))
+    {
+        // A refused query reports nothing at all, so there will be no
+        // Inactive state to lower the flag. Polling queryState() instead
+        // would race: Running is set by the worker thread, which has not
+        // necessarily started yet.
+        _queryActive = false;
+    }
 }
 
 void QueryWidget::log(const QString &text, QColor color)
