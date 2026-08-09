@@ -44,12 +44,17 @@ private:
     QStringList _roots;
 };
 
-/// The instance the application looks its files up through, built on first use.
+/// The instance the application looks its files up through, built on first use
+/// and rebuilt after setAppResourcesUserDir() has changed the user's folder.
 const ResourceLocator& appResources();
 
-/// Sets the folder of the user's own copies, to be called before the first
-/// lookup (the settings are not read here: the locator is also built by the
-/// tests, which have no settings at all).
+/// Sets the folder of the user's own copies (the settings are not read here:
+/// the locator is also built by the tests, which have no settings at all).
+/// May be called at any time - the folder is a setting, and changing it has to
+/// apply without restarting. The roots are rebuilt on the next lookup, so the
+/// caches built on top of them (Scripting, SqlLexer, the tree icons) have to be
+/// dropped by the caller; MainWindow::reloadAssets() does all of it in one go.
 void setAppResourcesUserDir(const QString &userDir);
+
 
 #endif // RESOURCELOCATOR_H

@@ -1,0 +1,287 @@
+name: release
+
+# One release per tag. Nothing here runs on a push to a branch - that is what
+# ci.yml is for.
+#
+#   git tag v0.5.1 && git push origin v0.5.1
+#
+# produces a GitHub Release with three files:
+#
+#   sqt_0.5.1_amd64.deb            debian/ubuntu package, needs root to install
+#   sqt-0.5.1-x86_64.AppImage      portable linux, chmod +x and run
+#   sqt-0.5.1-windows-x64.zip      portable windows, unpack and run sqt.exe
+#
+# workflow_dispatch builds the same three without publishing anything, which is
+# the way to try a change to this file before spending a tag on it.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # Qt for the two self-contained builds (windows zip, AppImage). An LTS, not
+  # the newest: these are binary releases and a settled base matters more.
+  # The deb uses the distribution's Qt instead - see the linux-deb job.
+  QT_VERSION: 6.8.3
+
+jobs:
+  # The version every job builds with, worked out once. For a tag it is the tag
+  # without its leading v; for a manual run it is a placeholder, since there is
+  # nothing to publish anyway.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - id: v
+        run: |
+          set -euo pipefail
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            release=true
+          else
+            version="0.0.0-dev"
+            release=false
+          fi
+          case "$version" in
+            [0-9]*.[0-9]*) ;;
+            *) echo "tag '$GITHUB_REF_NAME' is not vMAJOR.MINOR[.PATCH]" >&2; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "building $version (release=$release)"
+
+  # ---------------------------------------------------------------- deb ------
+  # Built in a container rather than on the ubuntu-22.04 runner image: runner
+  # images are retired on GitHub's schedule, a container image is not, and the
+  # container pins the glibc and Qt the package is built against.
+  #
+  # Qt comes from the distribution here on purpose. A package that depends on a
+  # Qt no apt repository carries would either have to bundle it (which is not
+  # what a deb is for) or refuse to install.
+  linux-deb:
+    needs: version
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config dpkg-dev file ca-certificates git \
+            qt6-base-dev qt6-base-dev-tools qt6-declarative-dev \
+            libgl1-mesa-dev libpq-dev unixodbc-dev libssl-dev
+
+      - uses: actions/checkout@v4
+
+      - name: configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DSQT_VERSION=${{ needs.version.outputs.version }}
+
+      - name: build
+        run: cmake --build build -j$(nproc)
+
+      # Cheap, and it is the last chance to catch a broken parser before the
+      # package is published.
+      - name: test
+        run: ctest --test-dir build --output-on-failure
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: package
+        working-directory: build
+        run: cpack -G DEB
+
+      - name: check the package installs
+        run: |
+          set -euo pipefail
+          deb=$(ls build/*.deb)
+          dpkg -I "$deb"
+          apt-get install -y "./$deb"
+          test -x /usr/bin/sqt
+          test -d /usr/share/sqt/scripts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: build/*.deb
+          if-no-files-found: error
+
+  # ----------------------------------------------------------- AppImage ------
+  # The portable linux build: one file, chmod +x, no root, no package manager.
+  # Same 22.04 container, so the glibc it needs is old enough to be everywhere,
+  # but with Qt 6.8 bundled inside the image - here nothing has to agree with
+  # the host's packages, so the newer Qt is free (and gets the dark theme
+  # detection, which needs 6.5+).
+  linux-appimage:
+    needs: version
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config file ca-certificates \
+            curl git python3-pip \
+            libgl1-mesa-dev libpq-dev unixodbc-dev libssl-dev \
+            libfontconfig1 libfreetype6 libx11-6 libx11-xcb1 libxext6 libxfixes3 \
+            libxi6 libxrender1 libxcb1 libxcb-cursor0 libxcb-glx0 libxcb-keysyms1 \
+            libxcb-image0 libxcb-shm0 libxcb-icccm4 libxcb-sync1 libxcb-xfixes0 \
+            libxcb-shape0 libxcb-randr0 libxcb-render-util0 libxcb-util1 \
+            libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libegl1
+
+      - uses: actions/checkout@v4
+
+      - name: install Qt ${{ env.QT_VERSION }}
+        run: |
+          pip3 install "aqtinstall==3.1.*"
+          python3 -m aqt install-qt linux desktop ${QT_VERSION} linux_gcc_64 \
+            -m qtdeclarative -O /opt/qt
+
+      - name: configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=/opt/qt/${QT_VERSION}/gcc_64 \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DSQT_VERSION=${{ needs.version.outputs.version }}
+
+      - name: build
+        run: cmake --build build -j$(nproc)
+
+      - name: test
+        run: ctest --test-dir build --output-on-failure
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      # linuxdeploy fills AppDir with the binary's shared libraries, and its qt
+      # plugin adds the Qt plugins (platforms, imageformats, ...) that nothing
+      # links against directly and so nothing else would find.
+      - name: build the AppImage
+        run: |
+          set -euo pipefail
+          DESTDIR=$PWD/AppDir cmake --install build
+          cd "$RUNNER_TEMP"
+          base=https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous
+          curl -fsSLO $base/linuxdeploy-x86_64.AppImage
+          curl -fsSLO https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy*.AppImage
+          cd "$GITHUB_WORKSPACE"
+          # No fuse in a container, so the tools unpack themselves instead.
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export PATH="$RUNNER_TEMP:/opt/qt/${QT_VERSION}/gcc_64/bin:$PATH"
+          export QMAKE=/opt/qt/${QT_VERSION}/gcc_64/bin/qmake
+          export LD_LIBRARY_PATH=/opt/qt/${QT_VERSION}/gcc_64/lib
+          export OUTPUT=sqt-${{ needs.version.outputs.version }}-x86_64.AppImage
+          linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            --plugin qt \
+            --output appimage
+          ls -la "$OUTPUT"
+
+      - name: check the AppImage runs
+        run: |
+          set -euo pipefail
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          chmod +x sqt-*.AppImage
+          QT_QPA_PLATFORM=offscreen ./sqt-*.AppImage --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: sqt-*.AppImage
+          if-no-files-found: error
+
+  # ------------------------------------------------------------ windows ------
+  # Portable zip: sqt.exe with the Qt dlls and plugins windeployqt gathers, the
+  # libpq dlls from vcpkg, the msvc runtime, and decor/scripts next to it.
+  windows:
+    needs: version
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: install Qt ${{ env.QT_VERSION }}
+        shell: bash
+        run: |
+          pip install "aqtinstall==3.1.*"
+          python -m aqt install-qt windows desktop ${QT_VERSION} win64_msvc2022_64 \
+            -m qtdeclarative -O /c/Qt
+
+      # libpq. The runner ships a vcpkg checkout already, so this only builds
+      # the port - and only when the cache below misses.
+      - name: cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/build/vcpkg_installed
+          key: vcpkg-x64-windows-${{ hashFiles('vcpkg.json') }}
+
+      - name: configure
+        shell: bash
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-windows \
+            -DCMAKE_PREFIX_PATH="/c/Qt/${QT_VERSION}/msvc2022_64" \
+            -DCMAKE_INSTALL_PREFIX=install \
+            -DSQT_VERSION=${{ needs.version.outputs.version }}
+
+      - name: build
+        run: cmake --build build --config Release -j
+
+      - name: test
+        run: ctest --test-dir build --build-config Release --output-on-failure
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: package
+        shell: bash
+        working-directory: build
+        run: cpack -G ZIP -C Release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: build/*.zip
+          if-no-files-found: error
+
+  # ------------------------------------------------------------ release ------
+  release:
+    needs: [version, linux-deb, linux-appimage, windows]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ls -la artifacts
+          gh release create "$GITHUB_REF_NAME" \
+            --title "sqt ${{ needs.version.outputs.version }}" \
+            --generate-notes \
+            artifacts/*

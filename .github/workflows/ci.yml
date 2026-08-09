@@ -1,0 +1,34 @@
+name: build
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Qt, libpq and odbc come from the distro: the build looks for them in the
+      # standard places first, so nothing has to be pointed at them here.
+      - name: install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential cmake pkg-config \
+            qt6-base-dev qt6-base-dev-tools qt6-declarative-dev \
+            libgl1-mesa-dev libpq-dev unixodbc-dev libssl-dev
+
+      - name: configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: build
+        run: cmake --build build -j$(nproc)
+
+      # The tests cover the units that need neither a database nor a display,
+      # so an offscreen runner is enough to run them as they are.
+      - name: test
+        run: ctest --test-dir build --output-on-failure

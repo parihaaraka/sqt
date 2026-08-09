@@ -157,9 +157,18 @@ void refresh(DbConnection *connection, Context context)
     }
 }
 
+void clearCache()
+{
+    // The dbms folder is searched again as well: the winning root may have
+    // changed, and with it the very bundle the scripts come from.
+    _dbms_paths.clear();
+    _scripts.clear();
+}
+
 std::optional<Script> getScript(DbConnection *connection, Context context, const QString &objectType)
 {
     const QString key = connection->dbmsScriptingID() + context2str(context);
+
     // constFind() keeps the lookup from creating an empty entry for every dbms
     // ever asked about
     auto bunch = _scripts.constFind(key);

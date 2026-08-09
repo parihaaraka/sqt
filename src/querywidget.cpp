@@ -290,9 +290,9 @@ void QueryWidget::ShowFindPanel(FindAndReplacePanel *panel)
     panel->setFocus();
 }
 
-void QueryWidget::highlight(std::shared_ptr<DbConnection> con)
+void QueryWidget::highlight(std::shared_ptr<DbConnection> con, bool force)
 {
-    if (_connection != con || !_highlighter)
+    if (force || _connection != con || !_highlighter)
     {
         if (con)
             _connection = con;
@@ -645,7 +645,7 @@ void QueryWidget::onError(const QString &text)
         emit error(logMessage(text));
         return;
     }
-    log(text, QColor::fromString("#E0FF4040")); // NOLINT
+    log(text, QColor::fromRgba(0xE0FF4040)); // NOLINT
 }
 
 void QueryWidget::fetched(DataTable *table)

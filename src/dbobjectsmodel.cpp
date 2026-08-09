@@ -66,11 +66,49 @@ QModelIndex DbObjectsModel::index(int row, int column, const QModelIndex &parent
     return QModelIndex();
 }
 
+/// The file behind an icon name from a tree script. The name is taken as
+/// written, then retried with the other extension, so that a png shipped in the
+/// bundle may be replaced by an svg (or the other way round) by dropping the
+/// file into the assets directory - no script edit, and no rule about which of
+/// the two the scripts have to name.
+static QString iconFile(const QString &name)
+{
+    QString path = appResources().file("decor/" + name);
+    if (!path.isEmpty())
+        return path;
+
+    static const QLatin1String exts[] { QLatin1String(".png"), QLatin1String(".svg") };
+    for (const auto &from: exts)
+    {
+        if (!name.endsWith(from, Qt::CaseInsensitive))
+            continue;
+        const auto &to = (from == exts[0] ? exts[1] : exts[0]);
+        return appResources().file(
+                    "decor/" + name.left(name.size() - from.size()) + to);
+    }
+    return QString();
+}
+
 QVariant DbObjectsModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid())
         return QVariant{};
     DbObject *item = static_cast<DbObject*>(index.internalPointer());
+    if (role == Qt::DecorationRole)
+    {
+        // Nodes carrying a ready-made icon (the connections, which take theirs
+        // from the qrc) keep it; the rest resolve their file on every paint, so
+        // a change of the resource roots applies at once. QIcon caches the
+        // pixmap internally, so this costs a lookup, not a decode.
+        const QVariant own = item->data(role);
+        if (own.isValid())
+            return own;
+        const QString name = item->data(DbObject::IconRole).toString();
+        if (name.isEmpty())
+            return QVariant{};
+        const QString path = iconFile(name);
+        return path.isEmpty() ? QVariant{} : QIcon(path);
+    }
     if (role == Qt::DisplayRole)
     {
         auto initial_value = item->data(role);
@@ -244,8 +282,11 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
             }
             if (nameInd >= 0 && !r[nameInd].isNull())
                 newItem->setData(r[nameInd].toString(), DbObject::NameRole);
+            // Only the name is kept; the file behind it is resolved on demand in
+            // data(), so the icons follow a change of the assets directory
+            // without rebuilding the tree.
             if (iconInd >= 0 && !r[iconInd].isNull())
-                newItem->setData(QIcon(appResources().file("decor/" + r[iconInd].toString())), Qt::DecorationRole);
+                newItem->setData(r[iconInd].toString(), DbObject::IconRole);
 
             // children detection
             newItem->setData(Scripting::getScript(
@@ -302,6 +343,20 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
     if (childObjectsCount && (!parentDbId.isValid() || childObjectsCount > 5))
         parentNode->setData(childObjectsCount, DbObject::ChildObjectsCountRole);
     return true;
+}
+
+void DbObjectsModel::reloadIcons(const QModelIndex &parent)
+{
+    const int rows = rowCount(parent);
+    if (!rows)
+        return;
+
+    // Only the nodes already fetched are walked - an unexpanded branch has
+    // nothing to repaint, and asking for its children here would run a query.
+    emit dataChanged(index(0, 0, parent), index(rows - 1, 0, parent),
+                     {Qt::DecorationRole});
+    for (int i = 0; i < rows; ++i)
+        reloadIcons(index(i, 0, parent));
 }
 
 std::shared_ptr<DbConnection> DbObjectsModel::dbConnection(const QModelIndex &index)

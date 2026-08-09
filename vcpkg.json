@@ -1,0 +1,18 @@
+{
+  "$comment": [
+    "Only used on windows, and only when the build is pointed at vcpkg's",
+    "toolchain file - which is what the release workflow does. A plain",
+    "cmake -S . -B build ignores this file, and cmake/FindOrInstallPostgreSQL.cmake",
+    "installs libpq the classic way instead.",
+    "No builtin-baseline on purpose: the versions then come from the baseline of",
+    "the vcpkg checkout in use, and the workflow is what pins that checkout.",
+    "Adding a baseline here is worth doing once a known-good vcpkg commit exists",
+    "to name; a wrong hash fails the configure step outright."
+  ],
+  "name": "sqt",
+  "description": "Scriptable SQL client for PostgreSQL and ODBC data sources",
+  "homepage": "https://github.com/parihaaraka/sqt",
+  "dependencies": [
+    "libpq"
+  ]
+}

@@ -1,20 +1,29 @@
 cmake_minimum_required(VERSION 3.16)
-project(sqt)
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+# Fills SQT_VERSION (numeric, for project() and the packages) and
+# SQT_VERSION_STR (what the about box shows). Has to run before project().
+include(SqtVersion)
+
+project(sqt VERSION ${SQT_VERSION})
 
 set(OpenGL_GL_PREFERENCE "GLVND")
-if(WIN32)
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-subsystem,windows")
-endif()
+
+# Named once, used by the packages, the changelog and the about box alike.
+set(SQT_MAINTAINER "Andrey Lukyanov <parihaaraka@gmail.com>")
+set(SQT_HOMEPAGE "https://github.com/parihaaraka/sqt")
+
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(ProxySettings)
+
 include(FindOrInstallQt)
 include(FindOrInstallPostgreSQL)
 
@@ -46,6 +55,14 @@ add_executable(${PROJECT_NAME}
     ${RESOURCES}
     ${RC_FILES}
 )
+
+# A gui program, so no console window behind it on windows. This is the portable
+# spelling: the linker flag it used to be spelled with (-Wl,-subsystem,windows)
+# only ever reached mingw's linker, and made the msvc one fail outright.
+set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE ON)
+
+# The version the about box shows. Comes from the tag through SqtVersion.cmake.
+target_compile_definitions(${PROJECT_NAME} PRIVATE "SQT_VERSION_STR=\"${SQT_VERSION_STR}\"")
 
 # The compiler finds a fair share of what otherwise has to be found by reading.
 # Kept as warnings rather than errors: generated moc/uic code and the versions of
@@ -82,12 +99,19 @@ if(WIN32)
         set(VCPKG_TRIPLET "x64-windows")
     endif()
 
-    set(VCPKG_INSTALLED_BASE "${CMAKE_SOURCE_DIR}/vcpkg_installed/${VCPKG_TRIPLET}")
+    # Two roots, because the two ways of driving vcpkg put the tree in different
+    # places: the manifest mode used by CI installs under the *binary* dir, the
+    # classic install done by FindOrInstallPostgreSQL under the source one.
     set(VCPKG_BIN_DIR "")
-    foreach(SUBDIR "" "${VCPKG_TRIPLET}")
-        set(TEST_DIR "${VCPKG_INSTALLED_BASE}/${SUBDIR}/bin")
-        if(EXISTS "${TEST_DIR}/libpq.dll")
-            set(VCPKG_BIN_DIR "${TEST_DIR}")
+    foreach(VCPKG_ROOT "${CMAKE_BINARY_DIR}" "${CMAKE_SOURCE_DIR}")
+        foreach(SUBDIR "" "/${VCPKG_TRIPLET}")
+            set(TEST_DIR "${VCPKG_ROOT}/vcpkg_installed/${VCPKG_TRIPLET}${SUBDIR}/bin")
+            if(EXISTS "${TEST_DIR}/libpq.dll")
+                set(VCPKG_BIN_DIR "${TEST_DIR}")
+                break()
+            endif()
+        endforeach()
+        if(VCPKG_BIN_DIR)
             break()
         endif()
     endforeach()
@@ -106,27 +130,30 @@ if(WIN32)
         message(WARNING "Could not find bin directory with libpq.dll; PostgreSQL DLLs will not be copied.")
     endif()
 
-    # Copy MinGW runtime DLLs (libgcc, libstdc++, libwinpthread)
-    get_filename_component(MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
-    set(MINGW_DLLS
-        "${MINGW_BIN_DIR}/libgcc_s_seh-1.dll"
-        "${MINGW_BIN_DIR}/libstdc++-6.dll"
-        "${MINGW_BIN_DIR}/libwinpthread-1.dll"
-    )
-    # Filter only existing files
+    # The compiler's own runtime. windeployqt does not carry it, and msvc gets
+    # it from InstallRequiredSystemLibraries further down instead.
     set(EXISTING_MINGW_DLLS "")
-    foreach(DLL ${MINGW_DLLS})
-        if(EXISTS "${DLL}")
-            list(APPEND EXISTING_MINGW_DLLS "${DLL}")
-        endif()
-    endforeach()
-    if(EXISTING_MINGW_DLLS)
-        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${EXISTING_MINGW_DLLS} "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-            COMMENT "Copying MinGW runtime DLLs"
+    if(MINGW)
+        get_filename_component(MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        set(MINGW_DLLS
+            "${MINGW_BIN_DIR}/libgcc_s_seh-1.dll"
+            "${MINGW_BIN_DIR}/libstdc++-6.dll"
+            "${MINGW_BIN_DIR}/libwinpthread-1.dll"
         )
-    else()
-        message(WARNING "MinGW runtime DLLs not found; they may not be copied.")
+        # Filter only existing files
+        foreach(DLL ${MINGW_DLLS})
+            if(EXISTS "${DLL}")
+                list(APPEND EXISTING_MINGW_DLLS "${DLL}")
+            endif()
+        endforeach()
+        if(EXISTING_MINGW_DLLS)
+            add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${EXISTING_MINGW_DLLS} "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+                COMMENT "Copying MinGW runtime DLLs"
+            )
+        else()
+            message(WARNING "MinGW runtime DLLs not found; they may not be copied.")
+        endif()
     endif()
 endif()
 
@@ -193,10 +220,116 @@ if(UNIX AND NOT APPLE)
     install(DIRECTORY scripts decor DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME})
     install(FILES sqt.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
     install(FILES sqt.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+
+    # Debian expects a copyright file and a changelog under /usr/share/doc/sqt,
+    # and lintian reports either one missing as an error.
+    install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR} RENAME copyright)
+
+    # The changelog is generated rather than kept in the tree: the git history
+    # is the real one, and a file restating it would only go stale.
+    find_program(GZIP_EXE gzip)
+    if(GZIP_EXE)
+        string(TIMESTAMP SQT_CHANGELOG_DATE "%a, %d %b %Y %H:%M:%S +0000" UTC)
+        file(WRITE "${CMAKE_BINARY_DIR}/changelog"
+"sqt (${SQT_VERSION}) unstable; urgency=medium
+
+  * Released as ${SQT_VERSION_STR}. See the releases page and the commit
+    history at ${SQT_HOMEPAGE} for what changed.
+
+ -- ${SQT_MAINTAINER}  ${SQT_CHANGELOG_DATE}
+")
+        execute_process(COMMAND "${GZIP_EXE}" -9nf "${CMAKE_BINARY_DIR}/changelog")
+        install(FILES "${CMAKE_BINARY_DIR}/changelog.gz"
+                DESTINATION ${CMAKE_INSTALL_DOCDIR})
+    endif()
 endif()
+
+
+# ------------------- installation (windows) -------------------
+# The portable layout, everything in one folder: this is what gets zipped for a
+# release. Built as an install tree rather than out of the build directory,
+# where decor/scripts may well be symlinks into the source tree.
+if(WIN32)
+    install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION .)
+    install(DIRECTORY scripts decor DESTINATION .)
+    install(FILES LICENSE README.md DESTINATION .)
+
+    if(WINDEPLOYQT_EXE)
+        # Qt's dlls and plugins, gathered next to the installed exe. Runs at
+        # install time (not at build time) so that the zip is complete even
+        # when the build directory is not.
+        install(CODE "
+            execute_process(
+                COMMAND \"${WINDEPLOYQT_EXE}\"
+                        --no-compiler-runtime
+                        --no-system-d3d-compiler
+                        --no-opengl-sw
+                        --no-translations
+                        \"\${CMAKE_INSTALL_PREFIX}/${PROJECT_NAME}.exe\"
+                RESULT_VARIABLE _windeployqt_result)
+            if(NOT _windeployqt_result EQUAL 0)
+                message(FATAL_ERROR \"windeployqt failed: \${_windeployqt_result}\")
+            endif()")
+    endif()
+
+    if(VCPKG_BIN_DIR)
+        install(DIRECTORY "${VCPKG_BIN_DIR}/" DESTINATION . FILES_MATCHING PATTERN "*.dll")
+    endif()
+    if(EXISTING_MINGW_DLLS)
+        install(FILES ${EXISTING_MINGW_DLLS} DESTINATION .)
+    endif()
+    if(MSVC)
+        # msvcp140.dll and friends, so the zip runs on a machine without the
+        # redistributable installed.
+        set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION .)
+        set(CMAKE_INSTALL_UCRT_LIBRARIES ON)
+        include(InstallRequiredSystemLibraries)
+    endif()
+endif()
+
+# ------------------- packaging -------------------
+# `cpack -G DEB` / `-G ZIP` in the build directory, or `--target package`.
+# The deb is a plain package built out of the install tree above; there is no
+# debian/ directory, which would only be worth writing for an actual upload to
+# the distribution.
+set(CPACK_PACKAGE_NAME "sqt")
+set(CPACK_PACKAGE_VENDOR "parihaaraka")
+set(CPACK_PACKAGE_VERSION "${SQT_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+    "Scriptable SQL client for PostgreSQL and ODBC data sources")
+# Debian wants a body under the summary line, and lintian says so out loud.
+set(CPACK_PACKAGE_DESCRIPTION
+    "sqt is a query tool whose object tree, object DDL and preview panes are\n\
+produced by plain SQL scripts, so the way it presents a database can be\n\
+adjusted without touching the application. It talks to PostgreSQL natively\n\
+and to anything else through ODBC.")
+
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/parihaaraka/sqt")
+set(CPACK_PACKAGE_CONTACT "Andrey Lukyanov <parihaaraka@gmail.com>")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "sqt")
+set(CPACK_STRIP_FILES ON)
+
+if(WIN32)
+    set(CPACK_GENERATOR "ZIP")
+    # One folder inside the archive, so unpacking never scatters dlls about.
+    set(CPACK_PACKAGE_FILE_NAME "sqt-${SQT_VERSION}-windows-x64")
+elseif(UNIX AND NOT APPLE)
+    set(CPACK_GENERATOR "DEB")
+    # Read off the built binary rather than written by hand: a dependency list
+    # maintained by hand goes stale the first time a library is added.
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+    set(CPACK_DEBIAN_PACKAGE_SECTION "database")
+    set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+    # sqt_<version>_<arch>.deb, the name debian policy asks for.
+    set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
+endif()
+
+include(CPack)
 
 # ------------------- tests -------------------
 option(SQT_BUILD_TESTS "Build unit tests" ON)
+
 if(SQT_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)

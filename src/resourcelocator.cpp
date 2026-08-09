@@ -111,15 +111,33 @@ QStringList ResourceLocator::dirs(const QString &relativePath) const
 namespace
 {
 QString _userDir;
+// The roots are worth building once, but the folder they are built from is a
+// setting the user may change while the application runs. Rebuilding is driven
+// by this flag rather than by comparing on every lookup, which happens for
+// every icon of every tree node.
+bool _stale = true;
 }
 
 void setAppResourcesUserDir(const QString &userDir)
 {
+    // Confirming the same folder (pressing OK in the settings dialog) must not
+    // cost a rebuild, let alone invalidate anything downstream.
+    if (userDir == _userDir)
+        return;
     _userDir = userDir;
+    _stale = true;
 }
 
 const ResourceLocator& appResources()
 {
-    static const ResourceLocator loc = ResourceLocator::standard(_userDir);
+    // Assigned into rather than recreated: callers hold the reference, and some
+    // of them (the tree model) hold it across the very change that rebuilds it.
+    static ResourceLocator loc{QStringList{}};
+    if (_stale)
+    {
+        loc = ResourceLocator::standard(_userDir);
+        _stale = false;
+    }
     return loc;
 }
+

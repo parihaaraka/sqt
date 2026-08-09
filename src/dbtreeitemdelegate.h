@@ -26,7 +26,12 @@ private:
 
 public:
     MyProxyStyle(QStyle *style = nullptr);
+    /// Re-reads the branch arrows through the current resource roots. Called by
+    /// the constructor, and again when the assets directory changes - the style
+    /// is installed on the view and outlives such a change.
+    void loadIcons();
     void drawPrimitive(PrimitiveElement element, const QStyleOption* option, QPainter* painter, const QWidget* widget = nullptr) const;
+
 };
 
 #endif // DBTREEITEMDELEGATE_H

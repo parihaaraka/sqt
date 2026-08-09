@@ -27,7 +27,8 @@ public:
         MultiselectRole,
         TagRole,                    ///< any valuable data accessible by $<node type>.tag$ macro
         Sort1Role,
-        Sort2Role
+        Sort2Role,
+        IconRole                    ///< icon file name as the tree script named it
     };
 
     void setData(const QVariant &value, int role = Qt::DisplayRole);

@@ -69,6 +69,12 @@ QStringList dbmsScriptDirs(DbConnection *con, Context context = Context::Root);
 /// A file of the dbms bundle ("hl.conf"), empty if no root has it.
 QString dbmsFile(DbConnection *con, const QString &name);
 void refresh(DbConnection *connection, Context context);
+/// Drops every cached script and path. The cache refills lazily on the next
+/// getScript()/dbmsScriptPath() call, so nothing is re-read eagerly. Used when
+/// the resource roots change (the assets directory is a setting now) and by
+/// F5, where it replaces the four refresh() calls.
+void clearCache();
+
 /// Returns a copy: a pointer into the storage would be invalidated by the very
 /// next refresh() of the same context.
 std::optional<Script> getScript(DbConnection *connection, Context context, const QString &objectType);

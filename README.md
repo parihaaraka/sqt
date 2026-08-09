@@ -112,7 +112,22 @@ select s.ts, 5 + 4*random() f1
 from generate_series(now(), now() + '20min'::interval, '1sec'::interval) as s(ts)
 ```
 
+## Releases
+Ready-made builds are attached to every [release](https://github.com/parihaaraka/sqt/releases):
+
+| file | platform | notes |
+| --- | --- | --- |
+| `sqt_<version>_amd64.deb` | Debian 12, Ubuntu 22.04+ | `sudo apt install ./sqt_<version>_amd64.deb`; uses the distribution's Qt 6 |
+| `sqt-<version>-x86_64.AppImage` | any x86_64 linux with glibc 2.35+ | `chmod +x` and run; Qt is inside, no root needed |
+| `sqt-<version>-windows-x64.zip` | Windows 10 1809+ | unpack anywhere and run `sqt.exe` |
+
+A release is made by pushing a tag - `git tag v1.2.3 && git push origin v1.2.3` -
+which is also where the version shown in the about box comes from. Builds of a
+branch are not published anywhere: `.github/workflows/ci.yml` only compiles and
+runs the tests.
+
 ## Build instruction
+
 The project is built with CMake (3.16+, C++17). You may open `CMakeLists.txt` in QtCreator, or execute the following from the project's root directory:
 ```
 cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
@@ -142,7 +157,7 @@ A copy of a single script therefore replaces just that script, while the rest of
 the bundle keeps coming from where it was:
 
 1. `$SQT_ASSETS_DIR`
-2. the *assets directory* setting (settings dialog, applied on the next start)
+2. the *assets directory* setting (settings dialog, applied at once)
 3. next to the binary
 4. the data folder of the prefix the binary sits in, `<binary>/../share/sqt` by
    default (this is what keeps an installed tree working after it has been moved)

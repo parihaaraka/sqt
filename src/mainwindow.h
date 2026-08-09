@@ -67,6 +67,11 @@ private slots:
     void openFile(const QString &fileName, const QString &encoding);
 
     void on_actionSettings_triggered();
+    /// Points the locator at the current assets directory and drops everything
+    /// cached on top of it: the scripts, the keyword dictionaries, the tree
+    /// icons and the branch arrows. Nothing is reopened and no tab is closed.
+    void reloadAssets();
+
 
 private:
     QLabel _contextLabel, _positionLabel, _durationLabel;

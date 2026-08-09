@@ -29,6 +29,8 @@
 #include <QScrollBar>
 #include "settingsdialog.h"
 #include "queryoptions.h"
+#include "resourcelocator.h"
+
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QActionGroup>
 #endif
@@ -1560,13 +1562,43 @@ void MainWindow::onError(const QString &err)
         _hideTimer->start();
 
     QTextCharFormat fmt = ui->log->currentCharFormat();
-    fmt.setForeground(QBrush(QColor::fromString("#E0FF4040"))); // NOLINT
+    fmt.setForeground(QBrush(QColor::fromRgba(0xE0FF4040))); // NOLINT
     ui->log->mergeCurrentCharFormat(fmt);
     log(err);
 }
 
 void MainWindow::on_actionSettings_triggered()
 {
+    const QString assetsDir = SqtSettings::value("assetsDir").toString();
     SettingsDialog dlg(this);
-    dlg.exec();
+    if (dlg.exec() == QDialog::Accepted &&
+        SqtSettings::value("assetsDir").toString() != assetsDir)
+    {
+        reloadAssets();
+    }
 }
+
+void MainWindow::reloadAssets()
+{
+    setAppResourcesUserDir(SqtSettings::value("assetsDir").toString());
+
+    // Everything read through the locator once and kept since. The scripts and
+    // the dictionaries are reread on the next request; the icons are asked for
+    // explicitly, being held as pixmaps rather than as names.
+    Scripting::clearCache();
+    SqlLexer::clearCache();
+    _proxyStyle->loadIcons();
+    _objectsModel->reloadIcons();
+    ui->objectsView->viewport()->update();
+
+    // The highlighter is built once per connection and holds its dictionary, so
+    // it has to be rebuilt even though the connection has not changed.
+    for (int i = 0; i < ui->tabWidget->count(); ++i)
+    {
+        if (auto w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(i)))
+            w->highlight(nullptr, true);
+    }
+    if (_objectScript && _objectScript->dbConnection())
+        _objectScript->highlight(nullptr, true);
+}
+

@@ -61,7 +61,7 @@ void DbTreeItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
             auto con = DbConnectionFactory::connection(QString::number(std::intptr_t(obj)));
             if (con)
             {
-                QColor color = (con->isOpened() ? Qt::green : QColor::fromString("#E0FF4040")); // NOLINT
+                QColor color = (con->isOpened() ? Qt::green : QColor::fromRgba(0xE0FF4040)); // NOLINT
                 painter->setBrush(QBrush(color));
                 painter->setPen(color.darker(160));
                 painter->drawEllipse(option.rect.topLeft() + QPoint(17, 4), 2, 2);
@@ -119,7 +119,13 @@ MyProxyStyle::MyProxyStyle(QStyle *style) : QProxyStyle(style)
 {
     Q_UNUSED(style)
 
+    loadIcons();
+}
+
+void MyProxyStyle::loadIcons()
+{
     QString scheme = isDarkMode() ? "dark" : "light";
+
     QFileInfo fi_c(appResources().file(QString("decor/branch-closed-%1.svg").arg(scheme)));
     QFileInfo fi_o(appResources().file(QString("decor/branch-opened-%1.svg").arg(scheme)));
     //QFileInfo fi_c(QApplication::applicationDirPath() + "/decor/branch-closed.png");

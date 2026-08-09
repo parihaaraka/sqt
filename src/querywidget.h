@@ -47,7 +47,11 @@ public:
     DbConnection* dbConnection() { return _connection.get(); }
     void setDbConnection(DbConnection *connection);
     void ShowFindPanel(FindAndReplacePanel *panel);
-    void highlight(std::shared_ptr<DbConnection> con = nullptr);
+    /// Attaches a highlighter built for the connection's dbms. Pass force=true
+    /// to rebuild it even when the connection has not changed - the dictionary
+    /// is read from hl.conf at construction, so that is what picks up an edited
+    /// (or newly shadowed) one.
+    void highlight(std::shared_ptr<DbConnection> con = nullptr, bool force = false);
     void dehighlight();
     void rehighlight();
     bool is_sql_hl(QPlainTextEdit *ed);

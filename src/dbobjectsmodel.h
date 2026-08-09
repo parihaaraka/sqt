@@ -41,6 +41,10 @@ public:
     virtual void fetchMore(const QModelIndex & parent);
 
     bool fillChildren(const QModelIndex &parent = QModelIndex());
+    /// Repaints every node's icon. The names are kept, only the files behind
+    /// them are looked up again - so a change of the assets directory applies
+    /// without collapsing the tree or reopening a single connection.
+    void reloadIcons(const QModelIndex &parent = QModelIndex());
 
     std::shared_ptr<DbConnection> dbConnection(const QModelIndex &index);
     QVariant parentNodeProperty(const QModelIndex &index, QString type);
