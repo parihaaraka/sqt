@@ -1,4 +1,5 @@
 #include "dbtreeitemdelegate.h"
+#include "resourcelocator.h"
 #include <QPainter>
 #include <QApplication>
 #include <QAbstractTextDocumentLayout>
@@ -118,10 +119,9 @@ MyProxyStyle::MyProxyStyle(QStyle *style) : QProxyStyle(style)
 {
     Q_UNUSED(style)
 
-    QString appPath = QApplication::applicationDirPath();
     QString scheme = isDarkMode() ? "dark" : "light";
-    QFileInfo fi_c(QString("%1%2-%3.svg").arg(appPath, "/decor/branch-closed", scheme));
-    QFileInfo fi_o(QString("%1%2-%3.svg").arg(appPath, "/decor/branch-opened", scheme));
+    QFileInfo fi_c(appResources().file(QString("decor/branch-closed-%1.svg").arg(scheme)));
+    QFileInfo fi_o(appResources().file(QString("decor/branch-opened-%1.svg").arg(scheme)));
     //QFileInfo fi_c(QApplication::applicationDirPath() + "/decor/branch-closed.png");
     //QFileInfo fi_o(QApplication::applicationDirPath() + "/decor/branch-open.png");
     if (fi_c.exists() && fi_o.exists())

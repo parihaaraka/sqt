@@ -1,4 +1,5 @@
 #include "appeventhandler.h"
+#include "resourcelocator.h"
 #include "decimalsum.h"
 #include <QTableView>
 #include <QKeyEvent>
@@ -157,12 +158,13 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
             try
             {
                 // lets use postgresql palette
-                settings = readJsonFile(QApplication::applicationDirPath() + "/scripts/hl_json.conf");
+                settings = readJsonFile(appResources().file("scripts/hl_json.conf"));
             }
             catch (const QString &err)
             {
-                MainWindow *w = qobject_cast<MainWindow*>(QApplication::activeWindow());
-                w->onError(err);
+                // the active window is not necessarily the main one
+                if (MainWindow *w = qobject_cast<MainWindow*>(QApplication::activeWindow()))
+                    w->onError(err);
             }
             JsonSyntaxHighlighter *hl = new JsonSyntaxHighlighter(settings, ed);
             hl->setDocument(ed->document());

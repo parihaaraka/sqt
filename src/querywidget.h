@@ -112,7 +112,6 @@ private:
     std::shared_ptr<DbConnection> _connection;
     SqlSyntaxHighlighter *_highlighter;
     QVBoxLayout *_editorLayout;
-    QList<TableModel*> _tables;
     QMenu *_resultMenu;
     QAction *_actionCopy;
     void log(const QString &text, QColor color);

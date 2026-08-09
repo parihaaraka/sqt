@@ -550,6 +550,15 @@ void OdbcConnection::clarifyTableStructure(DataTable &)
 
 bool OdbcConnection::executeAsync(const QString &query, const QVector<QVariant> *params) noexcept
 {
+    // Postgres refuses a query while another one is running, and odbc has to do
+    // the same: a second thread would overwrite _hstmt, leaving cancellation to
+    // target the wrong statement and the first handle to leak.
+    if (queryState() != QueryState::Inactive)
+    {
+        emit error(tr("another command is already in progress"));
+        return false;
+    }
+
     // the lambda outlives this call and runs in another thread, hence the copy:
     // the caller's params may be gone by the time the query starts
     const QVector<QVariant> params_copy = (params ? *params : QVector<QVariant>());

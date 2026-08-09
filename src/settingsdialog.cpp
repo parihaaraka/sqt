@@ -2,6 +2,7 @@
 #include "ui_settingsdialog.h"
 #include "settings.h"
 #include <QPushButton>
+#include <QFileDialog>
 
 SettingsDialog::SettingsDialog(QWidget *parent) :
     QDialog(parent),
@@ -19,6 +20,16 @@ SettingsDialog::SettingsDialog(QWidget *parent) :
     ui->lowercaseKeywords->setChecked(SqtSettings::value("lowercaseKeywords", false).toBool());
     ui->f1url->setText(SqtSettings::value("f1url").toString());
     ui->shiftF1url->setText(SqtSettings::value("shiftF1url").toString());
+    ui->assetsDir->setText(SqtSettings::value("assetsDir").toString());
+}
+
+void SettingsDialog::on_assetsDirBtn_clicked()
+{
+    const QString dir = QFileDialog::getExistingDirectory(
+                this, tr("assets directory"), ui->assetsDir->text());
+    // an empty result means the choice was cancelled, not cleared
+    if (!dir.isEmpty())
+        ui->assetsDir->setText(dir);
 }
 
 SettingsDialog::~SettingsDialog()
@@ -38,6 +49,7 @@ void SettingsDialog::on_okBtn_clicked()
     SqtSettings::setValue("lowercaseKeywords", ui->lowercaseKeywords->isChecked());
     SqtSettings::setValue("f1url", ui->f1url->text());
     SqtSettings::setValue("shiftF1url", ui->shiftF1url->text());
+    SqtSettings::setValue("assetsDir", ui->assetsDir->text());
     SqtSettings::setValue("settingsDialogGeometry", saveGeometry());
     accept();
     SqtSettings::load();

@@ -1,4 +1,5 @@
 #include "dbobjectsmodel.h"
+#include "resourcelocator.h"
 #include "dbobject.h"
 #include <QSettings>
 #include <QIcon>
@@ -244,13 +245,13 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
             if (nameInd >= 0 && !r[nameInd].isNull())
                 newItem->setData(r[nameInd].toString(), DbObject::NameRole);
             if (iconInd >= 0 && !r[iconInd].isNull())
-                newItem->setData(QIcon(QApplication::applicationDirPath() + "/decor/" + r[iconInd].toString()), Qt::DecorationRole);
+                newItem->setData(QIcon(appResources().file("decor/" + r[iconInd].toString())), Qt::DecorationRole);
 
             // children detection
             newItem->setData(Scripting::getScript(
                                  dbConnection(parent).get(),
                                  Scripting::Context::Tree,
-                                 r[typeInd].toString()) != nullptr, DbObject::ParentRole);
+                                 r[typeInd].toString()).has_value(), DbObject::ParentRole);
 
             if (sort1Ind >= 0 && !r[sort1Ind].isNull())
                 newItem->setData(r[sort1Ind], DbObject::Sort1Role);

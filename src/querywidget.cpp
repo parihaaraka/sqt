@@ -1,4 +1,5 @@
 #include "querywidget.h"
+#include <QCoreApplication>
 #include <QTabWidget>
 #include <QApplication>
 #include "misc.h"
@@ -301,7 +302,9 @@ void QueryWidget::highlight(std::shared_ptr<DbConnection> con)
         {
             try
             {
-                settings = readJsonFile(Scripting::dbmsScriptPath(_connection.get()) + "hl.conf");
+                // a bundle without a palette of its own is not an error
+                if (const QString hl = Scripting::dbmsFile(_connection.get(), "hl.conf"); !hl.isEmpty())
+                    settings = readJsonFile(hl);
             }
             catch (const QString &err)
             {
@@ -540,8 +543,11 @@ void QueryWidget::log(const QString &text, QColor color)
 
 QCompleter* QueryWidget::completer()
 {
+    // One completer shared by every query widget, owned by the application
+    // object: ~QApplication drops it as its own child, while a static instance
+    // would be destroyed after Qt has already torn itself down.
+    static QCompleter &c = *(new QCompleter(QCoreApplication::instance()));
     static bool initialized = false;
-    static QCompleter c;
     if (!initialized)
     {
         initialized = true;
@@ -687,8 +693,11 @@ void QueryWidget::fetched(DataTable *table)
         }
         else
         {
+            // the splitter may still hold table views left by a query without
+            // charts, and a failed cast would put a null into the list
             for (int i = 0; i < _resSplitter->count(); ++i)
-                chartWidgets.append(qobject_cast<TimeChart*>(_resSplitter->widget(i)));
+                if (TimeChart *chart = qobject_cast<TimeChart*>(_resSplitter->widget(i)))
+                    chartWidgets.append(chart);
         }
 
         for (auto c: chartWidgets)
@@ -750,9 +759,10 @@ void QueryWidget::fetched(DataTable *table)
             //tv->setSelectionMode(QAbstractItemView::ContiguousSelection);
             //tv->addAction(_actionCopy);
 
-            m = new TableModel(_resSplitter);
+            // the view owns the model: they are created and dropped together,
+            // and findChild() below still reaches it through the view
+            m = new TableModel(tv);
             m->setObjectName("m" + tname);
-            _tables.append(m);
             tv->setModel(m);
             _resSplitter->addWidget(tv);
             m->take(table);
@@ -763,7 +773,8 @@ void QueryWidget::fetched(DataTable *table)
         else
         {
             m = qobject_cast<TableModel*>(tv->model());
-            m->take(table);
+            if (m)
+                m->take(table);
         }
     }
 }
@@ -779,18 +790,21 @@ void QueryWidget::clearResult()
     if (count() > 1) // TabWidget exists (false on destruction)
     {
         QTabWidget *res_tw = qobject_cast<QTabWidget*>(widget(1));
-        if (res_tw && res_tw->count() > 1)
+        // The resultsets tab is inserted along with the very first view and
+        // holds every one of them, so asking for the tab asks exactly the right
+        // question: whether there is anything to drop. Counting tabs instead
+        // would only work while there happens to be a second one.
+        const int resTabIndex = (res_tw && _resSplitter ? res_tw->indexOf(_resSplitter) : -1);
+        if (resTabIndex >= 0)
         {
             // remove resultsets tab, _resSplitter stays alive
-            res_tw->removeTab(0);
+            res_tw->removeTab(resTabIndex);
             // delete QTableView widgets (current shown resultsets)
             // (it looks like simple delete works ok instead of setParent(nullptr) and deleteLater())
             for (int i = _resSplitter->count() - 1; i >= 0; --i)
                 delete _resSplitter->widget(i);
         }
     }
-    qDeleteAll(_tables);
-    _tables.clear();
 }
 
 void QueryWidget::onCompleterRequest()
@@ -966,7 +980,13 @@ void QueryWidget::onCompleterRequest()
 
     ed->setCompleter(cmpl);
     cmpl->setModelSorting(QCompleter::CaseSensitivelySortedModel);
+    // setModel() neither takes nor releases ownership, and every model here is
+    // a child of the completer, so without this the models of all the previous
+    // completions would pile up until the application quits
+    QAbstractItemModel *previousModel = cmpl->model();
     cmpl->setModel(m.release());
+    if (previousModel && previousModel != cmpl->model())
+        previousModel->deleteLater();
     cmpl->setCompletionPrefix(words.last());
     int cmplCount = cmpl->completionCount();
     if (!cmplCount)

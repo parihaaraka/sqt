@@ -3,6 +3,8 @@
 #include <QStyle>
 #include "mainwindow.h"
 #include "appeventhandler.h"
+#include "resourcelocator.h"
+#include "settings.h"
 
 int main(int argc, char *argv[])
 {
@@ -23,6 +25,12 @@ int main(int argc, char *argv[])
     QCoreApplication::setApplicationName("sqt");
     QCoreApplication::setApplicationVersion("0.5.0");
     setlocale(LC_NUMERIC, "C");
+
+    // The scripts and the icons are looked up through the locator, so the folder
+    // of the user's own copies has to be known before anything asks for a file.
+    // The name of the application is set above - the settings depend on it.
+    SqtSettings::load();
+    setAppResourcesUserDir(SqtSettings::value("assetsDir").toString());
 
     AppEventHandler appEventHandler;
     a.installEventFilter(&appEventHandler);

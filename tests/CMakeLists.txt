@@ -20,3 +20,6 @@ endfunction()
 
 sqt_add_test(scriptversionfilter "${SQT_SRC_DIR}/scriptversionfilter.cpp")
 sqt_add_test(decimalsum "${SQT_SRC_DIR}/decimalsum.cpp")
+sqt_add_test(resourcelocator "${SQT_SRC_DIR}/resourcelocator.cpp")
+sqt_add_test(queryoptions "${SQT_SRC_DIR}/queryoptions.cpp")
+sqt_add_test(sqlparser "${SQT_SRC_DIR}/sqlparser.cpp")

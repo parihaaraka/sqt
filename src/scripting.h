@@ -2,6 +2,7 @@
 #define SCRIPTS_H
 
 #include <QString>
+#include <optional>
 #include <functional>
 #include <QVariant>
 #include <memory>
@@ -60,9 +61,17 @@ struct Script
     Type type = Type::SQL;
 };
 
+/// The scripts folder of the dbms, relative to a resource root
+/// ("scripts/postgres/content/").
 QString dbmsScriptPath(DbConnection *con, Context context = Context::Root);
+/// Every existing folder behind that path, the winning one first.
+QStringList dbmsScriptDirs(DbConnection *con, Context context = Context::Root);
+/// A file of the dbms bundle ("hl.conf"), empty if no root has it.
+QString dbmsFile(DbConnection *con, const QString &name);
 void refresh(DbConnection *connection, Context context);
-Script* getScript(DbConnection *connection, Context context, const QString &objectType);
+/// Returns a copy: a pointer into the storage would be invalidated by the very
+/// next refresh() of the same context.
+std::optional<Script> getScript(DbConnection *connection, Context context, const QString &objectType);
 // unable to make QObject movable, but we can't allow CppConductor to be copied => unique_ptr
 std::unique_ptr<CppConductor> execute(
         std::shared_ptr<DbConnection> connection,

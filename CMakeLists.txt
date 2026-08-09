@@ -47,6 +47,15 @@ add_executable(${PROJECT_NAME}
     ${RC_FILES}
 )
 
+# The compiler finds a fair share of what otherwise has to be found by reading.
+# Kept as warnings rather than errors: generated moc/uic code and the versions of
+# Qt and libpq in the wild are not ours to keep quiet.
+if(MSVC)
+    target_compile_options(${PROJECT_NAME} PRIVATE /W4)
+else()
+    target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra)
+endif()
+
 # ------------------- Deployment (Windows only) -------------------
 if(WIN32)
     # Qt deployment using windeployqt
@@ -160,6 +169,31 @@ foreach(ASSET_DIR decor scripts)
         VERBATIM
     )
 endforeach()
+
+# ------------------- installation (unix) -------------------
+# The portable layout (everything next to the binary) keeps working as it is;
+# this only adds the system-wide one, where the binary and its files are told
+# apart. ResourceLocator searches both, so the same build serves either.
+if(UNIX AND NOT APPLE)
+    include(GNUInstallDirs)
+    set(SQT_DATA_DIR "${CMAKE_INSTALL_FULL_DATADIR}/${PROJECT_NAME}")
+
+    # The data folder is reached by an absolute path and by one relative to the
+    # binary. The latter is what keeps an installed tree working after it has
+    # been moved, or installed into a prefix other than the configured one.
+    # It is derived from the very directories the install uses, so that changing
+    # CMAKE_INSTALL_DATADIR cannot make the two drift apart.
+    file(RELATIVE_PATH SQT_DATA_RELDIR "${CMAKE_INSTALL_FULL_BINDIR}" "${SQT_DATA_DIR}")
+
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        "SQT_DATA_DIR=\"${SQT_DATA_DIR}\""
+        "SQT_DATA_RELDIR=\"${SQT_DATA_RELDIR}\"")
+
+    install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(DIRECTORY scripts decor DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME})
+    install(FILES sqt.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+    install(FILES sqt.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+endif()
 
 # ------------------- tests -------------------
 option(SQT_BUILD_TESTS "Build unit tests" ON)

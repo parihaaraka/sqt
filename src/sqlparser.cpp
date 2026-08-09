@@ -142,7 +142,10 @@ AliasSearchResult explainAlias(const QString &alias, const QString &text, int po
     QString eols("\n");
     eols += QChar::ParagraphSeparator;
     eols += QChar::LineSeparator;
-    while (pos != last_pos)
+    // A quoted identifier consumes a character of its own (see mode 2 below),
+    // so the position may step over the boundary instead of landing on it, and
+    // an exact comparison would then let the scan run past the end of the text.
+    while (backward ? pos > last_pos : pos < last_pos)
     {
         c = text[pos];
         switch (mode)
@@ -315,6 +318,9 @@ QPair<AliasSearchStatus, QStringList> explainAlias(const QString &alias, const Q
     // Do not advance one by one (up and down), because we may
     // find matches in both directions and should make a choice
     // depending on depth (or scope level) of every match.
+
+    // the caller passes a cursor position, which the text may have outgrown
+    pos = qBound(0, pos, text.length());
 
     auto resDown = explainAlias(alias, text, pos, false);
     auto resUp = explainAlias(alias, text, pos, true);

@@ -19,6 +19,7 @@ public:
 
 private slots:
     void on_okBtn_clicked();
+    void on_assetsDirBtn_clicked();
 
 private:
     Ui::SettingsDialog *ui;

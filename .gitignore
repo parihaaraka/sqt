@@ -6,3 +6,4 @@ tmp
 build*/
 /vcpkg*
 .gigacode*
+.clinerules

@@ -4,8 +4,6 @@
 ## Overview
 The subject was aimed to provide fast and convenient MS SQL query tool under linux. The only existing ODBC interface lead to support of any other ODBC data source. As a result of pgAdmin3 deprecation `sqt` was modified to have a native PostgreSQL support via libpq. Due to my current needs PostgreSQL support is in priority.
 The main target audience are db programmers.
-#### Binaries
-Standalone (outdated) [sqt for windows x64](https://drive.google.com/open?id=1pD-twf3N0svQv-UzolVLlaUl3PZ1GK8U) (~12Mb)
 
 ## Feature highlights
 * Customizable objects tree and textual/tabular content view (see [scripts/README.md](https://github.com/parihaaraka/sqt/blob/master/scripts/README.md)) let you build you own tree with application-specific nodes;
@@ -127,6 +125,29 @@ Qt toolchain must be installed and be available via PATH (it is located via `qma
 sudo apt install build-essential cmake libpq-dev unixodbc-dev libssl-dev
 ```
 On Windows the dependencies are fetched via vcpkg automatically.
+
+Unit tests are built along with the application and run with `ctest --test-dir build`.
+
+### Installation (linux)
+```
+cmake --install build --prefix /usr/local
+```
+The binary goes to `bin`, the scripts and the icons to `share/sqt`, plus a desktop
+entry and an application icon. The portable layout keeps working as before: if
+`decor` and `scripts` are next to the binary, they are used.
+
+### Where the scripts are looked up
+The folders below are searched in order, and the first one holding the file wins.
+A copy of a single script therefore replaces just that script, while the rest of
+the bundle keeps coming from where it was:
+
+1. `$SQT_ASSETS_DIR`
+2. the *assets directory* setting (settings dialog, applied on the next start)
+3. next to the binary
+4. the data folder of the prefix the binary sits in, `<binary>/../share/sqt` by
+   default (this is what keeps an installed tree working after it has been moved)
+5. `~/.local/share/sqt`
+6. the folder the application was installed into
 
 ## Todo
 * Improve code completion, prepare scripts to fetch metadata from non-postgresql data sources;

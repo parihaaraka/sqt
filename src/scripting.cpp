@@ -11,6 +11,7 @@
 #include "settings.h"
 #include "sqllexer.h"
 #include "scriptversionfilter.h"
+#include "resourcelocator.h"
 #include <QJSEngine>
 #include <QJSValueList>
 #include <QQmlEngine>
@@ -18,7 +19,7 @@
 namespace Scripting
 {
 
-// key = dbms_scripting_id, value = root scripts path
+// key = dbms_scripting_id, value = scripts path relative to a resource root
 static QHash<QString, QString> _dbms_paths;
 // key = dbms_scripting_id/context/, value = { type, script }
 static QHash<QString, QHash<QString, Script>> _scripts;
@@ -53,28 +54,35 @@ QString dbmsScriptPath(DbConnection *con, Context context)
     if (it != _dbms_paths.end())
         return it.value() + contextFolder;
 
-    QString startPath = QApplication::applicationDirPath() + "/scripts/";
-    if (odbcConnection)
-        startPath += "odbc/";
+    // Paths are kept relative to a resource root: the same bundle may be laid
+    // out next to the binary, under the user's home and in the system-wide
+    // folder at once, and the choice between them belongs to the locator.
+    QString startPath = QString("scripts/") + (odbcConnection ? "odbc/" : "");
+    const QStringList dirs = appResources().dirs(startPath);
+    if (dirs.isEmpty())
+        throw QObject::tr("directory %1 is not found in %2").
+                arg(startPath, appResources().roots().join(", "));
 
-    QDir dir(startPath);
-    if (!dir.exists())
-        throw QObject::tr("directory %1 does not exist").arg(startPath);
-
-    const QStringList subdirs = dir.entryList(QStringList(), QDir::AllDirs | QDir::NoDotAndDotDot);
     QString dbmsName = con->dbmsName();
     if (dbmsName.isEmpty())
         throw QObject::tr("unable to get dbms name");
 
+    // search for the folder with a name containing dbms name;
+    // it may live in any of the roots, so all of them are asked in turn
     QString endPath;
-    // search for the folder with a name containing dbms name
-    for (const QString &d : subdirs)
+    for (const QString &dir: dirs)
     {
-        if (dbmsName.contains(d, Qt::CaseInsensitive))
+        const QStringList subdirs = QDir(dir).entryList(QStringList(), QDir::AllDirs | QDir::NoDotAndDotDot);
+        for (const QString &d: subdirs)
         {
-            endPath = d + "/";
-            break;
+            if (dbmsName.contains(d, Qt::CaseInsensitive))
+            {
+                endPath = d + "/";
+                break;
+            }
         }
+        if (!endPath.isEmpty())
+            break;
     }
 
     // if specific folder was not found for odbc driver
@@ -83,10 +91,20 @@ QString dbmsScriptPath(DbConnection *con, Context context)
     else
         startPath += endPath;
 
-    if (!QFile::exists(startPath + contextFolder))
+    if (appResources().dirs(startPath + contextFolder).isEmpty())
         throw QObject::tr("directory %1 is not available").arg(startPath + contextFolder);
     _dbms_paths.insert(con->dbmsScriptingID(), startPath);
     return startPath + contextFolder;
+}
+
+QStringList dbmsScriptDirs(DbConnection *con, Context context)
+{
+    return appResources().dirs(dbmsScriptPath(con, context));
+}
+
+QString dbmsFile(DbConnection *con, const QString &name)
+{
+    return appResources().file(dbmsScriptPath(con, Context::Root) + name);
 }
 
 void refresh(DbConnection *connection, Context context)
@@ -94,15 +112,24 @@ void refresh(DbConnection *connection, Context context)
     if (!connection)
         return;
 
-    QString path = dbmsScriptPath(connection, context);
+    const QStringList dirs = dbmsScriptDirs(connection, context);
     auto &bunch = _scripts[connection->dbmsScriptingID() + context2str(context)];
     bunch.clear();
 
-    const QFileInfoList files = QDir(path).entryInfoList({"*.*"}, QDir::Files);
+    // The roots are merged file by file, not folder by folder: replacing a
+    // single script must not hide the rest of the bundle. The folders come in
+    // priority order, so the first script of a name is the one that counts.
+    QFileInfoList files;
+    for (const QString &dir: dirs)
+        files += QDir(dir).entryInfoList({"*.*"}, QDir::Files);
+
     for (const auto &f: files)
     {
         QString suffix = f.suffix().toLower();
         if (suffix != "sql" && suffix != "qs")
+            continue;
+
+        if (bunch.contains(f.baseName()))
             continue;
 
         QFile scriptFile(f.filePath());
@@ -130,16 +157,23 @@ void refresh(DbConnection *connection, Context context)
     }
 }
 
-Script* getScript(DbConnection *connection, Context context, const QString &objectType)
+std::optional<Script> getScript(DbConnection *connection, Context context, const QString &objectType)
 {
-    auto &bunch = _scripts[connection->dbmsScriptingID() + context2str(context)];
-    if (bunch.isEmpty())
+    const QString key = connection->dbmsScriptingID() + context2str(context);
+    // constFind() keeps the lookup from creating an empty entry for every dbms
+    // ever asked about
+    auto bunch = _scripts.constFind(key);
+    if (bunch == _scripts.constEnd() || bunch->isEmpty())
     {
         refresh(connection, context);
-        bunch = _scripts[connection->dbmsScriptingID() + context2str(context)];
+        // the iterator is taken after the refresh: the one above would already
+        // be pointing into a rehashed storage
+        bunch = _scripts.constFind(key);
+        if (bunch == _scripts.constEnd())
+            return std::nullopt;
     }
-    const auto it = bunch.find(objectType);
-    return (it == bunch.end() ? nullptr : &it.value());
+    const auto it = bunch->find(objectType);
+    return (it == bunch->end() ? std::nullopt : std::optional<Script>(*it));
 }
 
 void execute(
@@ -274,7 +308,7 @@ std::unique_ptr<CppConductor> execute(
     auto s = Scripting::getScript(connection, context, objectType);
     if (!s)
         return nullptr;
-    execute(env.get(), connection, s);
+    execute(env.get(), connection, &s.value());
     return env;
 }
 
@@ -288,7 +322,7 @@ std::unique_ptr<CppConductor> execute(
     auto s = Scripting::getScript(connection.get(), context, objectType);
     if (!s)
         return nullptr;
-    execute(env.get(), connection.get(), s);
+    execute(env.get(), connection.get(), &s.value());
     return env;
 }
 

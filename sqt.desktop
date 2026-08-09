@@ -1,0 +1,11 @@
+ё[Desktop Entry]
+Type=Application
+Name=sqt
+GenericName=SQL client
+Comment=Scriptable SQL client for PostgreSQL and ODBC data sources
+Exec=sqt %F
+Icon=sqt
+Terminal=false
+Categories=Development;Database;
+MimeType=text/x-sql;
+Keywords=sql;postgres;postgresql;odbc;database;
