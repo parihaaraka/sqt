@@ -75,8 +75,16 @@ endif()
 
 # ------------------- Deployment (Windows only) -------------------
 if(WIN32)
-    # Qt deployment using windeployqt
-    find_program(WINDEPLOYQT_EXE windeployqt)
+    # windeployqt gathers the Qt dlls and plugins next to the exe. Looked for in
+    # the bin directory of the Qt that was actually found - via qmake, which Qt
+    # exports as a target - rather than in PATH: a PATH search may well find the
+    # tool of a different Qt, or nothing at all when Qt was pointed at with
+    # CMAKE_PREFIX_PATH alone.
+    if(TARGET Qt6::qmake)
+        get_target_property(_qmake_exe Qt6::qmake IMPORTED_LOCATION)
+        get_filename_component(_qt_bin_dir "${_qmake_exe}" DIRECTORY)
+    endif()
+    find_program(WINDEPLOYQT_EXE windeployqt HINTS "${_qt_bin_dir}")
     if(WINDEPLOYQT_EXE)
         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
             COMMAND "${WINDEPLOYQT_EXE}"
@@ -89,8 +97,15 @@ if(WIN32)
             WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
         )
     else()
-        message(WARNING "windeployqt not found; Qt DLLs will not be deployed automatically.")
+        # Fatal, not a warning: without it the build still succeeds and the
+        # package is still produced - only it holds not one Qt dll and cannot
+        # start anywhere but on this machine.
+        message(FATAL_ERROR
+            "windeployqt not found (looked in '${_qt_bin_dir}' and PATH).\n"
+            "It comes with Qt; point the build at Qt with CMAKE_PREFIX_PATH, "
+            "or set WINDEPLOYQT_EXE to its full path.")
     endif()
+
 
     # PostgreSQL and dependency DLLs from vcpkg
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")

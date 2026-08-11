@@ -22,6 +22,13 @@ on:
 permissions:
   contents: write
 
+defaults:
+  run:
+    # Stated once here rather than per step. A job with `container:` gets `sh`,
+    # and /bin/sh in the image is dash: `set -o pipefail` is a bash builtin, so
+    # dash quits on the first line before the step does anything at all.
+    shell: bash
+
 env:
   # Qt for the two self-contained builds (windows zip, AppImage). An LTS, not
   # the newest: these are binary releases and a settled base matters more.
@@ -110,6 +117,8 @@ jobs:
           apt-get install -y "./$deb"
           test -x /usr/bin/sqt
           test -d /usr/share/sqt/scripts
+          test -d /usr/share/sqt/decor
+          sqt --version
 
       - uses: actions/upload-artifact@v4
         with:
@@ -135,7 +144,7 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config file ca-certificates \
-            curl git python3-pip \
+            curl git python3-pip patchelf \
             libgl1-mesa-dev libpq-dev unixodbc-dev libssl-dev \
             libfontconfig1 libfreetype6 libx11-6 libx11-xcb1 libxext6 libxfixes3 \
             libxi6 libxrender1 libxcb1 libxcb-cursor0 libxcb-glx0 libxcb-keysyms1 \
@@ -147,15 +156,32 @@ jobs:
 
       - name: install Qt ${{ env.QT_VERSION }}
         run: |
-          pip3 install "aqtinstall==3.1.*"
-          python3 -m aqt install-qt linux desktop ${QT_VERSION} linux_gcc_64 \
-            -m qtdeclarative -O /opt/qt
+          set -euo pipefail
+          python3 -m pip install --upgrade pip
+          python3 -m pip install "aqtinstall==3.1.*"
+          # No `-m qtdeclarative`: in Qt 6 qtdeclarative is an *archive* of the
+          # base package and is installed by default. The module list holds
+          # qtcharts, qtmultimedia and the like, so asking for qtdeclarative
+          # there fails with "not found while parsing XML of package
+          # information".
+          python3 -m aqt install-qt linux desktop "$QT_VERSION" linux_gcc_64 -O /opt/qt
+          qt_root="/opt/qt/$QT_VERSION/gcc_64"
+          # Qml is what the meta-comment parser uses. Checked here so that a
+          # reshuffle of Qt's archives fails on this step, with the list of what
+          # the version does offer, instead of surfacing later as a puzzling
+          # configure error.
+          if [ ! -f "$qt_root/lib/cmake/Qt6Qml/Qt6QmlConfig.cmake" ]; then
+            echo "Qt6Qml is missing from $qt_root" >&2
+            python3 -m aqt list-qt linux desktop --archives "$QT_VERSION" linux_gcc_64 || true
+            exit 1
+          fi
+          echo "QT_ROOT=$qt_root" >> "$GITHUB_ENV"
 
       - name: configure
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH=/opt/qt/${QT_VERSION}/gcc_64 \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT" \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DSQT_VERSION=${{ needs.version.outputs.version }}
 
@@ -175,16 +201,18 @@ jobs:
           set -euo pipefail
           DESTDIR=$PWD/AppDir cmake --install build
           cd "$RUNNER_TEMP"
-          base=https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous
-          curl -fsSLO $base/linuxdeploy-x86_64.AppImage
-          curl -fsSLO https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          base=https://github.com/linuxdeploy
+          curl -fsSLO $base/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -fsSLO $base/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          curl -fsSLO $base/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
           chmod +x linuxdeploy*.AppImage
           cd "$GITHUB_WORKSPACE"
           # No fuse in a container, so the tools unpack themselves instead.
           export APPIMAGE_EXTRACT_AND_RUN=1
-          export PATH="$RUNNER_TEMP:/opt/qt/${QT_VERSION}/gcc_64/bin:$PATH"
-          export QMAKE=/opt/qt/${QT_VERSION}/gcc_64/bin/qmake
-          export LD_LIBRARY_PATH=/opt/qt/${QT_VERSION}/gcc_64/lib
+          export ARCH=x86_64
+          export PATH="$RUNNER_TEMP:$QT_ROOT/bin:$PATH"
+          export QMAKE="$QT_ROOT/bin/qmake"
+          export LD_LIBRARY_PATH="$QT_ROOT/lib"
           export OUTPUT=sqt-${{ needs.version.outputs.version }}-x86_64.AppImage
           linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
@@ -193,6 +221,7 @@ jobs:
           ls -la "$OUTPUT"
 
       - name: check the AppImage runs
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           export APPIMAGE_EXTRACT_AND_RUN=1
@@ -219,11 +248,24 @@ jobs:
           arch: x64
 
       - name: install Qt ${{ env.QT_VERSION }}
-        shell: bash
         run: |
+          set -euo pipefail
           pip install "aqtinstall==3.1.*"
-          python -m aqt install-qt windows desktop ${QT_VERSION} win64_msvc2022_64 \
-            -m qtdeclarative -O /c/Qt
+          # See the AppImage job: qtdeclarative is not a Qt 6 module name.
+          python -m aqt install-qt windows desktop "$QT_VERSION" win64_msvc2022_64 -O C:/Qt
+          qt_root="C:/Qt/$QT_VERSION/msvc2022_64"
+          if [ ! -f "$qt_root/lib/cmake/Qt6Qml/Qt6QmlConfig.cmake" ]; then
+            echo "Qt6Qml is missing from $qt_root" >&2
+            python -m aqt list-qt windows desktop --archives "$QT_VERSION" win64_msvc2022_64 || true
+            exit 1
+          fi
+          # Forward slashes for cmake, which reads a backslash as an escape...
+          echo "QT_ROOT=$qt_root" >> "$GITHUB_ENV"
+          # ...and a native path for PATH, which is read by windows itself.
+          # Qt's bin holds windeployqt, and the dlls the test binaries load when
+          # ctest runs them. Neither is found without it.
+          cygpath -w "$qt_root/bin" >> "$GITHUB_PATH"
+
 
       # libpq. The runner ships a vcpkg checkout already, so this only builds
       # the port - and only when the cache below misses.
@@ -234,13 +276,16 @@ jobs:
           key: vcpkg-x64-windows-${{ hashFiles('vcpkg.json') }}
 
       - name: configure
-        shell: bash
         run: |
+          set -euo pipefail
+          # cygpath, because $VCPKG_INSTALLATION_ROOT arrives with backslashes
+          # and cmake reads those as escapes.
+          toolchain="$(cygpath -m "$VCPKG_INSTALLATION_ROOT")/scripts/buildsystems/vcpkg.cmake"
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DCMAKE_TOOLCHAIN_FILE="$toolchain" \
             -DVCPKG_TARGET_TRIPLET=x64-windows \
-            -DCMAKE_PREFIX_PATH="/c/Qt/${QT_VERSION}/msvc2022_64" \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT" \
             -DCMAKE_INSTALL_PREFIX=install \
             -DSQT_VERSION=${{ needs.version.outputs.version }}
 
@@ -253,9 +298,38 @@ jobs:
           QT_QPA_PLATFORM: offscreen
 
       - name: package
-        shell: bash
         working-directory: build
         run: cpack -G ZIP -C Release
+
+      # What makes the difference between "the build passed" and "the program
+      # starts": windeployqt not finding Qt, or vcpkg's dlls not being copied,
+      # produces a perfectly well-formed archive that cannot run.
+      - name: check the archive
+        timeout-minutes: 5
+        working-directory: build
+        run: |
+          set -euo pipefail
+          zip=$(ls sqt-*-windows-x64.zip)
+          mkdir -p check
+          cd check
+          # cmake rather than unzip: it is certainly installed, and git bash's
+          # tar does not read zip files.
+          cmake -E tar xf "../$zip"
+          root=$(ls -d sqt-*-windows-x64)
+          missing=
+          for f in sqt.exe Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll Qt6Qml.dll \
+                   platforms/qwindows.dll libpq.dll decor scripts; do
+            if [ ! -e "$root/$f" ]; then
+              echo "missing from the archive: $f" >&2
+              missing=1
+            fi
+          done
+          [ -z "$missing" ]
+          # Runs the unpacked copy, so a dll left behind shows up here rather
+          # than on someone's desktop. A gui subsystem binary prints nothing
+          # visible, hence only the exit code is judged.
+          "./$root/sqt.exe" --version
+          echo "the unpacked binary starts"
 
       - uses: actions/upload-artifact@v4
         with:
