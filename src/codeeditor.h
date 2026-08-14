@@ -87,7 +87,7 @@ private:
     void selectNextOccurrence();               // Ctrl+D
     void addCursorOnAdjacentLine(bool below);   // Ctrl+Alt+Up / Ctrl+Alt+Down
     QString multiCursorSelectedText() const;    // every selection, joined by '\n' in document order
-    QVector<int> cursorsOrderedByPosition() const; // indices into _multiCursor.cursors(), ascending by selectionStart()
+    const QVector<int> cursorsOrderedByPosition() const; // indices into _multiCursor.cursors(), ascending by selectionStart()
     bool copySelectionToClipboard() const;      // whatever createMimeDataFromSelection() yields -> clipboard
     static bool isNavigationKey(int key);
     static QTextCursor::MoveOperation moveOperationForKey(int key, bool ctrl);

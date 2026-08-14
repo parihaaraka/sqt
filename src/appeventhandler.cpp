@@ -74,8 +74,9 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
 
             QJsonParseError err;
             QString preparedJsonString = stringValue.trimmed();
+            static auto jrepl = QRegularExpression("\\R", QRegularExpression::UseUnicodePropertiesOption);
             // remove line breaks because QJsonDocument::fromJson() doesn't parse formatted json
-            preparedJsonString.replace(QRegularExpression("\\R", QRegularExpression::UseUnicodePropertiesOption), "");
+            preparedJsonString.replace(jrepl, "");
             QJsonDocument doc = QJsonDocument::fromJson(preparedJsonString.toUtf8(), &err);
 
             std::function<QJsonValue(const QJsonValue&)> expandJsonValue;

@@ -15,6 +15,17 @@
 #include <memory>
 #include "scripting.h"
 
+template <typename Fn> struct arg7_ptr_type;
+
+template <typename Ret, typename A1, typename A2, typename A3,
+          typename A4, typename A5, typename A6, typename A7,
+          typename A8, typename A9>
+struct arg7_ptr_type<Ret (*)(A1, A2, A3, A4, A5, A6, A7, A8, A9)> {
+    using type = std::remove_pointer_t<A7>;
+};
+// to deal with odbc headers mess (mingw vs  msvc)
+using ColSizeT = arg7_ptr_type<decltype(&SQLDescribeColA)>::type;
+
 OdbcConnection::OdbcConnection() :
     DbConnection()
 {
@@ -223,9 +234,10 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
         return false;
 
     SQLLEN cb;
-    QStringList queries = query.split(QRegularExpression("^go\\s*$",
-                                                         QRegularExpression::CaseInsensitiveOption |
-                                                         QRegularExpression::MultilineOption),
+    static auto rqsplit = QRegularExpression("^go\\s*$",
+                                             QRegularExpression::CaseInsensitiveOption |
+                                             QRegularExpression::MultilineOption);
+    QStringList queries = query.split(rqsplit,
                                   #if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
                                       Qt::SkipEmptyParts
                                   #else
@@ -252,7 +264,8 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
     {
         // ms sql server wants \r\n line ends:
         // TODO check dbms vendor (or something else) to support \n only...
-        q.replace(QRegularExpression("(?<!\r)\n"), "\r\n");
+        static auto rle = QRegularExpression("(?<!\r)\n");
+        q.replace(rle, "\r\n");
 
         /*
         1) in case of SQL_CURSOR_STATIC mode SQLRowCount always returns -1 (FreeTDS), and SQLFetch acts very slow
@@ -274,11 +287,7 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
                 _resultsets.append(table);
                 lk.unlock();
 
-#ifdef _WIN32
-                SQLUINTEGER col_size;
-#else
-                SQLULEN col_size;
-#endif
+                ColSizeT col_size;
                 SQLCHAR buf[512];
                 SQLSMALLINT buf_res_length, data_type, dec_digits, nullable_desc;
                 for (SQLUSMALLINT i = 0; i < col_count; ++i)
@@ -446,20 +455,20 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
                         {
                             size_t buf_size = 1024;
                             std::vector<char> buf_storage(buf_size);
-                            char *buf = buf_storage.data();
-                            char *ptr = buf;
+                            char *buf_data = buf_storage.data();
+                            char *ptr = buf_data;
                             size_t res_len = 0;
                             do
                             {
-                                retcode = SQLGetData(hstmt_local, i + 1, SQL_C_WCHAR, ptr, SQLLEN(buf_size - size_t(ptr - buf)), &cb);
+                                retcode = SQLGetData(hstmt_local, i + 1, SQL_C_WCHAR, ptr, SQLLEN(buf_size - size_t(ptr - buf_data)), &cb);
                                 if (!SQL_SUCCEEDED(retcode) || cb == SQL_NULL_DATA)
                                     break;
                                 if (retcode == SQL_SUCCESS_WITH_INFO)
                                 {
                                     res_len = buf_size - sizeof(SQLWCHAR); // every pass null-terminated
                                     buf_storage.resize(buf_size + size_t(cb));
-                                    buf = buf_storage.data();
-                                    ptr = buf + res_len;
+                                    buf_data = buf_storage.data();
+                                    ptr = buf_data + res_len;
                                     buf_size = buf_size + size_t(cb);
                                 }
                                 else
@@ -472,7 +481,7 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
                                 (*row)[i] = QString::fromUtf16(reinterpret_cast<ushort*>(buf), int(res_len / sizeof(SQLWCHAR)));
 #else
-                                (*row)[i] = QString::fromUtf16(reinterpret_cast<char16_t*>(buf), int(res_len / sizeof(SQLWCHAR)));
+                                (*row)[i] = QString::fromUtf16(reinterpret_cast<char16_t*>(buf_data), int(res_len / sizeof(SQLWCHAR)));
 #endif
                             //(*row)[i] = QTextCodec::codecForMib(1015)->toUnicode(val); // 1015 is UTF-16, 1014 UTF-16LE, 1013 UTF-16LE
                             break;
@@ -513,9 +522,9 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
                             return false;
                     }
 
-                    QMutexLocker lk(&table->mutex);
+                    QMutexLocker lkt(&table->mutex);
                     table->addRow(row.release());
-                    lk.unlock();
+                    lkt.unlock();
 
                     ++rowcount;
                     if (rowcount % FETCH_COUNT_NOTIFY == 0)
@@ -567,7 +576,7 @@ bool OdbcConnection::executeAsync(const QString &query, const QVector<QVariant> 
         execute(query, params_copy.isEmpty() ? nullptr : &params_copy);
         thread->quit();
     });
-    connect(thread, &QThread::finished, [this, thread]() {
+    connect(thread, &QThread::finished, this, [this, thread]() {
         thread->deleteLater();
         emit queryFinished();
     });
@@ -753,7 +762,7 @@ void OdbcConnection::cancel() noexcept
         emit message(tr("cancelling..."));
 
         QThread* thread = new QThread;
-        connect(thread, &QThread::started, [this, hstmt_local]() {
+        connect(thread, &QThread::started, this, [this, hstmt_local]() {
             checkStmt(SQLCancel(hstmt_local), hstmt_local);
         });
         connect(thread, &QThread::finished, [thread]() {

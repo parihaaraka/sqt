@@ -15,7 +15,7 @@ std::shared_ptr<DbConnection> DbConnectionFactory::connection(QString name)
 std::shared_ptr<DbConnection> DbConnectionFactory::createConnection(QString name, QString connectionString, QString database)
 {
     std::shared_ptr<DbConnection> res;
-    QRegularExpression re("\\b(dsn|driver)\\s*=", QRegularExpression::CaseInsensitiveOption);
+    static QRegularExpression re("\\b(dsn|driver)\\s*=", QRegularExpression::CaseInsensitiveOption);
     if (re.match(connectionString).hasMatch())
         res = std::shared_ptr<DbConnection>(new OdbcConnection());
     else

@@ -123,7 +123,7 @@ void refresh(DbConnection *connection, Context context)
     for (const QString &dir: dirs)
         files += QDir(dir).entryInfoList({"*.*"}, QDir::Files);
 
-    for (const auto &f: files)
+    for (const auto &f: std::as_const(files))
     {
         QString suffix = f.suffix().toLower();
         if (suffix != "sql" && suffix != "qs")
@@ -193,16 +193,20 @@ void execute(
     QString query = s->body;
 
     // replace macroses with corresponding values in both sql and qs scripts
-    QRegularExpression expr("\\$(\\w+\\.\\w+)\\$");
-    QRegularExpressionMatchIterator i = expr.globalMatch(query);
+    static QRegularExpression expr("\\$(\\w+\\.\\w+)\\$");
     QStringList macros;
-    // search for macroses within query text
-    while (i.hasNext())
+
     {
-        QRegularExpressionMatch match = i.next();
-        if (!macros.contains(match.captured(1)))
-            macros << match.captured(1);
+        QRegularExpressionMatchIterator i = expr.globalMatch(query);
+        // search for macroses within query text
+        while (i.hasNext())
+        {
+            QRegularExpressionMatch match = i.next();
+            if (!macros.contains(match.captured(1)))
+                macros << match.captured(1);
+        }
     }
+
     // replace macroses with values
 #if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
     for (const QString &macro: qAsConst(macros))

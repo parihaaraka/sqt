@@ -427,7 +427,8 @@ void FindAndReplacePanel::on_btnReplaceAll_clicked()
     }
     else
     {
-        QString tofind = ui->lineFind->text().replace(QRegularExpression(R"(([.\^$*+?()[{\\|\]\-]))"), R"(\\1)");
+        static auto r = QRegularExpression(R"(([.\^$*+?()[{\\|\]\-]))");
+        QString tofind = ui->lineFind->text().replace(r, R"(\\1)");
         exp.setPattern(ui->cbWholeWord->isChecked() ? "\\b" + tofind + "\\b" : tofind);
         exp.setPatternOptions(ui->cbCaseSensitive->isChecked() ?
                                   QRegularExpression::NoPatternOption :

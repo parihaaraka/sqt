@@ -223,7 +223,7 @@ void QueryWidget::setDbConnection(DbConnection *connection)
         connect(connection, &DbConnection::queryFinished, this, [this]() {
             // print all resultsets structure ready to be used in 'create function returning table(...)'
             QColor resultsetStructureColor = _messages->palette().text().color();
-            resultsetStructureColor.setAlphaF(0.6);
+            resultsetStructureColor.setAlphaF(0.6f);
 #if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
             for (const auto res: qAsConst(_connection->_resultsets))
 #else
@@ -500,7 +500,7 @@ void QueryWidget::stopTimer()
 void QueryWidget::executeOnTimer(const QString &query, int interval)
 {
     _timer->disconnect();
-    connect(_timer, &QTimer::timeout, [this, query] {
+    connect(_timer, &QTimer::timeout, this, [this, query] {
         if (_connection->queryState() == QueryState::Inactive)
             execute(query);
     });
@@ -1000,7 +1000,7 @@ void QueryWidget::onCompleterRequest()
         cr.setWidth(popup->sizeHintForColumn(0)
                     + popup->verticalScrollBar()->sizeHint().width());
         cmpl->complete(cr);
-        QTimer::singleShot(100, []() {
+        QTimer::singleShot(100, this, []() {
             completer()->popup()->selectionModel()->setCurrentIndex(
                         completer()->popup()->model()->index(0, 0),
                         QItemSelectionModel::SelectCurrent);

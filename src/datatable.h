@@ -81,7 +81,7 @@ public:
     int getColumnOrd(QString column_name) const;
     DataRow& getRow(int ind) const;
     mutable QMutex mutex;
-public slots:
+public:
     int columnCount() const;
     int rowCount() const;
     QVariant value(int row, int column) const;

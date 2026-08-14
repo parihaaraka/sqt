@@ -90,7 +90,7 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->objectsView->setItemDelegateForColumn(0, new DbTreeItemDelegate(this));
     ui->objectsView->setStyle(_proxyStyle);
     connect(ui->objectsView, &QTreeView::expanded, this, &MainWindow::objectsViewAdjustColumnWidth);
-    connect(ui->objectsView, &QTreeView::collapsed, [this](const QModelIndex &index) {
+    connect(ui->objectsView, &QTreeView::collapsed, this, [this](const QModelIndex &index) {
         auto model = (index.isValid() ? qobject_cast<const QSortFilterProxyModel*>(index.model()) : nullptr);
         if (!model) // i saw index being invalid on windows (wtf?)
             return;
@@ -126,10 +126,8 @@ MainWindow::MainWindow(QWidget *parent) :
     _hideTimer->setSingleShot(true);
     _hideTimer->setInterval(6000);
     ui->splitterV->setSizes({1000, 0});
-    connect(ui->splitterV, &QSplitter::splitterMoved, [this]() { _hideTimer->stop(); });
-    connect(_hideTimer, &QTimer::timeout, [this](){
-        ui->splitterV->setSizes({1000, 0});
-    });
+    connect(ui->splitterV, &QSplitter::splitterMoved, this, [this]() { _hideTimer->stop(); });
+    connect(_hideTimer, &QTimer::timeout, this, [this](){ ui->splitterV->setSizes({1000, 0}); });
 
     ui->actionRefresh->setShortcuts(QKeySequence::Refresh);
     ui->actionQuit->setShortcuts(QKeySequence::Quit);
@@ -187,7 +185,7 @@ MainWindow::MainWindow(QWidget *parent) :
     // switch to next tab page
     QAction *tabWidgetAction = new QAction(tr("next page"), ui->tabWidget);
     tabWidgetAction->setShortcut(QKeySequence::Forward);
-    connect(tabWidgetAction, &QAction::triggered, [this]()
+    connect(tabWidgetAction, &QAction::triggered, this, [this]()
     {
         if (ui->tabWidget->currentIndex() < ui->tabWidget->count() - 1)
             ui->tabWidget->setCurrentIndex(ui->tabWidget->currentIndex() + 1);
@@ -197,7 +195,7 @@ MainWindow::MainWindow(QWidget *parent) :
     // switch to previous tab page
     tabWidgetAction = new QAction(tr("previous page"), ui->tabWidget);
     tabWidgetAction->setShortcut(QKeySequence::Back);
-    connect(tabWidgetAction, &QAction::triggered, [this]()
+    connect(tabWidgetAction, &QAction::triggered, this, [this]()
     {
         if (ui->tabWidget->currentIndex() > 0)
             ui->tabWidget->setCurrentIndex(ui->tabWidget->currentIndex() - 1);
@@ -207,7 +205,7 @@ MainWindow::MainWindow(QWidget *parent) :
     // close tab page
     tabWidgetAction = new QAction(tr("close page"), ui->tabWidget);
     tabWidgetAction->setShortcuts(QKeySequence::Close);
-    connect(tabWidgetAction, &QAction::triggered, [this]()
+    connect(tabWidgetAction, &QAction::triggered, this, [this]()
     {
         int index = targetTabIndex();
         if (index >= 0)
@@ -229,7 +227,7 @@ MainWindow::MainWindow(QWidget *parent) :
     auto addFileNameAction = [this](const QString &title, QString (QFileInfo::*extract)() const)
     {
         QAction *action = new QAction(title, ui->tabWidget);
-        connect(action, &QAction::triggered, [this, extract]()
+        connect(action, &QAction::triggered, this, [this, extract]()
         {
             QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(targetTabIndex()));
             if (!w || w->fileName().isEmpty())
@@ -248,7 +246,7 @@ MainWindow::MainWindow(QWidget *parent) :
     // index is valid exactly while the menu is up.
     QTabBar *tabBar = ui->tabWidget->tabBar();
     tabBar->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(tabBar, &QWidget::customContextMenuRequested, [this, tabBar](const QPoint &pos)
+    connect(tabBar, &QWidget::customContextMenuRequested, this, [this, tabBar](const QPoint &pos)
     {
         int index = tabBar->tabAt(pos);
         if (index < 0) // beyond the tabs
@@ -270,7 +268,7 @@ MainWindow::MainWindow(QWidget *parent) :
     QToolButton *dbBtn = new QToolButton(ui->tabWidget);
     dbBtn->setAutoRaise(true);
     QMenu *dbBtnMenu = new QMenu(dbBtn);
-    connect(dbBtnMenu, &QMenu::aboutToShow, [this, dbBtnMenu](){
+    connect(dbBtnMenu, &QMenu::aboutToShow, this, [this, dbBtnMenu](){
         dbBtnMenu->clear();
         QueryWidget *qw = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
         DbConnection *currentConnection = (qw ? qw->dbConnection() : nullptr);
@@ -289,14 +287,13 @@ MainWindow::MainWindow(QWidget *parent) :
                     QModelIndex ind = m->index(dr, 0, m->index(cr, 0));
                     if (ind.data(DbObject::TypeRole).toString() != "database")
                         continue;
-                    QModelIndex srcIndex = static_cast<QSortFilterProxyModel*>(m)->mapToSource(ind);
-                    DbConnection *connection = _objectsModel->dbConnection(srcIndex).get();
-                    databases.append(connection->database());
+                    QModelIndex srcIndex2 = static_cast<QSortFilterProxyModel*>(m)->mapToSource(ind);
+                    databases.append(_objectsModel->dbConnection(srcIndex2)->database());
                 }
 
                 if (databases.isEmpty())
                 {
-                    dbBtnMenu->addAction(srcIndex.data().toString(), [this, qw, connection](){
+                    dbBtnMenu->addAction(srcIndex.data().toString(), this, [this, qw, connection](){
                         DbConnection *cn = connection->clone();
                         qw->setDbConnection(cn);
                         retitleOnDatabaseChange(qw);
@@ -314,7 +311,7 @@ MainWindow::MainWindow(QWidget *parent) :
                         if (currentConnection->database() != databases[i])
                         {
                             QAction *a = new QAction(databases[i], dbBtnMenu);
-                            connect(a, &QAction::triggered, [this, a, qw, currentConnection](){
+                            connect(a, &QAction::triggered, this, [this, a, qw, currentConnection](){
                                 currentConnection->setDatabase(a->text());
                                 currentConnection->open();
                                 retitleOnDatabaseChange(qw);
@@ -334,7 +331,7 @@ MainWindow::MainWindow(QWidget *parent) :
 #else
                     for (const QString &db: std::as_const(databases))
 #endif
-                        menu->addAction(db, [this, qw, connection, db](){
+                        menu->addAction(db, this, [this, qw, connection, db](){
                             DbConnection *cn = connection->clone();
                             cn->setDatabase(db);
                             qw->setDbConnection(cn);
@@ -1142,15 +1139,15 @@ void MainWindow::addMruFile()
 
     for (int i = 1; i < ui->menuOpen_recent->actions().size(); ++i)
     {
-        QAction *a = ui->menuOpen_recent->actions().at(i);
-        if (!a->text().compare(file) || itemsToSave.size() == 15)
+        QAction *a2 = ui->menuOpen_recent->actions().at(i);
+        if (!a2->text().compare(file) || itemsToSave.size() == 15)
         {
-            ui->menuOpen_recent->removeAction(a);
-            delete a;
+            ui->menuOpen_recent->removeAction(a2);
+            delete a2;
             --i;
             continue;
         }
-        itemsToSave.append({a->text(), a->data().toString()});
+        itemsToSave.append({a2->text(), a2->data().toString()});
     }
 
     SqtSettings::setValue("recentFiles", QVariant::fromValue(itemsToSave));
@@ -1251,13 +1248,13 @@ void MainWindow::scriptSelectedObjects()
             if (!c || c->resultsets.empty())
             {
                 // show preview if corresponding script exists
-                auto c = Scripting::execute(con, Scripting::Context::Preview, type,
-                                            [this, &srcIndex](QString macro) -> QVariant
-                    {
-                        return _objectsModel->parentNodeProperty(srcIndex, macro);
-                    });
+                auto cnd = Scripting::execute(con, Scripting::Context::Preview, type,
+                                              [this, &srcIndex](QString macro) -> QVariant
+                {
+                    return _objectsModel->parentNodeProperty(srcIndex, macro);
+                });
 
-                DataTable *table = (c && !c->resultsets.isEmpty() ? c->resultsets.back() : nullptr);
+                DataTable *table = (cnd && !cnd->resultsets.isEmpty() ? cnd->resultsets.back() : nullptr);
                 if (table)
                 {
                     _tableModel->take(table);
@@ -1484,8 +1481,8 @@ void MainWindow::onActionOpenFile()
 
         QList<RecentFile> itemsToSave;
         const auto actions = ui->menuOpen_recent->actions();
-        for (const QAction *a: actions)
-            itemsToSave.append({a->text(), a->data().toString()});
+        for (const QAction *ar: actions)
+            itemsToSave.append({ar->text(), ar->data().toString()});
 
         SqtSettings::setValue("recentFiles", QVariant::fromValue(itemsToSave));
         return;

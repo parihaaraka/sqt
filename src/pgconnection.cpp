@@ -510,7 +510,7 @@ bool PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
             // (next to this handler Qt will call exec())
             thread->exit();
     });
-    connect(thread, &QThread::finished, [this, thread]() {
+    connect(thread, &QThread::finished, this, [this, thread]() {
         thread->deleteLater();
         // autorollback
         QMutexLocker lk(&_connectionGuard);
@@ -854,9 +854,9 @@ void PgConnection::fetch() noexcept
         {
             // initialize new resultset
             _temp_result = new DataTable();
-            QMutexLocker lk(&_resultsetsGuard);
+            QMutexLocker lkres(&_resultsetsGuard);
             _resultsets.append(_temp_result);
-            lk.unlock();
+            lkres.unlock();
             _temp_result_rowcount = 0;
             appendRawDataToTable(*_temp_result, tmp_res.get());
         }
@@ -1003,7 +1003,7 @@ void PgConnection::putCopyData()
             break;
         }
 
-        int res = PQputCopyData(_conn, _copy_in_buf.data(), _copy_in_buf.size());
+        int res = PQputCopyData(_conn, _copy_in_buf.data(), int(_copy_in_buf.size()));
         if (res > 0)
         {
             _copy_in_buf.resize(0);

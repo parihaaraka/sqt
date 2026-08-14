@@ -8,7 +8,7 @@ namespace Scripting
 
 QString versionSpecificPart(const QString &script, int version)
 {
-    const QRegularExpression re(R"(\/\*\s*(if|elif|else|endif)\s+version\s*(\d+)?\s*\*\/)");
+    static QRegularExpression re(R"(\/\*\s*(if|elif|else|endif)\s+version\s*(\d+)?\s*\*\/)");
     QRegularExpressionMatchIterator i = re.globalMatch(script);
 
     // no boundaries at all - the whole script suits every version

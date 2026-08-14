@@ -128,7 +128,7 @@ void CodeEditor::leftSideBarPaintEvent(QPaintEvent *event)
             QString label;
             if (blockNumber || bCount < 10)
             {
-                penColor.setAlphaF(curBlock == blockNumber ? 0.7 : 0.4);
+                penColor.setAlphaF(curBlock == blockNumber ? 0.7f : 0.4f);
                 label = QString::number(blockNumber + 1);
             }
             else
@@ -871,7 +871,7 @@ void CodeEditor::performMultiEdit(std::function<void(QTextCursor&)> fn)
 // Indices into _multiCursor.cursors(), ascending by selectionStart() - the
 // document order in which several cursors' text should be joined/consumed
 // (copy/cut, and distributing pasted lines one-per-cursor).
-QVector<int> CodeEditor::cursorsOrderedByPosition() const
+const QVector<int> CodeEditor::cursorsOrderedByPosition() const
 {
     QVector<int> order(_multiCursor.count());
     for (int i = 0; i < order.size(); ++i) order[i] = i;
@@ -888,7 +888,7 @@ QVector<int> CodeEditor::cursorsOrderedByPosition() const
 QString CodeEditor::multiCursorSelectedText() const
 {
     QStringList parts;
-    for (int i : cursorsOrderedByPosition())
+    for (const int i : cursorsOrderedByPosition())
     {
         const QTextCursor &c = _multiCursor.cursors()[i];
         if (c.hasSelection())
@@ -1674,7 +1674,7 @@ void CodeEditor::paintEvent(QPaintEvent *event)
             {
                 painter.setPen(context.palette.text().color());
 
-                for (const QTextCursor &cur : _multiCursor.cursors())
+                for (const QTextCursor &cur : std::as_const(_multiCursor.cursors()))
                 {
                     if (cur.block() != block)
                         continue;
@@ -1836,7 +1836,7 @@ void CodeEditor::onHlTimerTimeout()
             int wordLength = selectedText.length();
             content = text();
             QColor selectionColor(Qt::yellow);
-            selectionColor.setAlphaF(0.7);
+            selectionColor.setAlphaF(0.7f);
             QTextEdit::ExtraSelection s;
             s.format.setBackground(selectionColor);
 
@@ -2026,7 +2026,7 @@ QList<QTextEdit::ExtraSelection> CodeEditor::currentLineSelection() const
 
     QTextEdit::ExtraSelection s;
     QColor lineColor(palette().windowText().color());
-    lineColor.setAlphaF(0.05);
+    lineColor.setAlphaF(0.05f);
     s.format.setBackground(lineColor);
     s.format.setProperty(QTextFormat::FullWidthSelection, true);
     s.cursor = textCursor();

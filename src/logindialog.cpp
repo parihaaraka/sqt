@@ -1,4 +1,3 @@
-#include <QtGui>
 #include "logindialog.h"
 #include "ui_logindialog.h"
 #include <QScreen>

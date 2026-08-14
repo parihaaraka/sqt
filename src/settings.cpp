@@ -84,7 +84,7 @@ void load()
 
         // QApplication does not support font styling via setStyleSheet(),
         // so lets do it manually
-        QRegularExpression re(R"(QApplication\s*{([^}]+))");
+        static QRegularExpression re(R"(QApplication\s*{([^}]+))");
         QRegularExpressionMatch match = re.match(appStyle);
         if (match.hasMatch())
         {
@@ -93,12 +93,12 @@ void load()
             QRegularExpressionMatchIterator i = re.globalMatch(qAppStyle);
             while (i.hasNext())
             {
-                QRegularExpressionMatch match = i.next();
-                if (match.captured(1) == "font-family")
-                    f.setFamily(match.captured(2).trimmed());
-                else if (match.captured(1) == "font-size")
+                QRegularExpressionMatch match2 = i.next();
+                if (match2.captured(1) == "font-family")
+                    f.setFamily(match2.captured(2).trimmed());
+                else if (match2.captured(1) == "font-size")
                 {
-                    QString val = match.captured(2).trimmed();
+                    QString val = match2.captured(2).trimmed();
                     double size = strtod(val.toStdString().c_str(), nullptr);
                     if (size)
                     {

@@ -56,7 +56,7 @@ QStringList ResourceLocator::candidateRoots(
 
     // The same folder twice would let a file shadow itself.
     QStringList res;
-    for (const QString &r: roots)
+    for (const QString &r: std::as_const(roots))
     {
         const QString path = QDir::cleanPath(r);
         if (!res.contains(path))

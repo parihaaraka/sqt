@@ -82,8 +82,8 @@ signals:
     // Whatever the connection has to say while no query of ours is running.
     // It is not a query result, so it does not belong to the messages pane -
     // MainWindow puts it into the log.
-    void message(QString msg) const;
-    void error(QString msg) const;
+    void message(QString msg);
+    void error(QString msg);
 
 public slots:
     void onMessage(const QString &text);

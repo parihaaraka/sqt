@@ -112,7 +112,11 @@ void TestScriptVersionFilter::rejectsUnbalancedBoundaries()
 {
     QFETCH(QString, script);
 
+#if QT_VERSION < QT_VERSION_CHECK(6, 3, 0)
     QVERIFY_EXCEPTION_THROWN(versionSpecificPart(script, 100000), QString);
+#else
+    QVERIFY_THROWS_EXCEPTION(QString, versionSpecificPart(script, 100000));
+#endif
 }
 
 QTEST_APPLESS_MAIN(TestScriptVersionFilter)
