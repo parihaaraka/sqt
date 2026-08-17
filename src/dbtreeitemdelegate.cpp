@@ -23,13 +23,26 @@ void DbTreeItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
     auto isCurrent = qobject_cast<const QAbstractItemView*>(option.widget)->currentIndex() == index;
     if (isCurrent || style.state & (QStyle::State_HasFocus | QStyle::State_Selected))
     {
-        QRect selFrame = option.rect;
-        selFrame.setRight(selFrame.right() - 1);
-        selFrame.setHeight(selFrame.height() - 1);
         painter->save();
+
+        // Never let anything below escape into a neighboring row/column.
+        painter->setClipRect(option.rect);
+        painter->setRenderHint(QPainter::Antialiasing, false);
+
+        // A 1px pen drawn exactly on option.rect's own border coordinates
+        // straddles the shared edge with the adjacent row - on Windows the
+        // rasterizer can put that pixel into the neighbor's row instead of
+        // this one. When only this row (old/new current index) is
+        // invalidated on selection change, a line painted into the
+        // neighbor never gets cleared, leaving a stray leftover border.
+        // Insetting by half a device pixel centers the pen's path in the
+        // middle of the border pixel, keeping the whole 1px line inside
+        // this item's own rect.
+        QRectF selFrame = QRectF(option.rect).adjusted(0.5, 0.5, -1.5, -1.5);
+
         QColor hl = option.widget->palette().color(QPalette::Highlight);
         hl.setAlpha(style.state & QStyle::State_HasFocus ? 230 : 90);   // frame
-        QPen pen(hl, 0);
+        QPen pen(hl, 1);
         painter->setPen(pen);
         QLinearGradient gradient(0, option.rect.top(), 0, option.rect.bottom());
         int dAlpha = (style.state & QStyle::State_Selected ? 50 : 0)

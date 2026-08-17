@@ -33,12 +33,8 @@
 #include "datatable.h"
 #include "timechart.h"
 #include <QStatusBar>
+#include "textcodec.h"
 
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-#include <QtCore/QTextCodec>
-#else
-#include <QStringConverter>
-#endif
 
 QueryWidget::QueryWidget(QWidget *parent) : QueryWidget(nullptr, parent)
 {
@@ -79,60 +75,61 @@ QueryWidget::~QueryWidget()
 
 bool QueryWidget::openFile(const QString &fileName, const QString &encoding)
 {
+    if (TextCodec::canonicalName(encoding).isEmpty())
+    {
+        onError(tr("Unknown encoding: %1").arg(encoding));
+        return false;
+    }
+
     QFile f(fileName);
     if (!f.open(QIODevice::ReadOnly))
     {
         onError(tr("Unable to open %1: %2").arg(fileName, f.errorString()));
         return false;
     }
-    _fn = fileName;
-    _encoding = encoding;
-    QTextStream read_stream(&f);
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-    read_stream.setCodec(QTextCodec::codecForName(_encoding.toLatin1().data()));
-#else
-    auto enc = QStringConverter::encodingForName(_encoding.toUtf8().data());
-    if (!enc.has_value())
+    const QByteArray data = f.readAll();
+    if (f.error() != QFileDevice::NoError)
     {
-        onError(tr("Unknown encoding: %1").arg(_encoding));
+        onError(tr("Unable to read %1: %2").arg(fileName, f.errorString()));
         return false;
     }
-    read_stream.setEncoding(enc.value());
-#endif
+    f.close();
 
-    if (f.size() > 1024 * 1024 * 5) // do not highlight > 5mb scripts
+    _fn = fileName;
+    _encoding = encoding;
+
+    // A unicode BOM wins over the encoding asked for, which is what the
+    // QTextStream behind this used to do (autoDetectUnicode is on by default).
+    // The choice is not remembered: a save still writes _encoding.
+    const QString bom = TextCodec::bomEncoding(data);
+    bool ok = false;
+    const QString text = TextCodec::decode(data, bom.isEmpty() ? _encoding : bom, &ok);
+    if (!ok)
+        onMessage(tr("%1 is not valid %2; the bad bytes are shown as U+FFFD")
+                  .arg(fileName, bom.isEmpty() ? _encoding : bom));
+
+    if (data.size() > 1024 * 1024 * 5) // do not highlight > 5mb scripts
         dehighlight();
     else
         highlight();
-    setPlainText(read_stream.readAll());
+    setPlainText(text);
     document()->setModified(false);
-    f.close();
     return true;
 }
 
+
 bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
 {
-    QFile f(fileName);
-    if (!f.open(QIODevice::WriteOnly))
+    // Checked before the file is opened: opening it for writing truncates it,
+    // so bailing out afterwards used to destroy the very text being saved.
+    const QString enc = (encoding.isEmpty() ? _encoding : encoding);
+    if (TextCodec::canonicalName(enc).isEmpty())
     {
-        onError(tr("Unable to save %1: %2").arg(fileName, f.errorString()));
+        onError(tr("Unknown encoding: %1").arg(enc));
         return false;
     }
-    _fn = fileName;
-    if (!encoding.isEmpty()) _encoding = encoding;
-    QTextStream save_stream(&f);
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-    save_stream.setCodec(QTextCodec::codecForName(_encoding.toLatin1().data()));
-#else
-    auto enc = QStringConverter::encodingForName(_encoding.toUtf8().data());
-    if (!enc.has_value())
-    {
-        onError(tr("Unknown encoding: %1").arg(_encoding));
-        return false;
-    }
-    save_stream.setEncoding(enc.value());
-#endif
 
+    QString text;
     if (QPlainTextEdit *plain = qobject_cast<QPlainTextEdit*>(_editor))
     {
         // remove trailing space characters without regexp
@@ -141,7 +138,7 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
         for (QTextBlock it = doc->begin(); it != doc->end(); it = it.next())
         {
             if (it != doc->begin())
-                save_stream << '\n';
+                text += '\n';
 
             QString line = it.text();
             qsizetype len = line.size();
@@ -161,20 +158,37 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
             }
             if (whitespace_count != 3 || whitespace_count != any_space_count)
                 len -= any_space_count;
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-            save_stream << line.midRef(0, static_cast<int>(len));
-#else
-            save_stream << line.mid(0, len);
-#endif
+            text += line.mid(0, len);
         }
-        //save_stream << plain->toPlainText();
     }
     else if (QTextEdit *rich = qobject_cast<QTextEdit*>(_editor))
-        save_stream << rich->toPlainText();
-    save_stream.flush();
+        text = rich->toPlainText();
+
+    bool ok = false;
+    const QByteArray data = TextCodec::encode(text, enc, &ok);
+
+    QFile f(fileName);
+    if (!f.open(QIODevice::WriteOnly))
+    {
+        onError(tr("Unable to save %1: %2").arg(fileName, f.errorString()));
+        return false;
+    }
+    if (f.write(data) != data.size() || !f.flush())
+    {
+        onError(tr("Unable to save %1: %2").arg(fileName, f.errorString()));
+        return false;
+    }
     f.close();
+
+    _fn = fileName;
+    _encoding = enc;
+    // The file is written either way - refusing to save would be worse - but
+    // the loss is silent otherwise, and '?' is not what the author typed.
+    if (!ok)
+        onMessage(tr("Some characters are not available in %1 and were saved as '?'").arg(enc));
     return true;
 }
+
 
 void QueryWidget::setDbConnection(DbConnection *connection)
 {

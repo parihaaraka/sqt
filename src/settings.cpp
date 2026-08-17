@@ -51,12 +51,16 @@ void load()
         setDefault("appStyle", appStyle);
     }
 
-    if (settings.value("encodings").toString().isEmpty())
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-        setDefault("encodings", "UTF-8,Windows-1251,UTF-16LE,cp866");
-#else
-        setDefault("encodings", "UTF-8,UTF-16,ISO-8859-1");
-#endif
+    // The single-byte ones come from textcodec.cpp rather than from Qt, so this
+    // list no longer depends on the Qt version.
+    const QString encodings = settings.value("encodings").toString();
+    if (encodings.isEmpty() ||
+        // Qt 6 builds before the codec tables existed could not offer these and
+        // saved a poorer list of their own; replace exactly that one, so that a
+        // list the user has edited is left alone.
+        encodings == "UTF-8,UTF-16,ISO-8859-1")
+        setDefault("encodings", "UTF-8,windows-1251,UTF-16LE,cp866");
+
 
     if (settings.value("f1url").toString().isEmpty())
         setDefault("f1url", (QLocale::system().language() == QLocale::Russian ?

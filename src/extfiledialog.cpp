@@ -3,6 +3,8 @@
 #include <QLabel>
 #include <QComboBox>
 #include "settings.h"
+#include "textcodec.h"
+
 
 ExtFileDialog::ExtFileDialog(QWidget *parent) :
     QFileDialog(parent)
@@ -32,10 +34,14 @@ QString ExtFileDialog::encoding()
 
 void ExtFileDialog::setEncoding(const QString &encoding)
 {
-    int ind = _encodingCombo->findData(encoding, Qt::DisplayRole);
+    // The name is canonicalized so that a file remembered as "cp1251" still
+    // selects the "windows-1251" the list offers instead of being appended to it
+    // as a second spelling of the same thing.
+    const QString name = TextCodec::canonicalName(encoding);
+    int ind = (name.isEmpty() ? -1 : _encodingCombo->findText(name, Qt::MatchFixedString));
     if (ind == -1)
     {
-        if (encoding.isEmpty())
+        if (name.isEmpty())
         {
             if (!_encodingCombo->count())
                 _encodingCombo->addItem("UTF-8");
@@ -43,7 +49,7 @@ void ExtFileDialog::setEncoding(const QString &encoding)
         }
         else
         {
-            _encodingCombo->addItem(encoding);
+            _encodingCombo->addItem(name);
             ind = _encodingCombo->count() - 1;
         }
     }
@@ -53,15 +59,22 @@ void ExtFileDialog::setEncoding(const QString &encoding)
 void ExtFileDialog::fillEncodings()
 {
     _encodingCombo->clear();
-    _encodingCombo->addItems(
-                SqtSettings::value("encodings").toString().
-                split(',',
-                  #if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
-                      Qt::SkipEmptyParts
-                  #else
-                      QString::SkipEmptyParts
-                  #endif
-                      ));
+    const QStringList names = SqtSettings::value("encodings").toString().
+            split(',', Qt::SkipEmptyParts);
+    for (const QString &name: names)
+    {
+        // Nothing can convert an encoding we do not know, so offering it would
+        // only produce a failure on save. A typo in the settings silently
+        // disappears from the list rather than breaking it.
+        const QString canonical = TextCodec::canonicalName(name.trimmed());
+        if (!canonical.isEmpty() &&
+            _encodingCombo->findText(canonical, Qt::MatchFixedString) == -1)
+            _encodingCombo->addItem(canonical);
+    }
+    // An empty list would leave no way to save at all, so fall back to
+    // everything we can convert.
     if (!_encodingCombo->count())
-        _encodingCombo->setCurrentIndex(0);
+        _encodingCombo->addItems(TextCodec::availableEncodings());
+    _encodingCombo->setCurrentIndex(0);
 }
+

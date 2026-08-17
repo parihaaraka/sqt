@@ -86,7 +86,7 @@ jobs:
             qt6-base-dev qt6-base-dev-tools qt6-declarative-dev \
             libgl1-mesa-dev libpq-dev unixodbc-dev libssl-dev
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: configure
         run: |
@@ -120,7 +120,7 @@ jobs:
           test -d /usr/share/sqt/decor
           sqt --version
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: deb
           path: build/*.deb
@@ -152,7 +152,7 @@ jobs:
             libxcb-shape0 libxcb-randr0 libxcb-render-util0 libxcb-util1 \
             libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libegl1
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: install Qt ${{ env.QT_VERSION }}
         run: |
@@ -228,7 +228,7 @@ jobs:
           chmod +x sqt-*.AppImage
           QT_QPA_PLATFORM=offscreen ./sqt-*.AppImage --version
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: appimage
           path: sqt-*.AppImage
@@ -237,15 +237,18 @@ jobs:
   # ------------------------------------------------------------ windows ------
   # Portable zip: sqt.exe with the Qt dlls and plugins windeployqt gathers, the
   # libpq dlls from vcpkg, the msvc runtime, and decor/scripts next to it.
+  #
+  # No developer-command-prompt step: `configure` below leaves the generator
+  # unset, so cmake uses the Visual Studio generator, and that one finds the
+  # toolchain through MSBuild rather than by reading INCLUDE/LIB out of the
+  # environment. Setting up that environment was all ilammy/msvc-dev-cmd did
+  # here, so it went - which also settles the last of the Node 20 warnings,
+  # since that action is unmaintained and has no node24 release to move to.
   windows:
     needs: version
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
+      - uses: actions/checkout@v5
 
       - name: install Qt ${{ env.QT_VERSION }}
         run: |
@@ -270,7 +273,7 @@ jobs:
       # libpq. The runner ships a vcpkg checkout already, so this only builds
       # the port - and only when the cache below misses.
       - name: cache vcpkg packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/build/vcpkg_installed
           key: vcpkg-x64-windows-${{ hashFiles('vcpkg.json') }}
@@ -331,7 +334,7 @@ jobs:
           "./$root/sqt.exe" --version
           echo "the unpacked binary starts"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: windows
           path: build/*.zip
@@ -343,7 +346,7 @@ jobs:
     if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: artifacts
           merge-multiple: true

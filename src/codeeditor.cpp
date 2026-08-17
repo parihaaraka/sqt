@@ -1733,7 +1733,7 @@ void CodeEditor::mousePressEvent(QMouseEvent *event)
     if (event->button() == Qt::LeftButton && event->modifiers().testFlag(Qt::AltModifier))
     {
         _multiCursor.addCursor(cursorForPosition(event->pos()));
-        syncToNativeCursor();
+        //syncToNativeCursor();
         event->accept();
         return;
     }
