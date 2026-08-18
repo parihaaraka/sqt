@@ -111,6 +111,9 @@ MainWindow::MainWindow(QWidget *parent) :
     _objectsModel = new DbObjectsModel();
     connect(_objectsModel, &DbObjectsModel::error, this, &MainWindow::onError);
     connect(_objectsModel, &DbObjectsModel::message, this, &MainWindow::onMessage);
+    connect(_objectsModel, &DbObjectsModel::connectionStateChanged, this, [this]() {
+        ui->objectsView->viewport()->update();
+    });
 
     proxyModel->setSourceModel(_objectsModel);
     ui->objectsView->setModel(proxyModel);
@@ -277,7 +280,12 @@ MainWindow::MainWindow(QWidget *parent) :
         {
             QModelIndex srcIndex = static_cast<QSortFilterProxyModel*>(m)->mapToSource(m->index(cr, 0));
             DbConnection *connection = _objectsModel->dbConnection(srcIndex).get();
-            if (connection && connection->isOpened())
+            // A connection object exists from the first successful connect until
+            // an explicit Disconnect, and that is exactly the lifetime of these
+            // menu items. Its link may well be broken at the moment - the tree
+            // keeps such a server with a red indicator - but picking a database
+            // opens it again, so there is no reason to hide anything here.
+            if (connection)
             {
                 // collect databases on next level only
                 // (if somebody build folders of databases, then databases will not be found)
@@ -288,7 +296,10 @@ MainWindow::MainWindow(QWidget *parent) :
                     if (ind.data(DbObject::TypeRole).toString() != "database")
                         continue;
                     QModelIndex srcIndex2 = static_cast<QSortFilterProxyModel*>(m)->mapToSource(ind);
-                    databases.append(_objectsModel->dbConnection(srcIndex2)->database());
+                    // a database node keeps its own connection, created when the
+                    // node appears; nothing guarantees it is still registered
+                    if (auto dbCon = _objectsModel->dbConnection(srcIndex2))
+                        databases.append(dbCon->database());
                 }
 
                 if (databases.isEmpty())
@@ -493,6 +504,11 @@ void MainWindow::on_objectsView_activated(const QModelIndex &index)
         std::shared_ptr<DbConnection> con = DbConnectionFactory::createConnection(QString::number(std::intptr_t(obj)), cs);
         connect(con.get(), &DbConnection::error, this, &MainWindow::onError);
         connect(con.get(), &DbConnection::message, this, &MainWindow::onMessage);
+        // the state indicator is drawn from the connection itself, so a link
+        // lost behind the scenes leaves it stale until something repaints
+        connect(con.get(), &DbConnection::connectionLost, this, [this]() {
+            ui->objectsView->viewport()->update();
+        });
         if (!con->open())
         {
             con->disconnect();
@@ -527,7 +543,9 @@ void MainWindow::on_objectsView_customContextMenuRequested(const QPoint &pos)
     if (_objectsModel->data(srcIndex, DbObject::TypeRole) == "connection")
     {
         con = _objectsModel->dbConnection(srcIndex);
-        actionConnect = myMenu.addAction(con && con->isOpened() ? tr("Disconnect") : tr("Connect"));
+        // "Disconnect" is what clears the tree and the connections menu, so it
+        // must stay available for a registered connection whose link has died
+        actionConnect = myMenu.addAction(con ? tr("Disconnect") : tr("Connect"));
         myMenu.addSeparator();
         actionModify = myMenu.addAction(tr("Modify"));
         actionDelete = myMenu.addAction(tr("Delete"));
@@ -564,10 +582,10 @@ void MainWindow::on_objectsView_customContextMenuRequested(const QPoint &pos)
     }
     else if (selectedItem == actionConnect)
     {
-        bool wasOpened = false;
+        bool wasRegistered = false;
         if (con) // "disconnect" in any case (clear tree)
         {
-            wasOpened = con->isOpened();
+            wasRegistered = true;
             // there are problems with expanding desolated node without the following line
             ui->objectsView->collapse(index);
 
@@ -581,7 +599,7 @@ void MainWindow::on_objectsView_customContextMenuRequested(const QPoint &pos)
             _objectsModel->setData(srcIndex, QVariant(), DbObject::ChildObjectsCountRole);
             showContent(srcIndex, nullptr);
         }
-        if (!wasOpened)
+        if (!wasRegistered)
             on_objectsView_activated(index);
     }
 }
@@ -796,13 +814,10 @@ void MainWindow::on_actionNew_triggered()
     QModelIndex srcIndex = static_cast<QSortFilterProxyModel*>(ui->objectsView->model())->
             mapToSource(ui->objectsView->currentIndex());
     std::shared_ptr<DbConnection> con = _objectsModel->dbConnection(srcIndex);
-    if  (
-            !con ||
-            // do not try to open closed top-level connection
-            (!con->isOpened() && srcIndex.data(DbObject::TypeRole).toString() == "connection") ||
-            // open if not opened (shoud be database-level connection - it is closed when the node is collapsed)
-            !con->open()
-        )
+    // A server that has never been connected has no connection object, and
+    // opening one here would bypass the login dialog; a registered one is
+    // reopened by open() itself, broken link or not.
+    if (!con || !con->open())
     {
         onError(tr("db connection unavailable"));
         return;
@@ -844,6 +859,10 @@ void MainWindow::on_actionNew_triggered()
     if (ui->contentSplitter->isVisible())
         ui->actionQuery_editor->activate(QAction::Trigger);
     w->setFocus();
+
+    // The tab got a clone of its own above, so the link opened here for the
+    // sake of cloning is of no further use to a node that stays collapsed.
+    releaseIdleDatabaseConnection(srcIndex);
 }
 
 void MainWindow::on_tabWidget_tabCloseRequested(int index)
@@ -893,6 +912,65 @@ void MainWindow::retitleOnDatabaseChange(QueryWidget *w)
         return;
     w->setTitle(autoTabTitle(w), true);
     updateTabCaption(w);
+}
+
+void MainWindow::releaseIdleDatabaseConnection(const QModelIndex &srcIndex)
+{
+    if (!srcIndex.isValid())
+        return;
+
+    // The owner of the link is the nearest "database" ancestor, the same one
+    // dbConnection() would settle on. A "connection" node found on the way up
+    // means the branch belongs to a server, not to a database: those links are
+    // the user's business (the Connect/Disconnect menu), so nothing is closed.
+    DbObject *owner = static_cast<DbObject*>(srcIndex.internalPointer());
+    while (owner && owner->data(DbObject::TypeRole).toString() != "database")
+    {
+        if (owner->data(DbObject::TypeRole).toString() == "connection")
+            return;
+        owner = owner->parent();
+    }
+    if (!owner)
+        return;
+
+    auto con = DbConnectionFactory::connection(QString::number(std::intptr_t(owner)));
+    if (!con || !con->isOpened())
+        return;
+
+    // The node's own index, needed both to ask the view about its state and to
+    // repaint the indicator afterwards.
+    QModelIndex ownerSrcIndex = srcIndex;
+    while (ownerSrcIndex.isValid() &&
+           static_cast<DbObject*>(ownerSrcIndex.internalPointer()) != owner)
+        ownerSrcIndex = ownerSrcIndex.parent();
+    if (!ownerSrcIndex.isValid())
+        return;
+
+    auto proxy = static_cast<QSortFilterProxyModel*>(ui->objectsView->model());
+    const QModelIndex ownerIndex = proxy->mapFromSource(ownerSrcIndex);
+
+    // An expanded branch is exactly what earns a link the right to stay: its
+    // children are on screen and the next click on any of them will need it.
+    if (ui->objectsView->isExpanded(ownerIndex))
+        return;
+
+    // Never pull the rug from under a query, and never discard a transaction
+    // the user has opened on this very connection.
+    if (con->queryState() != QueryState::Inactive || !con->transactionStatus().isEmpty())
+        return;
+
+    // An editor tab holds a clone of its own, so no tab is affected by this.
+    // The preview pane is lent the tree's connection to build its highlighter
+    // dictionary from, and keeps a shared_ptr to it - which is harmless: the
+    // dictionary is already built, the pane never runs a query, and the object
+    // stays registered anyway, only its link is gone.
+    con->close();
+
+    // the indicator is painted from the connection itself, so the row has to
+    // be repainted for it to turn red
+    ui->objectsView->viewport()->update();
+    // the status bar shows this connection's context - now an empty one
+    refreshContextInfo();
 }
 
 void MainWindow::sqlChanged()
@@ -1171,13 +1249,9 @@ void MainWindow::scriptSelectedObjects()
     const QModelIndexList si = selectionModel->selectedIndexes();
 
     std::shared_ptr<DbConnection> con = _objectsModel->dbConnection(srcIndex);
-    if  (
-            !con ||
-            // do not try to open closed top-level connection
-            (!con->isOpened() && srcIndex.data(DbObject::TypeRole).toString() == "connection") ||
-            // open if not opened (shoud be database-level connection - it is closed when the node is collapsed)
-            !con->open()
-        )
+    // same as in on_actionNew_triggered(): no object means never connected,
+    // while a broken link is restored by open() without bothering the user
+    if (!con || !con->open())
     {
         showContent(srcIndex, nullptr);
         return;
@@ -1274,6 +1348,12 @@ void MainWindow::scriptSelectedObjects()
     {
         onError(QString::fromStdString(e.what()));
     }
+
+    // The content and preview scripts above are the only thing a mere selection
+    // needs the link for. Everything is fetched by now (the panes hold copies),
+    // so a database whose node is still collapsed gets its link back instead of
+    // keeping a backend busy until the end of the session.
+    releaseIdleDatabaseConnection(srcIndex);
 }
 
 void MainWindow::showContent(QModelIndex &index, const Scripting::CppConductor *content)
@@ -1326,7 +1406,14 @@ void MainWindow::showContent(QModelIndex &index, const Scripting::CppConductor *
     {
         ui->tableView->hide();
         _objectScript->show();
-        showTextualContent(value, type, content ? content->connection() : nullptr);
+        // Cached content comes with no conductor, but the pane still has to be
+        // told which node it is showing: highlight() keeps its previous
+        // connection when handed a nullptr, and would then dictionary itself
+        // from a node the user has long left (in the worst case reopening its
+        // link). The node's own connection is the right answer in both cases.
+        showTextualContent(value, type,
+                           content ? content->connection() :
+                                     (index.isValid() ? _objectsModel->dbConnection(index) : nullptr));
         return;
     }
     _objectScript->hide();

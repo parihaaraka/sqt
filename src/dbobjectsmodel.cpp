@@ -322,6 +322,10 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
                         auto db = DbConnectionFactory::createConnection(id, cs, newItem->data(Qt::DisplayRole).toString());
                         connect(db.get(), &DbConnection::error, this, &DbObjectsModel::error);
                         connect(db.get(), &DbConnection::message, this, &DbObjectsModel::message);
+                        // the node keeps its place and its children when the
+                        // link dies - only the state indicator has to be redrawn
+                        connect(db.get(), &DbConnection::connectionLost,
+                                this, &DbObjectsModel::connectionStateChanged);
                     }
                 }
             }

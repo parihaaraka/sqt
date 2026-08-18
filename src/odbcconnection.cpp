@@ -731,7 +731,7 @@ QString OdbcConnection::database() const noexcept
 
 void OdbcConnection::close() noexcept
 {
-    _dbmsScriptingID.clear();
+    // _dbmsScriptingID survives on purpose - see PgConnection::closeLocked()
     clearResultsets();
     if (!OdbcConnection::isOpened())
         return;

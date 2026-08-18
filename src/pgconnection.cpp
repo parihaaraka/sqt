@@ -17,11 +17,16 @@ PgConnection::PgConnection() :
 
 PgConnection::~PgConnection()
 {
-    if (_temp_result)
-    {
-        delete _temp_result;
-        _temp_result = nullptr;
-    }
+    // _temp_result is *not* deleted here. It is not an owning pointer: fetch()
+    // appends the very same table to _resultsets when it creates it, and the
+    // list is what frees it (clearResultsets(), also called by ~DbConnection()).
+    // Deleting it here freed a table that was still in the list, so the base
+    // destructor freed it a second time - a double free that glibc reports much
+    // later, typically as an abort inside malloc while Qt tears the app down.
+    //
+    // The pointer is only non-null when a resultset was left half-built, i.e.
+    // when the link died in the middle of one.
+    _temp_result = nullptr;
     PgConnection::close();
 }
 
@@ -54,6 +59,7 @@ bool PgConnection::open()
         emit error(PQerrorMessage(_conn));
         PQfinish(_conn);
         _conn = nullptr;
+        _opened = false;
         return false;
     }
 
@@ -67,6 +73,9 @@ bool PgConnection::open()
     // set notice and warning messages handler
     PQsetNoticeReceiver(_conn, noticeReceiver, this);
     PQsetnonblocking(_conn, 1);
+
+    // the link is alive from here on - see isOpened()
+    _opened = true;
 
     // watch socket to receive notifications
     watchSocket(SocketWatchMode::Read);
@@ -90,7 +99,7 @@ void PgConnection::openAsync() noexcept
     {
         if (PQstatus(_conn) == CONNECTION_OK) // already connected -
             return;                           // silent exit !!!
-        close();
+        closeLocked(); // the guard is held by this very function
     }
 
     //time(&_connection_start_moment);
@@ -106,6 +115,7 @@ void PgConnection::openAsync() noexcept
         {
             PQfinish(_conn);
             _conn = nullptr;
+            _opened = false;
         }
         return;
     }
@@ -114,23 +124,60 @@ void PgConnection::openAsync() noexcept
     asyncConnectionProceed();
 }
 
+// Releases the link. This is called from the GUI thread (node collapsed,
+// Disconnect, a database node left unexpanded) *and* from the query thread
+// (a link that dropped mid-query), so it must hold _connectionGuard: two
+// unsynchronized calls would both see a non-null _conn and PQfinish() it
+// twice, which corrupts the heap and is only noticed much later, usually as
+// a wild abort inside malloc during application shutdown.
 void PgConnection::close() noexcept
 {
-    _dbmsScriptingID.clear();
-    clearResultsets();
+    QMutexLocker lk(&_connectionGuard);
+    closeLocked();
+}
 
-    // the caller must lock _connectionGuard when needed
+void PgConnection::closeLocked() noexcept
+{
+    // the caller must hold _connectionGuard
+
+    // _dbmsScriptingID is *not* cleared here. It names the script bundle of the
+    // server (its name and version), which a closed socket does not change, and
+    // an empty one means "unknown" to Scripting: dbmsScriptPath() would open the
+    // link again just to ask the server who it is. That is how a database node
+    // left collapsed used to get its connection back - the preview pane keeps a
+    // shared_ptr to it and asks for hl.conf on every repaint of the content.
+    // Only setConnectionString() invalidates the id.
+
+    // The resultsets are *not* dropped here. They belong to whoever asked for
+    // them - a tab's models refer to them, and the query thread may still be
+    // filling them - while closing the link is a matter of the socket alone
+    // and happens behind their back (a dropped connection, a collapsed node).
+    // They are released by the next run, which calls clearResultsets() itself.
+
     watchSocket(SocketWatchMode::None);
     if (!_conn)
+    {
+        _opened = false;
         return;
+    }
 
     PQfinish(_conn);
     _conn = nullptr;
+    _opened = false;
 }
 
 bool PgConnection::isOpened() const noexcept
 {
-    return _conn;
+    // Whether the link is alive: libpq keeps the handle after it has died, so
+    // the pointer alone says nothing (the tree indicator and the connections
+    // menu tell "alive" from "registered but broken" by this very function).
+    //
+    // Deliberately lock-free: this is called from the tree's paint routine, and
+    // also from context()/dbmsInfo() below, which already hold the guard. So it
+    // reads a flag maintained under the lock instead of dereferencing _conn -
+    // touching a PGconn that another thread is inside PQfinish() for would be a
+    // use-after-free, and locking here would deadlock.
+    return _opened;
 }
 
 void PgConnection::cancel() noexcept
@@ -410,7 +457,10 @@ bool PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
             //_last_action_moment = chrono::system_clock::now();
         }
 
-        // disconnected or connection broken => reconnect and try again
+        // The link was already dead when the query was handed to libpq, so the
+        // server has not seen it and cannot have executed it: reconnect and
+        // send it again. This is the state a connection is left in by any
+        // earlier loss, which is what makes the retry a single keypress.
         if (PQstatus(_conn) == CONNECTION_BAD)
         {
             // the query is not sent yet, so the messages to follow belong to the
@@ -420,8 +470,15 @@ bool PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
 
             if (_conn) // to avoid "connection pointer is NULL"
             {
-                emit error(PQerrorMessage(_conn));
-                close();
+                // libpq's own wording ("no connection to the server") reads as
+                // a failure of the run, while the query is merely about to be
+                // sent again; an open transaction, though, has really been lost
+                if (was_in_transaction)
+                    emit error(PQerrorMessage(_conn));
+                else
+                    emit message(tr("connection lost, reconnecting..."));
+                closeLocked(); // the guard is held right here
+                emit connectionLost();
             }
             lk.unlock();
             _async_stage = async_stage::none;
@@ -467,6 +524,12 @@ bool PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
     }
 
     clearResultsets();
+    // A half-built resultset left by a link that died mid-fetch is gone with
+    // the list above, and the cursor into it must not survive: fetch() takes a
+    // non-null _temp_result for "keep appending to this table" and would write
+    // into freed memory.
+    _temp_result = nullptr;
+    _temp_result_rowcount = 0;
     // delete listeners before switch to another thread
     watchSocket(SocketWatchMode::None);
 
@@ -480,7 +543,7 @@ bool PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
             QMutexLocker lk(&_connectionGuard);
             if (!_conn)
                 return;
-            close();
+            closeLocked(); // the guard is held right here
             emit error(tr("connection closed"));
             setQueryState(QueryState::Inactive);
         }, Qt::QueuedConnection);
@@ -489,12 +552,21 @@ bool PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
         connect(this, &PgConnection::queryStateChanged, thread, [this, thread](QueryState state) {
             if (state == QueryState::Inactive)
             {
+                {
+                    // The next run may start the moment this state is seen and
+                    // would clearResultsets() under our feet, so the list is
+                    // held while it is walked. The lock is released before
+                    // _connectionGuard is taken below: fetch() acquires them in
+                    // the opposite order, and holding both the other way round
+                    // is how deadlocks are made.
+                    QMutexLocker lkres(&_resultsetsGuard);
 #if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
-                for (auto res: qAsConst(_resultsets))
+                    for (auto res: qAsConst(_resultsets))
 #else
-                for (auto res: std::as_const(_resultsets))
+                    for (auto res: std::as_const(_resultsets))
 #endif
-                    clarifyTableStructure(*res);
+                        clarifyTableStructure(*res);
+                }
                 // delete listeners before switch to another thread
                 QMutexLocker lk(&_connectionGuard);
                 watchSocket(SocketWatchMode::None);
@@ -529,6 +601,8 @@ bool PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
 
 bool PgConnection::execute(const QString &query, const QVector<QVariant> *params)
 {
+    // a lost link is worth one silent retry, no more (see below)
+    bool reconnected = false;
     // save transaction status to avoid reconnects within transaction
     PGTransactionStatusType initial_state = PQtransactionStatus(_conn);
     if (initial_state == PQTRANS_ACTIVE)
@@ -539,6 +613,9 @@ bool PgConnection::execute(const QString &query, const QVector<QVariant> *params
 
     bool was_in_transaction = (initial_state == PQTRANS_INTRANS);
     clearResultsets();
+    // the cursor points into the list that has just been freed (it is left
+    // behind by a link that died mid-resultset), so it has to go with it
+    _temp_result = nullptr;
     _temp_result_rowcount = 0;
     // suspend external socket watcher
     watchSocket(SocketWatchMode::None);
@@ -570,16 +647,25 @@ bool PgConnection::execute(const QString &query, const QVector<QVariant> *params
         }
         std::unique_ptr<PGresult,decltype(&PQclear)> tmp_res(raw_tmp_res, PQclear);
 
-        // disconnected or connection broken => reconnect and try again
+        // The query never reached the server, so nothing was executed and one
+        // more attempt on a fresh link is all this takes. The caller here is
+        // the object tree, F4 or the preview pane, none of which has a
+        // messages pane of its own, so a reconnect stays silent: only a
+        // genuine failure (reported by open()) reaches the log.
         if (PQstatus(_conn) == CONNECTION_BAD)
         {
+            // ... except when an open transaction has been lost with the link:
+            // that changes what the following statements would mean
+            if (was_in_transaction && _conn)
+                emit error(PQerrorMessage(_conn));
             if (_conn)
             {
-                emit error(PQerrorMessage(_conn));
                 close();
+                emit connectionLost();
             }
-            if (was_in_transaction || !open())
+            if (was_in_transaction || reconnected || !open())
                 return false;
+            reconnected = true;
             continue;
         }
 
@@ -724,7 +810,10 @@ void PgConnection::noticeReceiver(void *arg, const PGresult *res)
         DataTable *t = new DataTable();
         t->addColumn(new DataColumn(hint, "", QMetaType::QString, TEXTOID, -1, -1, 1, Qt::AlignLeft));
         t->addRow()[0] = QString(PQresultErrorField(res, PG_DIAG_MESSAGE_PRIMARY));
-        // synchronous usage only - no need to use _resultsetsGuard
+        // libpq calls this back from whichever thread is talking to the server,
+        // and that is the query thread for an asynchronous run, so the list has
+        // to be guarded here as everywhere else
+        QMutexLocker lk(&cn->_resultsetsGuard);
         cn->_resultsets.push_back(t);
     }
     else
@@ -746,7 +835,12 @@ void PgConnection::fetchNotifications()
 void PgConnection::fetch() noexcept
 {
     _connectionGuard.lock();
-    bool is_notification = isIdle();
+    // Nobody waits for a result on an idle link: whatever arrives on it is a
+    // notification, and whatever happens to it is not the output of a query.
+    // The transaction status alone cannot tell the two apart - libpq reports
+    // it as "unknown" once the link is broken, which looks exactly like idle -
+    // hence the query state as well.
+    bool is_notification = (isIdle() && queryState() == QueryState::Inactive);
     _connectionGuard.unlock();
     do
     {
@@ -759,22 +853,37 @@ void PgConnection::fetch() noexcept
             {
                 QString err = PQerrorMessage(_conn);
                 _copy_context.clear();
+                // the notifiers would keep firing on a dead descriptor
                 watchSocket(SocketWatchMode::None);
                 _async_stage = async_stage::none;
-                setQueryState(QueryState::Inactive);
+                // the link is gone whether or not the handle is kept below,
+                // and isOpened() (the tree indicator) reads this flag
+                _opened = false;
 
-                // nobody waits for a result here, so close() the link to release
-                // the socket notifier (it would keep firing on a dead descriptor)
-                // and let the next query restore it
+                // An idle link that drops costs the user nothing and needs no
+                // announcement: release the handle so that the tree indicator
+                // turns red, and let the next query restore the connection.
                 if (is_notification)
                 {
+                    setQueryState(QueryState::Inactive);
                     lk.unlock();
                     close();
-                    emit error(tr("connection lost while idle, "
-                                  "it will be restored on the next query"));
+                    emit connectionLost();
                     return;
                 }
+
+                // The query had already been delivered, so the server may well
+                // have executed it - possibly committed it - and sqt has no way
+                // to tell. Resending is out of the question here; this is the
+                // result of the run and it belongs to the tab's messages pane,
+                // hence emitted *before* the Inactive state, which is what
+                // lowers the widget's _queryActive flag. The dead handle is
+                // kept (its CONNECTION_BAD status is what paints the tree
+                // indicator red, and the pending resultsets stay alive until
+                // the next run replaces them); the next query reopens the link.
                 emit error(err);
+                setQueryState(QueryState::Inactive);
+                emit connectionLost();
                 break;
             }
             emit error(PQerrorMessage(_conn));
@@ -907,6 +1016,7 @@ void PgConnection::asyncConnectionProceed()
     case PGRES_POLLING_FAILED:
         // connection failed
         _async_stage = async_stage::none;
+        _opened = false;
         watchSocket(SocketWatchMode::None);
         emit error(PQerrorMessage(_conn));
         setQueryState(QueryState::Inactive);
@@ -920,6 +1030,9 @@ void PgConnection::asyncConnectionProceed()
         PQsetNoticeReceiver(_conn, noticeReceiver, this);
         // prevent PQsendQuery to block execution
         PQsetnonblocking(_conn, 1);
+
+        // the link is alive from here on - see isOpened()
+        _opened = true;
 
         emit message(tr("connection established\n"));
 

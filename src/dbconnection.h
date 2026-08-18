@@ -111,6 +111,10 @@ public slots: // to use from QJSEngine
 signals:
     void message(const QString &msg) const;
     void error(const QString &msg) const;
+    /// The link is gone (it will be restored by the next query). The connection
+    /// object itself stays alive and registered, so this is not a disconnect -
+    /// it only means that whatever displays the connection's state is stale now.
+    void connectionLost();
     void fetched(DataTable *table);
     // use QueryState as argument instead of _query_state due to queued connection
     // (slot may have _query_state to be distinct from the state the signal was emitted with)

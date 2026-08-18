@@ -93,6 +93,19 @@ private:
     void updateTabCaption(QueryWidget *w);
     QString autoTabTitle(const QueryWidget *w) const;
     void retitleOnDatabaseChange(QueryWidget *w);
+    /// Closes the link of a database node that is not expanded in the tree.
+    /// Selecting such a node does need a connection - its content and preview
+    /// scripts run on it - but nothing after that does, so the link is given
+    /// back instead of being left behind for the rest of the session. A live
+    /// link belongs to an expanded branch only. The connection object itself
+    /// stays registered, so the node keeps its place, its indicator merely
+    /// turns red, and the next click opens the link again.
+    /// \a srcIndex belongs to the source model; the owner of the link is its
+    /// nearest "database" ancestor (or itself), exactly as dbConnection() sees
+    /// it. A top level "connection" node is left alone: those are opened and
+    /// closed by the user explicitly.
+    void releaseIdleDatabaseConnection(const QModelIndex &srcIndex);
+
     bool closeTab(int index);
     bool ensureSaved(int index, bool ask_name = false, bool forceWarning = false);
     FindAndReplacePanel *_frPanel;

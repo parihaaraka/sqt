@@ -50,6 +50,10 @@ void DbConnection::setDatabase(const QString &database) noexcept
 void DbConnection::setConnectionString(const QString &connectionString)
 {
     close();
+    // A new connection string may lead to another server, hence to another
+    // script bundle. This is the only thing that can invalidate the id, which
+    // is why close() itself keeps it (see PgConnection::closeLocked()).
+    _dbmsScriptingID.clear();
     _connection_string = connectionString;
 }
 

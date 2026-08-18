@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include "dbconnection.h"
+#include <atomic>
 #include <memory>
 #include <libpq-fe.h>
 #include "pgparams.h"
@@ -53,6 +54,8 @@ private:
     };
     QSocketNotifier *_readNotifier, *_writeNotifier;
     PGconn *_conn = nullptr;
+    /// Whether the link is alive. Read by isOpened() without any lock (see there).
+    std::atomic_bool _opened {false};
     async_stage _async_stage = async_stage::none;
     DataTable* _temp_result; ///< temporary resultset for asynchronous processing
     QString _query_tmp; ///< query storage during asynchronous connection if needed
@@ -71,6 +74,8 @@ private:
     QHash<int, QPair<QString, int>> _data_types; ///< non-static, not version-specific storage because of db-level user types
 
     virtual void openAsync() noexcept;
+    /// close() itself; the caller must hold _connectionGuard
+    void closeLocked() noexcept;
     bool isIdle() const noexcept;
     static void noticeReceiver(void *arg, const PGresult *res);
     void fetchNotifications();

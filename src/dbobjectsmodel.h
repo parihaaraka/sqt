@@ -58,6 +58,9 @@ private:
 signals:
     void error(QString err);
     void message(QString msg);
+    /// A connection behind some node has changed its state without any change
+    /// of the tree itself, so the state indicators have to be redrawn.
+    void connectionStateChanged();
 
 public slots:
     void saveConnectionSettings();
