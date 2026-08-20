@@ -36,3 +36,8 @@ void DbConnectionFactory::removeConnection(QString name)
     _connections.remove(name);
 }
 
+void DbConnectionFactory::clearConnections()
+{
+    _connections.clear();
+}
+

@@ -27,6 +27,7 @@
 #include <QTextBrowser>
 #include <QScrollBar>
 #include <QCompleter>
+#include <QPointer>
 #include <QToolTip>
 #include <QTimer>
 #include "sqlparser.h"
@@ -238,17 +239,19 @@ void QueryWidget::setDbConnection(DbConnection *connection)
             // print all resultsets structure ready to be used in 'create function returning table(...)'
             QColor resultsetStructureColor = _messages->palette().text().color();
             resultsetStructureColor.setAlphaF(0.6f);
-#if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
-            for (const auto res: qAsConst(_connection->_resultsets))
-#else
-            for (const auto res: std::as_const(_connection->_resultsets))
-#endif
+            // A copy of the list, not the list itself: it is still open to
+            // appends from the connection's own thread (a notice arriving on
+            // the link lands there through libpq's callback), and iterating it
+            // in place would race with a reallocation. The tables themselves
+            // stay owned by the connection until the next run clears them.
+            const QList<DataTable*> resultsets = _connection->resultsetsSnapshot();
+            for (const auto res: resultsets)
             {
                 if (!res->columnCount())
                     continue;
 
                 // initially created models (while fetching data) have not acquired column types yet
-                // (unlike _connection->_resultsets)
+                // (unlike the connection's own tables)
                 TableModel *m = _resSplitter->findChild<TableModel*>("m" + QString::number(std::intptr_t(res)));
                 if (m)
                     _connection->clarifyTableStructure(*m->table());
@@ -557,19 +560,42 @@ void QueryWidget::log(const QString &text, QColor color)
 
 QCompleter* QueryWidget::completer()
 {
-    // One completer shared by every query widget, owned by the application
-    // object: ~QApplication drops it as its own child, while a static instance
-    // would be destroyed after Qt has already torn itself down.
-    static QCompleter &c = *(new QCompleter(QCoreApplication::instance()));
-    static bool initialized = false;
-    if (!initialized)
+    // One completer shared by every query widget. It must *not* be parented to
+    // the application object, and a static instance is no better: both outlive
+    // ~QApplication. Children of qApp are deleted by ~QObject, which runs after
+    // the bodies of ~QApplication/~QGuiApplication have already destroyed the
+    // platform integration, the style and the main thread's event dispatcher;
+    // a static goes even later, after main() has returned. The completer owns a
+    // top-level QListView (its popup), and destroying a widget that late writes
+    // into freed memory. Qt says as much on the way out ("QBasicTimer can only
+    // be used with threads started with QThread" - what it prints when there is
+    // no event dispatcher at all), and the next free() aborts with "corrupted
+    // double-linked list", usually while some unrelated static container is
+    // being destroyed. Without a single Ctrl+Space the completer is never built
+    // and the very same exit is clean, which is what makes the abort look like
+    // a bug in whatever container happened to be freed first.
+    //
+    // Hence it is deleted on aboutToQuit, while the application is still whole,
+    // and a request arriving after that gets nothing rather than a fresh popup
+    // that nobody would destroy in time.
+    static QPointer<QCompleter> instance;
+    static bool shuttingDown = false;
+    if (!instance && !shuttingDown && !QCoreApplication::closingDown())
     {
-        initialized = true;
-        connect(c.popup()->selectionModel(), &QItemSelectionModel::currentChanged,
-                [](const QModelIndex &current, const QModelIndex &) {
+        QCompleter *c = new QCompleter;
+        instance = c;
+        // qApp as the context object keeps the connection alive no longer than
+        // the sender. A plain delete, not deleteLater(): deferred deletion needs
+        // an event loop, and there is none left to run it by then.
+        connect(qApp, &QCoreApplication::aboutToQuit, qApp, [c]() {
+            shuttingDown = true;
+            delete c;
+        });
+        connect(c->popup()->selectionModel(), &QItemSelectionModel::currentChanged, c,
+                [c](const QModelIndex &current, const QModelIndex &) {
             if (current.isValid())
             {
-                auto popup = c.popup();
+                auto popup = c->popup();
                 auto m = current.model();
                 if (!popup->isVisible() || m->columnCount() < 2)
                     return;
@@ -618,7 +644,7 @@ QCompleter* QueryWidget::completer()
             QToolTip::hideText();
         });
     }
-    return &c;
+    return instance;
 }
 
 // The shared log needs to know which tab is talking; the tab's own messages
@@ -945,6 +971,8 @@ void QueryWidget::onCompleterRequest()
     };
 
     auto cmpl = completer();
+    if (!cmpl) // the application is shutting down
+        return;
     std::unique_ptr<TableModel> m(new TableModel(cmpl));
 
     switch (words.count())
@@ -994,13 +1022,13 @@ void QueryWidget::onCompleterRequest()
 
     ed->setCompleter(cmpl);
     cmpl->setModelSorting(QCompleter::CaseSensitivelySortedModel);
-    // setModel() neither takes nor releases ownership, and every model here is
-    // a child of the completer, so without this the models of all the previous
-    // completions would pile up until the application quits
-    QAbstractItemModel *previousModel = cmpl->model();
+    // setModel() deletes the model previously set as long as that model is a
+    // child of the completer - and every model built here is one. So the models
+    // of past completions do not pile up, and disposing of the old one by hand
+    // is a double free: the deleteLater() that used to stand here posted a
+    // DeferredDelete event to an already freed QObject, which then crashed the
+    // application far from the scene, inside sendPostedEvents().
     cmpl->setModel(m.release());
-    if (previousModel && previousModel != cmpl->model())
-        previousModel->deleteLater();
     cmpl->setCompletionPrefix(words.last());
     int cmplCount = cmpl->completionCount();
     if (!cmplCount)
@@ -1014,10 +1042,22 @@ void QueryWidget::onCompleterRequest()
         cr.setWidth(popup->sizeHintForColumn(0)
                     + popup->verticalScrollBar()->sizeHint().width());
         cmpl->complete(cr);
-        QTimer::singleShot(100, this, []() {
-            completer()->popup()->selectionModel()->setCurrentIndex(
-                        completer()->popup()->model()->index(0, 0),
-                        QItemSelectionModel::SelectCurrent);
+        // Preselect the first row once the popup has settled. The completer is
+        // shared by every tab, so by the time this fires the popup may already
+        // be hidden, or may be showing another tab's completion over a model of
+        // its own - hence the checks instead of a bare chain of dereferences.
+        QTimer::singleShot(100, this, [cmpl = QPointer<QCompleter>(cmpl)]() {
+            if (!cmpl)
+                return;
+            QAbstractItemView *popup = cmpl->popup();
+            if (!popup || !popup->isVisible())
+                return;
+            QAbstractItemModel *model = popup->model();
+            QItemSelectionModel *selection = popup->selectionModel();
+            if (!model || !selection || !model->rowCount())
+                return;
+            selection->setCurrentIndex(model->index(0, 0),
+                                       QItemSelectionModel::SelectCurrent);
         });
     }
 }

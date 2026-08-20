@@ -5,6 +5,10 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 # SQT_VERSION_STR (what the about box shows). Has to run before project().
 include(SqtVersion)
 
+# Same reason: the vcpkg triplet and the generator's make program are read by
+# project() itself. No-op anywhere but on a windows MinGW build.
+include(WindowsMinGWDefaults)
+
 project(sqt VERSION ${SQT_VERSION})
 
 set(OpenGL_GL_PREFERENCE "GLVND")
@@ -107,8 +111,16 @@ if(WIN32)
     endif()
 
 
-    # PostgreSQL and dependency DLLs from vcpkg
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # PostgreSQL and dependency DLLs from vcpkg.
+    #
+    # The triplet actually in use, whenever it is known: guessing it was wrong
+    # more often than not. A MinGW kit driven through vcpkg's toolchain ends up
+    # on x64-mingw-*static* here, so the guess of x64-mingw-dynamic looked in a
+    # directory that does not exist and warned about libpq.dll being missing -
+    # while the build was linking libpq.a perfectly happily.
+    if(DEFINED VCPKG_TARGET_TRIPLET)
+        set(VCPKG_TRIPLET "${VCPKG_TARGET_TRIPLET}")
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         set(VCPKG_TRIPLET "x64-mingw-dynamic")
     else()
         set(VCPKG_TRIPLET "x64-windows")
@@ -141,6 +153,13 @@ if(WIN32)
         else()
             message(WARNING "No DLLs found in ${VCPKG_BIN_DIR}")
         endif()
+    elseif(VCPKG_TRIPLET MATCHES "static")
+        # Nothing to copy, and nothing wrong: a static triplet links libpq and
+        # its dependencies into the exe. Said out loud all the same, because
+        # "no dlls were copied" is worth telling apart from "the copy failed".
+        message(STATUS
+            "vcpkg triplet ${VCPKG_TRIPLET} is static; libpq is linked into the "
+            "binary and no PostgreSQL DLLs need copying.")
     else()
         message(WARNING "Could not find bin directory with libpq.dll; PostgreSQL DLLs will not be copied.")
     endif()

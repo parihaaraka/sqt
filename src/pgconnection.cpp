@@ -17,15 +17,38 @@ PgConnection::PgConnection() :
 
 PgConnection::~PgConnection()
 {
+    // A query worker captures `this`, so it must be completely stopped before
+    // the connection object can disappear. (The socket notifiers belong to this
+    // object's own thread - see watchSocket() - and the closing PgConnection::
+    // close() below runs in it, so they are destroyed there.)
+
+    if (_queryThread)
+    {
+        QThread *thread = _queryThread;
+        QObject *worker = _queryWorker;
+        if (thread->isRunning() && worker && QThread::currentThread() != thread)
+        {
+            QMetaObject::invokeMethod(worker, [this]() {
+                QMutexLocker lk(&_connectionGuard);
+                closeLocked();
+            }, Qt::BlockingQueuedConnection);
+            thread->quit();
+            thread->wait();
+        }
+        else if (thread->isRunning())
+        {
+            thread->quit();
+            thread->wait();
+        }
+        delete thread;
+        _queryThread = nullptr;
+        _queryWorker = nullptr;
+    }
+
     // _temp_result is *not* deleted here. It is not an owning pointer: fetch()
     // appends the very same table to _resultsets when it creates it, and the
     // list is what frees it (clearResultsets(), also called by ~DbConnection()).
-    // Deleting it here freed a table that was still in the list, so the base
-    // destructor freed it a second time - a double free that glibc reports much
-    // later, typically as an abort inside malloc while Qt tears the app down.
-    //
-    // The pointer is only non-null when a resultset was left half-built, i.e.
-    // when the link died in the middle of one.
+    // The pointer is only a cursor into that list.
     _temp_result = nullptr;
     PgConnection::close();
 }
@@ -41,14 +64,15 @@ DbConnection *PgConnection::clone()
 bool PgConnection::open()
 {
     //_last_action_moment = chrono::system_clock::now();
+    QMutexLocker lk(&_connectionGuard);
 
     // if current connection is actually broken, the further query will detect it and will try to reconnect
-    // (but it may looks like ok here)
+    // (but it may look as ok here)
     if (_conn)
     {
         if (PQstatus(_conn) == CONNECTION_OK)
             return true;
-        close();
+        closeLocked(); // the guard is already held by this very function
     }
 
     _conn = PQconnectdb(finalConnectionString().c_str());
@@ -63,23 +87,17 @@ bool PgConnection::open()
         return false;
     }
 
-    _dbmsScriptingID = dbmsName() + dbmsVersion();
+    _dbmsScriptingID = dbmsName() + dbmsVersionLocked();
 
     // _database is initially empty within 'connection' node
     // (used to display current context (no need to set it in async method)
     if (_database.isEmpty())
         _database = PQdb(_conn);
 
-    // set notice and warning messages handler
     PQsetNoticeReceiver(_conn, noticeReceiver, this);
     PQsetnonblocking(_conn, 1);
-
-    // the link is alive from here on - see isOpened()
     _opened = true;
-
-    // watch socket to receive notifications
     watchSocket(SocketWatchMode::Read);
-
     return true;
 }
 
@@ -88,7 +106,7 @@ void PgConnection::openAsync() noexcept
     QMutexLocker lk(&_connectionGuard);
     if (_async_stage != async_stage::none || !isIdle())
     {
-        int status = PQtransactionStatus(_conn);
+        const int status = PQtransactionStatus(_conn);
         emit error(tr("unable to open connection (transaction status %1)").arg(status));
         return;
     }
@@ -132,6 +150,17 @@ void PgConnection::openAsync() noexcept
 // a wild abort inside malloc during application shutdown.
 void PgConnection::close() noexcept
 {
+    QThread *thread = _queryThread;
+    QObject *worker = _queryWorker;
+    if (thread && thread->isRunning() && worker && QThread::currentThread() != thread)
+    {
+        QMetaObject::invokeMethod(worker, [this]() {
+            QMutexLocker lk(&_connectionGuard);
+            closeLocked();
+        }, Qt::BlockingQueuedConnection);
+        return;
+    }
+
     QMutexLocker lk(&_connectionGuard);
     closeLocked();
 }
@@ -248,7 +277,7 @@ QString PgConnection::dbmsInfo() const noexcept
         #else
             endl;
         #endif
-    // synchronous usage only
+    QMutexLocker lk(&_connectionGuard);
     QString res;
     if (!isOpened())
         return res;
@@ -259,7 +288,7 @@ QString PgConnection::dbmsInfo() const noexcept
         "DateStyle", "IntervalStyle", "TimeZone",
         "integer_datetimes", "standard_conforming_strings"};
     QTextStream out(&res);
-    out << dbmsName() << " v." << dbmsVersion() << _endl << _endl;
+    out << dbmsName() << " v." << dbmsVersionLocked() << _endl << _endl;
     for (const QString &p: params)
     {
         const char *val = PQparameterStatus(_conn, p.toStdString().c_str());
@@ -282,12 +311,16 @@ QString PgConnection::dbmsName() const noexcept
 
 QString PgConnection::dbmsVersion() const noexcept
 {
-    // synchronous usage only
-    QString res;
+    QMutexLocker lk(&_connectionGuard);
     if (!isOpened())
-        return res;
+        return QString();
+    return dbmsVersionLocked();
+}
+
+QString PgConnection::dbmsVersionLocked() const noexcept
+{
     const char *val = PQparameterStatus(_conn, "server_version");
-    return (val ? val : res);
+    return val ? QString::fromUtf8(val) : QString();
 }
 
 QString PgConnection::transactionStatus() const noexcept
@@ -308,9 +341,10 @@ QString PgConnection::transactionStatus() const noexcept
 
 int PgConnection::dbmsComparableVersion()
 {
-    // synchronous usage only
-    int res = PQserverVersion(_conn);
-    // use queries for the the most recent server version in case of error
+    QMutexLocker lk(&_connectionGuard);
+    if (!_conn)
+        return 0x7fffffff;
+    const int res = PQserverVersion(_conn);
     return res ? res : 0x7fffffff;
 }
 
@@ -401,9 +435,8 @@ bool PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
     if (!query.isEmpty())
     {
         // save transaction status to avoid reconnects within transaction
-        _connectionGuard.lock();
+        QMutexLocker lk(&_connectionGuard);
         PGTransactionStatusType initial_state = PQtransactionStatus(_conn);
-        _connectionGuard.unlock();
         // refuse a new query only if the current one is still in flight
         // (an opened transaction does not block anything);
         // the transaction status is unknown while reconnecting, hence the
@@ -537,63 +570,54 @@ bool PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
     // separate thread. Asynchronous libpq API is used for the sake of
     // opportunities it provides.
     QThread* thread = new QThread();
-    connect(thread, &QThread::started, thread, [this, run_query, thread]() {
-        // kill query by means of appropriate signal
-        connect(this, &PgConnection::closeConnectionWanted, thread, [this]() {
+    QObject *worker = new QObject();
+    worker->moveToThread(thread);
+    _queryThread = thread;
+    _queryWorker = worker;
+
+    connect(thread, &QThread::started, worker, [this, run_query, thread, worker]() {
+        connect(this, &PgConnection::closeConnectionWanted, worker, [this]() {
             QMutexLocker lk(&_connectionGuard);
             if (!_conn)
                 return;
-            closeLocked(); // the guard is held right here
+            closeLocked();
             emit error(tr("connection closed"));
             setQueryState(QueryState::Inactive);
         }, Qt::QueuedConnection);
 
-        // stop event loop on inactive query state
-        connect(this, &PgConnection::queryStateChanged, thread, [this, thread](QueryState state) {
-            if (state == QueryState::Inactive)
+        connect(this, &PgConnection::queryStateChanged, worker, [this, thread](QueryState state) {
+            if (state != QueryState::Inactive)
+                return;
             {
-                {
-                    // The next run may start the moment this state is seen and
-                    // would clearResultsets() under our feet, so the list is
-                    // held while it is walked. The lock is released before
-                    // _connectionGuard is taken below: fetch() acquires them in
-                    // the opposite order, and holding both the other way round
-                    // is how deadlocks are made.
-                    QMutexLocker lkres(&_resultsetsGuard);
+                QMutexLocker lkres(&_resultsetsGuard);
 #if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
-                    for (auto res: qAsConst(_resultsets))
+                for (auto res: qAsConst(_resultsets))
 #else
-                    for (auto res: std::as_const(_resultsets))
+                for (auto res: std::as_const(_resultsets))
 #endif
-                        clarifyTableStructure(*res);
-                }
-                // delete listeners before switch to another thread
-                QMutexLocker lk(&_connectionGuard);
-                watchSocket(SocketWatchMode::None);
-                thread->quit();
+                    clarifyTableStructure(*res);
             }
+            QMutexLocker lk(&_connectionGuard);
+            watchSocket(SocketWatchMode::None);
+            thread->quit();
         }, Qt::QueuedConnection);
 
         run_query();
-
         if (_query_state == QueryState::Inactive)
-            // man: If the eventloop in QThread::exec() is not running then
-            // the next call to QThread::exec() will also return immediately.
-            // (next to this handler Qt will call exec())
             thread->exit();
     });
+    connect(thread, &QThread::finished, worker, &QObject::deleteLater);
     connect(thread, &QThread::finished, this, [this, thread]() {
-        thread->deleteLater();
-        // autorollback
+        if (_queryThread != thread)
+            return;
+        _queryThread = nullptr;
+        _queryWorker = nullptr;
         QMutexLocker lk(&_connectionGuard);
-        if (PQtransactionStatus(_conn) == PQTRANS_INERROR)
+        if (_conn && PQtransactionStatus(_conn) == PQTRANS_INERROR)
             PQclear(PQexec(_conn, "rollback"));
-        // read socket on gui thread to receive notifications
-        QMetaObject::invokeMethod(this, "watchSocket", Qt::QueuedConnection, Q_ARG(int, SocketWatchMode::Read));
-
-        // https://www.postgresql.org/message-id/CAOYf6ec-TmRYjKBXLLaGaB-jrd=mjG1Hzn1a1wufUAR39PQYhw@mail.gmail.com
-
+        watchSocket(SocketWatchMode::Read);
         emit queryFinished();
+        thread->deleteLater();
     });
     thread->start();
     return true;
@@ -604,7 +628,9 @@ bool PgConnection::execute(const QString &query, const QVector<QVariant> *params
     // a lost link is worth one silent retry, no more (see below)
     bool reconnected = false;
     // save transaction status to avoid reconnects within transaction
+    QMutexLocker connection_lk(&_connectionGuard);
     PGTransactionStatusType initial_state = PQtransactionStatus(_conn);
+    connection_lk.unlock();
     if (initial_state == PQTRANS_ACTIVE)
     {
         emit message(tr("another command is already in progress\n"));
@@ -703,10 +729,16 @@ bool PgConnection::execute(const QString &query, const QVector<QVariant> *params
 
 QString PgConnection::escapeIdentifier(const QString &identifier)
 {
+    QMutexLocker lk(&_connectionGuard);
+    if (!_conn)
+        return identifier; // same fallback as the DbConnection base default
+
     QByteArray tmp = identifier.toUtf8();
     std::unique_ptr<char, void(*)(void*)> res(
                 PQescapeIdentifier(_conn, tmp.data(), tmp.size()),
                 PQfreemem);
+    if (!res)
+        return QString();
     return QString::fromUtf8(res.get());
 }
 
@@ -796,6 +828,15 @@ bool PgConnection::isIdle() const noexcept
     // the caller must lock _connectionGuard when needed
     int status = PQtransactionStatus(_conn);
     return !_conn || status == PQTRANS_IDLE || status == PQTRANS_UNKNOWN;
+}
+
+bool PgConnection::hasLink() const noexcept
+{
+    // Whether there is a handle at all - unlike isOpened(), which tells whether
+    // the link behind the handle is alive. A dead but still held handle is worth
+    // reading from (that is how a query gets its error), a released one is not.
+    QMutexLocker lk(&_connectionGuard);
+    return _conn != nullptr;
 }
 
 void PgConnection::noticeReceiver(void *arg, const PGresult *res)
@@ -1139,6 +1180,15 @@ void PgConnection::putCopyData()
 
 void PgConnection::readyReadSocket()
 {
+    // The link may be gone already: it is released by whichever thread notices
+    // the loss (the query worker, more often than not), while the notifiers are
+    // switched off by a queued call to this thread - see watchSocket() - so one
+    // last activation can still arrive here, on a descriptor that is no longer
+    // ours. Nothing is to be read from it, and libpq would merely answer
+    // "connection pointer is NULL", which is not a message about the query.
+    if (!hasLink())
+        return;
+
     switch (_async_stage)
     {
     case async_stage::connecting:
@@ -1167,6 +1217,10 @@ void PgConnection::readyReadSocket()
 
 void PgConnection::readyWriteSocket()
 {
+    // the link may already be released - see readyReadSocket()
+    if (!hasLink())
+        return;
+
     if (_async_stage == async_stage::connecting)
     {
         asyncConnectionProceed();
@@ -1206,8 +1260,39 @@ void PgConnection::readyWriteSocket()
 
 void PgConnection::watchSocket(int mode)
 {
+    // A QSocketNotifier is registered with the event dispatcher of the thread
+    // it was created in, and only that thread may enable, disable or delete it.
+    // Doing it from another thread corrupts the dispatcher's own bookkeeping,
+    // and the damage is not noticed where it is done: it surfaces much later as
+    // a wild abort inside some unrelated malloc/free - typically while a static
+    // container is being destroyed after main() has returned. Qt says as much
+    // beforehand ("Socket notifiers cannot be enabled or disabled from another
+    // thread"), and the "Invalid socket N and type 'Read', disabling..." storm
+    // that follows is the same wound: a notifier left watching a descriptor
+    // that another thread has already closed.
+    //
+    // The handlers are readyReadSocket()/readyWriteSocket(), slots of this
+    // object, so they run in the thread this object belongs to no matter which
+    // thread the notifier fired in. That thread is therefore the one that owns
+    // the notifiers, and a call from the query worker is forwarded to it.
+    //
+    // The forwarding must not block: the worker calls watchSocket() while
+    // holding _connectionGuard (see run_query()), and the owner thread may be
+    // waiting for that very mutex, so a blocking call would deadlock the pair.
+    // It is queued instead, and the queued call takes the guard itself - the
+    // same-thread path keeps the old contract, where the caller holds it.
+    if (QThread::currentThread() != thread())
+    {
+        QMetaObject::invokeMethod(this, [this, mode]() {
+            QMutexLocker lk(&_connectionGuard);
+            watchSocket(mode);
+        }, Qt::QueuedConnection);
+        return;
+    }
+
     // the caller must lock _connectionGuard when needed
     int socket_handle = (_conn ? PQsocket(_conn) : -1);
+
     // force disabling socket watcher in case of incorrect handle
     if (socket_handle == -1)
         mode = SocketWatchMode::None;

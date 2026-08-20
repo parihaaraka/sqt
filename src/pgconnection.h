@@ -10,6 +10,7 @@
 #include "copycontext.h"
 
 class QSocketNotifier;
+class QThread;
 
 class PgConnection : public DbConnection
 {
@@ -41,6 +42,11 @@ public:
     virtual void clarifyTableStructure(DataTable &table) override;
 
 private:
+    /// dbmsVersion() itself locked - callers that already hold _connectionGuard
+    /// (open(), dbmsInfo()) must use this instead, or they would deadlock on
+    /// the non-recursive mutex.
+    QString dbmsVersionLocked() const noexcept;
+
     enum class async_stage
     {
         none,
@@ -53,6 +59,8 @@ private:
         copy_in
     };
     QSocketNotifier *_readNotifier, *_writeNotifier;
+    QThread *_queryThread = nullptr;
+    QObject *_queryWorker = nullptr;
     PGconn *_conn = nullptr;
     /// Whether the link is alive. Read by isOpened() without any lock (see there).
     std::atomic_bool _opened {false};
@@ -77,6 +85,10 @@ private:
     /// close() itself; the caller must hold _connectionGuard
     void closeLocked() noexcept;
     bool isIdle() const noexcept;
+    /// Whether the connection handle is still held (see isOpened() for whether
+    /// the link behind it is alive). Takes _connectionGuard itself.
+    bool hasLink() const noexcept;
+
     static void noticeReceiver(void *arg, const PGresult *res);
     void fetchNotifications();
     void fetch() noexcept;

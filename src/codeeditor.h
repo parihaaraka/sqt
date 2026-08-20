@@ -39,6 +39,7 @@ class CodeEditor : public QPlainTextEdit
     Q_OBJECT
 public:
     CodeEditor(QWidget *parent = nullptr);
+    ~CodeEditor() override;
     void leftSideBarPaintEvent(QPaintEvent *event);
     int leftSideBarWidth() const;
     QString text() const;

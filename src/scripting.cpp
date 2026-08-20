@@ -113,8 +113,22 @@ void refresh(DbConnection *connection, Context context)
         return;
 
     const QStringList dirs = dbmsScriptDirs(connection, context);
-    auto &bunch = _scripts[connection->dbmsScriptingID() + context2str(context)];
-    bunch.clear();
+    // The version is asked once per bundle, not once per file: it is the same
+    // number for all of them, and for an odbc data source every call is a query
+    // (the version comes from the root level version.sql/qs script) - which
+    // re-enters this very function, hence the -1 for that script itself.
+    const int version =
+            (context == Context::Root && qobject_cast<OdbcConnection*>(connection) ?
+                 -1 : connection->dbmsComparableVersion());
+    // The bunch is built aside and published in one step at the end. A
+    // reference into _scripts must not be held across anything that may touch
+    // the cache again: dbmsComparableVersion() above does exactly that for odbc,
+    // and QHash moves its nodes on insert, so such a reference would be left
+    // dangling and the next insert through it would write into freed memory.
+    // Publishing at the end also keeps a throw in the middle (an unreadable
+    // file, malformed version boundaries) from leaving a half-filled entry
+    // behind - getScript() would consider it complete and use it forever.
+    QHash<QString, Script> bunch;
 
     // The roots are merged file by file, not folder by folder: replacing a
     // single script must not hide the rest of the bundle. The folders come in
@@ -146,15 +160,13 @@ void refresh(DbConnection *connection, Context context)
         bunch.insert(
             f.baseName(),
             Scripting::Script {
-                versionSpecificPart(
-                    stream.readAll(),
-                    // prevent infinite loop - odbc data source acquires its version
-                    // through the root level version.sql/qs script
-                    context == Context::Root && qobject_cast<OdbcConnection*>(connection) ?
-                        -1 : connection->dbmsComparableVersion()),
+                versionSpecificPart(stream.readAll(), version),
                 suffix == "sql" ? Script::Type::SQL : Script::Type::QS
             });
     }
+    // done reading - now the cache may be touched
+    _scripts.insert(connection->dbmsScriptingID() + context2str(context),
+                    std::move(bunch));
 }
 
 void clearCache()
@@ -223,10 +235,15 @@ void execute(
     if (s->type == Scripting::Script::Type::SQL)
     {
         connection->execute(query);
-        for (int i = connection->_resultsets.size() - 1; i >= 0; --i)
+        // The tables are taken out in one guarded step. Walking the connection's
+        // own list here would race with the query thread and with libpq's notice
+        // callback, both of which append to it - and a QList mutated from two
+        // threads at once corrupts the heap, which then surfaces at some
+        // unrelated free() much later.
+        QList<DataTable*> tables = connection->takeResultsets();
+        for (int i = tables.size() - 1; i >= 0; --i)
         {
-            DataTable *t = connection->_resultsets.at(i);
-            connection->_resultsets.removeAt(i);
+            DataTable *t = tables.at(i);
             if (t->rowCount() == 1 && t->columnCount() == 1)
             {
                 QString cn = t->getColumn(0).name();

@@ -100,7 +100,22 @@ public:
     QString connectionString() const noexcept;
     QueryState queryState() const noexcept;
     QString elapsed() const noexcept;
+    /// The tables the connection has accumulated so far.
+    ///
+    /// Do *not* walk this list in place from another thread. It is appended to
+    /// by the query thread (fetch()) and by libpq's notice callback, which runs
+    /// in whichever thread talks to the server, so an unguarded traversal or
+    /// removal races with a reallocation of the list and corrupts the heap.
+    /// Use takeResultsets() to consume the tables and resultsetsSnapshot() to
+    /// look at them; both do their work under _resultsetsGuard.
     QList<DataTable*> _resultsets;
+    /// Hands the accumulated tables over to the caller and leaves the list
+    /// empty. Ownership travels with them: nothing else will free them.
+    QList<DataTable*> takeResultsets() noexcept;
+    /// A copy of the list, for a reader that only looks at the tables. The
+    /// tables stay owned by the connection, so the copy is valid for as long as
+    /// no one clears the resultsets (the next query run does).
+    QList<DataTable*> resultsetsSnapshot() const noexcept;
 
 public slots: // to use from QJSEngine
     virtual DataTable* execute(const QString &query, const QVariantList &params);
@@ -126,7 +141,7 @@ protected:
     QElapsedTimer _timer;
     QString _database;
     QString _connection_string;
-    QMutex _resultsetsGuard;
+    mutable QMutex _resultsetsGuard;
     mutable QMutex _connectionGuard;
     QString _dbmsScriptingID;
     void setQueryState(QueryState queryState);

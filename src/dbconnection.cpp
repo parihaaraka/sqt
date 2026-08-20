@@ -70,12 +70,17 @@ QueryState DbConnection::queryState() const noexcept
 DataTable* DbConnection::execute(const QString &query, const QVariantList &params)
 {
     QVector<QVariant> p = params.toVector();
-    // * synchronous usage only - no need to use _resultsetsGuard
-    if (execute(query, &p) && !_resultsets.empty())
+    // The run itself is synchronous, but the list is not ours alone even so:
+    // libpq's notice callback appends to it from the thread that talks to the
+    // server, so taking the table out has to be guarded like every other
+    // access.
+    if (execute(query, &p))
     {
         // return only last resultset to keep scripting api simple
         // (script takes ownership of the pointer)
-        return _resultsets.takeLast();
+        QMutexLocker lk(&_resultsetsGuard);
+        if (!_resultsets.empty())
+            return _resultsets.takeLast();
     }
     return nullptr;
 }
@@ -114,6 +119,20 @@ QString DbConnection::elapsed() const noexcept
             toString(elapsed_ms < 60 * 60000 ?
                          "mm:ss.zzz":
                          "HH:mm:ss");
+}
+
+QList<DataTable*> DbConnection::takeResultsets() noexcept
+{
+    QMutexLocker lk(&_resultsetsGuard);
+    QList<DataTable*> res;
+    res.swap(_resultsets);
+    return res;
+}
+
+QList<DataTable*> DbConnection::resultsetsSnapshot() const noexcept
+{
+    QMutexLocker lk(&_resultsetsGuard);
+    return _resultsets;
 }
 
 void DbConnection::clearResultsets() noexcept

@@ -1,8 +1,14 @@
 # Unit tests for the parts that carry no db/gui dependencies.
-# Qt6::Test lives in qtbase, but the module is not requested by the main build,
-# so the tests quietly step aside instead of breaking it when it is missing.
-find_package(Qt6 QUIET COMPONENTS Test)
-if(NOT Qt6Test_FOUND)
+#
+# Qt6::Test comes from the one find_package(Qt6) in cmake/FindOrInstallQt.cmake,
+# which asks for it as an optional component. No find_package here on purpose:
+# a second one re-includes Qt's config files, and on MinGW that dies outright on
+# Qt6EntryPointMinGW32Target.cmake, which creates its imported target with no
+# `if(NOT TARGET ...)` guard. See the comment in that module.
+#
+# Optional there, so the tests still step aside on a Qt without the Test module
+# instead of breaking the application build.
+if(NOT TARGET Qt6::Test)
     message(WARNING "Qt6 Test module not found - unit tests are not built")
     return()
 endif()

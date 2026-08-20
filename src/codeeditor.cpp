@@ -176,6 +176,19 @@ QString CodeEditor::text() const
 #endif
 }
 
+CodeEditor::~CodeEditor()
+{
+    // The completer is shared by every editor and outlives all of them, while
+    // setWidget() left it holding a bare pointer to this one: it keeps an event
+    // filter installed on that widget and positions the popup against it. An
+    // editor dies whenever its tab is closed or replaced (see initEditor), and
+    // the next setWidget() call then unfilters the freed one - so hand the
+    // completer back an empty widget while this one is still alive. Hiding the
+    // popup is left to setWidget() itself, in Qt's own order.
+    if (_completer && _completer->widget() == this)
+        _completer->setWidget(nullptr);
+}
+
 void CodeEditor::setCompleter(QCompleter *completer)
 {
     if (_completer)
@@ -185,6 +198,10 @@ void CodeEditor::setCompleter(QCompleter *completer)
 
     if (!_completer)
         return;
+
+    // The editor is gone before the completer is, so let the completer forget
+    // it (see ~CodeEditor) rather than keep pointing at a destroyed widget.
+    connect(_completer, &QObject::destroyed, this, [this]() { _completer = nullptr; });
 
     _completer->setWidget(this);
     QObject::connect(_completer, static_cast<void(QCompleter::*)(const QString &)>(&QCompleter::activated),
