@@ -1,5 +1,6 @@
 #include "pgconnection.h"
 #include "pgtypes.h"
+#include "pgtypmod.h"
 #include <QApplication>
 #include <QVector>
 #include <QTextStream>
@@ -782,44 +783,27 @@ void PgConnection::clarifyTableStructure(DataTable &table)
     for (int i = 0; i < table.columnCount(); ++i)
     {
         DataColumn &c = table.getColumn(i);
-        int16_t dec_digits = -1;
-        int len = -1;
-        int fmod = c.modifier();
-
         auto ti = typeInfo(c.sqlType());
-        int sqlType = (ti.second > 0 ? ti.second : c.sqlType());
 
-        if (fmod >= 0)
-        {
-            switch (sqlType) {
-            case NUMERICOID:
-                len = (fmod >> 16);
-                dec_digits = ((fmod - VARHDRSZ) & 0xffff);
-                break;
-            case BITOID:
-            case VARBITOID:
-                len = fmod;
-                break;
-            default:
-                if (fmod >= VARHDRSZ) { // if not?
-                    len = fmod - VARHDRSZ;
-                }
-            }
-        }
+        // Only a name starting with '_' means an array: point, int2vector and
+        // the like have a typelem of their own without being arrays, and their
+        // modifier belongs to the type itself, not to the element type.
+        const bool isArray = (ti.first.startsWith('_') && ti.second > 0);
+        // an array's modifier describes its elements
+        const int sqlType = (isArray ? ti.second : c.sqlType());
 
-        QString typeDescr = ti.first.startsWith('_') ? ti.first.mid(1) : ti.first;
-        if (c.modifier() >= 0)
-            typeDescr += '(' +
-                    QString::number(c.length()) +
-                    (c.scale() > 0 ? ',' + QString::number(c.scale()) : "") +
-                    ')';
-        else if (typeDescr == "char")
+        // decode first - the description below is built out of the result, and
+        // the column itself still holds the -1 defaults at this point
+        const PgTypmod tm = pgDecodeTypmod(sqlType, c.modifier());
+
+        QString typeDescr = (isArray ? ti.first.mid(1) : ti.first);
+        if (typeDescr == "char" && tm.suffix.isEmpty())
             typeDescr = "\"char\"";
-
-        if (ti.second > 0 && ti.first[0] == '_')
+        typeDescr += tm.suffix;
+        if (isArray)
             typeDescr += "[]";
 
-        c.clarifyType(typeDescr, len, dec_digits, ti.second);
+        c.clarifyType(typeDescr, tm.length, tm.scale, ti.second);
     }
 }
 
