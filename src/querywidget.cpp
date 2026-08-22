@@ -1196,6 +1196,16 @@ void QueryWidget::onScriptObjectRequest()
                         cn, Scripting::Context::Content, type,
                         [objects, r, &type](const QString &macro) -> QVariant
             {
+                // Tells the script who asked. A content script may then serve F4
+                // differently from a click in the objects tree: table.sql prints
+                // the table's indexes instead of the select/insert/update
+                // templates, since F4 is about the query being written. Quoted,
+                // like $children.names$, so that the script can compare the
+                // substituted value with a literal ($gui.context$ = 'F4') and
+                // still get a real NULL everywhere else.
+                if (macro == "gui.context")
+                    return "'F4'";
+
                 // Resultset columns are flat ("schema_name"), while macroses are
                 // dotted ("$schema.name$").
                 // Content scripts refer to the object itself by its type name, so

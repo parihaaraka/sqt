@@ -17,6 +17,8 @@ declare
 	_partitioned_by text;
 	_partition_of text;
 	_partition_for text;
+	_indexes text;
+	_rels oid[];
 begin
 
 	if '$children.ids$' = '-1' then
@@ -283,38 +285,150 @@ begin
 					else
 						'-- ' || replace(description, E'\n', E'\n-- ') || E'\n\n'
 				end, ''
-			) || _create_object ||
-				format(E'COMMENT ON %s %s IS %s;\n\n', _obj_type, _obj_name, coalesce(E'\n' || quote_literal(_comment), 'NULL'))
+			) || _create_object /*||
+				format(E'COMMENT ON %s %s IS %s;\n\n', _obj_type, _obj_name, coalesce(E'\n' || quote_literal(_comment), 'NULL'))*/
 		into _create_object
 		from (values (obj_description(_obj_id, 'pg_class'))) as v(description);
 
 	end if;
 
-	-- prepare helpful queries for db programmer
-	with tmp as
-	(
-		select
-			row_number() over (order by a.attnum) rn,
-			quote_ident(a.attname) attname,
-			col_description(_obj_id, a.attnum) descr
-		from pg_catalog.pg_attribute a
-		where
-			a.attnum > 0 and not a.attisdropped and
-			a.attrelid = _obj_id and
-			(a.attnum in ($children.ids$) or '$children.ids$' = '-1')
-	)
-	select
-		string_agg(attname, ', ' order by rn),
-		string_agg(E'\t' || attname || ' = $' || rn::text, E',\n' order by rn),
-		string_agg('$' || rn::text, ', '),
-		string_agg(
-			format(E'COMMENT ON COLUMN %s.%s IS \n%s;', _obj_name, tmp.attname, quote_literal(descr)),
-			E'\n'
-		) filter (where tmp.descr is not null) || E'\n\n'
-	into _plain_list, _update_list, _values, _col_comments
-	from tmp;
+	if $gui.context$ = 'F4' then
 
-   raise notice
+		-- A partitioned table holds no data of its own, so its size, its row
+		-- estimate and the size of its indexes are those of the partitions.
+		with recursive tree as
+		(
+			select _obj_id rel
+			union all
+			select i.inhrelid
+			from pg_inherits i
+				join tree t on i.inhparent = t.rel
+			where _relkind = 'p'
+		)
+		select array_agg(rel) into _rels from tree;
+
+		select concat_ws(', ',
+				'-- ' || _obj_name,
+				pg_size_pretty(sum(pg_table_size(c.oid))),
+				case
+					-- reltuples is -1 until the relation gets analyzed
+					when sum(c.reltuples) filter (where c.reltuples >= 0) is null then 'never analyzed'
+					else format('~%s rows', round(sum(c.reltuples) filter (where c.reltuples >= 0))::bigint)
+				end,
+				case when sum(st.seq_scan) is not null then format('%s seq scans', sum(st.seq_scan)) end,
+				case when sum(st.idx_scan) is not null then format('%s index scans', sum(st.idx_scan)) end
+			)
+		into _tmp
+		from pg_class c
+			left join pg_stat_all_tables st on st.relid = c.oid
+		where c.oid = any(_rels) and
+			-- an analyzed partitioned relation carries the totals of its whole
+			-- subtree, so counting it along with the partitions would double them
+			c.relkind != 'p'::"char";
+
+		with recursive idx as
+		(
+			-- every index of the table, with the partitioned ones extended by
+			-- their per-partition counterparts to be summed up
+			select x.indexrelid root, x.indexrelid rel
+			from pg_index x
+			where x.indrelid = _obj_id and x.indislive
+			union all
+			select t.root, i.inhrelid
+			from pg_inherits i
+				join idx t on i.inhparent = t.rel
+		),
+		sized as
+		(
+			select
+				idx.root,
+				sum(pg_relation_size(idx.rel)) bytes,
+				sum(st.idx_scan) scans
+			from idx
+				left join pg_stat_all_indexes st on st.indexrelid = idx.rel
+			group by idx.root
+		)
+		select string_agg(
+					'  ' ||
+					def || ';' ||
+					coalesce(E'  -- ' || nullif(concat_ws(', ',
+						case when x.indisunique then 'UNIQUE' end,
+						pg_size_pretty(sized.bytes),
+						case
+							when sized.scans is null then null
+							when sized.scans = 0 then 'never used'
+							else format('%s scans', sized.scans)
+						end,
+						case con.contype
+							when 'p'::"char" then 'PRIMARY KEY'
+							when 'u'::"char" then 'UNIQUE constraint'
+							when 'x'::"char" then 'EXCLUDE constraint'
+						end,
+						case when not x.indisvalid then 'INVALID' end,
+						case when x.indpred is not null then 'partial' end
+					), ''), ''),
+				E'\n' order by def) || E'\n$Indexes$'
+		into _indexes
+		from pg_index x
+			cross join lateral regexp_replace(pg_get_indexdef(x.indexrelid), '.*(USING\s*)+?', '') def
+			join pg_class i on i.oid = x.indexrelid
+			join sized on sized.root = x.indexrelid
+			left join pg_constraint con on
+				con.conindid = x.indexrelid and
+				con.contype in ('p'::"char", 'u'::"char", 'x'::"char")
+		where x.indrelid = _obj_id and x.indislive;
+
+		raise notice '%',
+			_create_object ||
+			_tmp || E'\n' ||
+			coalesce(E'$Indexes$\n' || _indexes, '-- no indexes')
+		using hint = 'script';
+
+	else
+		_create_object := _create_object ||
+				format(E'COMMENT ON %s %s IS %s;\n\n', _obj_type, _obj_name, coalesce(E'\n' || quote_literal(_comment), 'NULL'));
+
+		-- explicit column comments are in object tree only
+		with tmp as
+		(
+			select
+				quote_ident(a.attname) attname,
+				a.attnum,
+				col_description(_obj_id, a.attnum) descr
+			from pg_catalog.pg_attribute a
+			where
+				a.attnum > 0 and not a.attisdropped and
+				a.attrelid = _obj_id and
+				(a.attnum in ($children.ids$) or '$children.ids$' = '-1')
+		)
+		select
+			string_agg(
+				format(E'COMMENT ON COLUMN %s.%s IS \n%s;', _obj_name, tmp.attname, quote_literal(descr)),
+				E'\n' order by tmp.attnum
+			) filter (where tmp.descr is not null) || E'\n\n'
+		into _col_comments
+		from tmp;
+
+		-- prepare helpful queries for db programmer
+		with tmp as
+		(
+			select
+				row_number() over (order by a.attnum) rn,
+				quote_ident(a.attname) attname
+			from pg_catalog.pg_attribute a
+			where
+				a.attnum > 0 and not a.attisdropped and
+				a.attrelid = _obj_id and
+				(a.attnum in ($children.ids$) or '$children.ids$' = '-1')
+		)
+		select
+			string_agg(attname, ', ' order by rn),
+			string_agg(E'\t' || attname || ' = $' || rn::text, E',\n' order by rn),
+			string_agg('$' || rn::text, ', ')
+		into _plain_list, _update_list, _values
+		from tmp;
+
+		raise notice
 '%SELECT %
 FROM %
 
@@ -326,11 +440,14 @@ SET
 %
 WHERE
 ',
-	_create_object || coalesce(_col_comments, ''), _plain_list, _obj_name,
-	_obj_name, _plain_list, _values,
-	_obj_name, _update_list
-   using hint = 'script';
-   
+		_create_object || coalesce(_col_comments, ''), _plain_list, _obj_name,
+		_obj_name, _plain_list, _values,
+		_obj_name, _update_list
+		using hint = 'script';
+
+	end if;
+
 end
 $$
+
 
