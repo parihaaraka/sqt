@@ -1,0 +1,101 @@
+{
+    "version": "2.0.0",
+    // Plain cmake/ctest invocations rather than the CMake Tools commands, so
+    // that they behave the same from the terminal and from the palette, and
+    // so that the build directory is named in one place per task instead of
+    // depending on which kit the status bar happens to hold.
+    //
+    // All of them work in build/vscode. The other directories under build/
+    // belong to QtCreator (and build/cline to the assistant); nothing here
+    // writes to them.
+    "options": {
+        "cwd": "${workspaceFolder}"
+    },
+    "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+    },
+    "tasks": [
+        {
+            "label": "cmake: configure (Debug)",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "-S", ".",
+                "-B", "build/vscode",
+                "-G", "Ninja",
+                "-DCMAKE_BUILD_TYPE=Debug",
+                // What clangd feeds on. Kept on the command line as well as
+                // in settings.json, so a configure done by hand produces the
+                // same tree as one done by the extension.
+                "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+            ],
+            "problemMatcher": [],
+            "detail": "Configure build/vscode (needed after adding a source file: the CMakeLists globs src/*.cpp at configure time)"
+        },
+        {
+            "label": "build",
+            "type": "shell",
+            "command": "cmake",
+            // No -j: the generator is Ninja, which already builds with as
+            // many jobs as there are cores. Passing an empty ${env:...} here
+            // would only give "cmake --build: invalid number of jobs".
+            "args": [
+                "--build", "build/vscode"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            // The compiler is gcc; this is the matcher that understands its
+            // "file:line:col: error: ..." and turns it into a Problems entry.
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "detail": "Build the app and the tests into build/vscode"
+        },
+        {
+            "label": "build: app only",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build", "build/vscode",
+                "--target", "sqt"
+            ],
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "detail": "Skip the unit tests"
+        },
+        {
+            "label": "test",
+            "type": "shell",
+            "command": "ctest",
+            "args": [
+                "--test-dir", "build/vscode",
+                "--output-on-failure"
+            ],
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "dependsOn": "build",
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "detail": "Build, then run the Qt Test binaries under tests/"
+        },
+        {
+            "label": "clangd: reindex (restart server)",
+            "type": "shell",
+            // The index is a cache; dropping it makes clangd rebuild it from
+            // the current compile database. Worth doing after a Qt upgrade or
+            // when navigation starts pointing at code that no longer exists.
+            "command": "rm -rf .cache/clangd && echo 'clangd index dropped - run the command \"clangd: Restart language server\"'",
+            "problemMatcher": [],
+            "detail": "Drop .cache/clangd"
+        }
+    ]
+}

@@ -16,6 +16,8 @@
 #include <sqlext.h>
 #include <QString>
 #include <QThread>
+#include <QMutex>
+#include <atomic>
 #include "dbconnection.h"
 
 class QueryCanceller;
@@ -46,12 +48,56 @@ public:
     virtual void clarifyTableStructure(DataTable &table) override;
 
 private:
-    SQLHENV _henv;
-    SQLHDBC _hdbc;
-    std::atomic<SQLHSTMT> _hstmt; // to cancel query from another thread
+    SQLHENV _henv = nullptr;
+    SQLHDBC _hdbc = nullptr;
+
+    /// Whether the link is alive. Maintained under _connectionGuard at every
+    /// connect/disconnect/detected loss and read lock-free - see
+    /// PgConnection::isOpened() for the reasoning. The tree's paint routine
+    /// and the status bar poll this on every repaint, and must never block on
+    /// _connectionGuard (which execute() may hold, or effectively occupy for
+    /// the whole query - see below) nor make a fresh ODBC call while a query
+    /// is running on this connection in another thread.
+    ///
+    /// This trades the old behaviour - polling SQL_ATTR_CONNECTION_DEAD live
+    /// on every repaint, which could notice a server-side drop of an
+    /// otherwise idle link immediately - for the same trade-off PgConnection
+    /// already makes: an idle link that dies is only noticed the next time
+    /// something actually uses it.
+    std::atomic_bool _opened {false};
+
+    /// Guards _hstmt's lifetime only (set right after SQLAllocHandle in
+    /// execute(), cleared right before SQLFreeHandle when it finishes).
+    /// Deliberately a *separate* lock from _connectionGuard: cancel() must be
+    /// able to reach SQLCancel() while execute() is blocked inside a long
+    /// SQLExecDirect()/SQLFetch() call - i.e. while _connectionGuard could be
+    /// held for the whole query, unlike PgConnection where each libpq call is
+    /// individually non-blocking - so _hstmtGuard is never held for longer
+    /// than a handle get/set/free.
+    mutable QMutex _hstmtGuard;
+    SQLHSTMT _hstmt = nullptr;
+
+    /// The thread executeAsync() runs execute() in, and the worker object
+    /// living in it - tracked exactly like PgConnection's _queryThread /
+    /// _queryWorker, so the destructor (and close()) can find out whether a
+    /// query is still running on this connection before touching _hdbc/_henv
+    /// from another thread.
+    QThread *_queryThread = nullptr;
+    QObject *_queryWorker = nullptr;
+
     bool checkStmt(RETCODE retcode, SQLHSTMT handle);
     bool check(RETCODE retcode, SQLHANDLE handle, SQLSMALLINT handle_type) const;
     std::string finalConnectionString() const noexcept;
+
+    /// dbmsName()/dbmsVersion() themselves lock _connectionGuard - callers
+    /// that already hold it (open(), dbmsInfo()) must use these instead, or
+    /// they would deadlock on the non-recursive mutex. Mirrors
+    /// PgConnection::dbmsVersionLocked().
+    QString dbmsNameLocked() const noexcept;
+    QString dbmsVersionLocked() const noexcept;
+
+    /// close() itself; the caller must hold _connectionGuard.
+    void closeLocked() noexcept;
 };
 
 #endif // ODBCCONNECTION_H

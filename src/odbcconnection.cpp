@@ -30,8 +30,6 @@ OdbcConnection::OdbcConnection() :
     DbConnection()
 {
     RETCODE retcode;
-    _henv = nullptr;
-    _hstmt = nullptr;
     _query_state = QueryState::Inactive;
 
     retcode = SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &_henv);
@@ -54,6 +52,35 @@ OdbcConnection::OdbcConnection() :
 
 OdbcConnection::~OdbcConnection()
 {
+    // A query worker captures `this` through execute(), so it must be
+    // completely stopped before _hdbc/_henv disappear underneath it - same
+    // reasoning as PgConnection::~PgConnection(). Unlike there, no
+    // invokeMethod dance into the worker thread is needed to ask it to stop:
+    // execute() spends its whole life inside a single blocking ODBC call and
+    // never pumps its own event loop, so a queued call to it would just sit
+    // there until the call returns on its own. SQLCancel(), on the other
+    // hand, is explicitly meant to be invoked from a thread other than the
+    // one blocked inside the driver call, so it is called directly here.
+    if (_queryThread)
+    {
+        QThread *thread = _queryThread;
+        if (thread->isRunning() && QThread::currentThread() != thread)
+        {
+            cancel();
+            thread->wait();
+        }
+        else if (thread->isRunning())
+        {
+            // destructor running on the worker thread itself - nothing to
+            // cancel it from; let it unwind (should not normally happen)
+            thread->quit();
+            thread->wait();
+        }
+        delete thread;
+        _queryThread = nullptr;
+        _queryWorker = nullptr;
+    }
+
     OdbcConnection::close();
     if (_hdbc)
         SQLFreeHandle(SQL_HANDLE_DBC, _hdbc);
@@ -92,6 +119,17 @@ bool OdbcConnection::checkStmt(RETCODE retcode, SQLHSTMT handle)
                             BufErrMsg,
                             sizeof(BufErrMsg),
                             &MsgLen);
+        // SQLGetDiagRec's *TextLengthPtr reports the *full* length that would
+        // be needed, not the truncated length actually copied into
+        // BufErrMsg, whenever the message does not fit the buffer (it still
+        // returns SQL_SUCCESS_WITH_INFO in that case). Trusting it as an
+        // index unconditionally is a one-byte stack buffer overflow the
+        // moment a driver returns a diagnostic message longer than
+        // SQL_MAX_MESSAGE_LENGTH.
+        if (MsgLen < 0)
+            MsgLen = 0;
+        else if (MsgLen >= SQLSMALLINT(sizeof(BufErrMsg)))
+            MsgLen = SQLSMALLINT(sizeof(BufErrMsg) - 1);
         BufErrMsg[MsgLen] = 0;
         if (rc == SQL_NO_DATA)
             break;
@@ -120,6 +158,10 @@ bool OdbcConnection::checkStmt(RETCODE retcode, SQLHSTMT handle)
 
             if (strcmp(SqlState, "08S01") == 0)   // connection broken (first time detected on query execution (SQL_HANDLE_STMT))
             {
+                // Reentrant on purpose: this runs synchronously on whichever
+                // thread is inside execute() right now (the worker thread for
+                // an async query), and close()/open() detect that and skip
+                // the cross-thread stop-and-wait dance - see close().
                 close();
                 if (open())
                     emit message("connection restored\n");
@@ -154,6 +196,11 @@ bool OdbcConnection::check(RETCODE retcode, SQLHANDLE handle, SQLSMALLINT handle
                             BufErrMsg,
                             sizeof(BufErrMsg),
                             &MsgLen);
+        // see the identical comment in checkStmt()
+        if (MsgLen < 0)
+            MsgLen = 0;
+        else if (MsgLen >= SQLSMALLINT(sizeof(BufErrMsg)))
+            MsgLen = SQLSMALLINT(sizeof(BufErrMsg) - 1);
         BufErrMsg[MsgLen] = 0;
         if (rc == SQL_NO_DATA)
             break;
@@ -245,13 +292,40 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
                                   #endif
                                       );
     SQLHSTMT hstmt_local;
-    RETCODE retcode = SQLAllocHandle(SQL_HANDLE_STMT, _hdbc, &hstmt_local);
-    if (!check(retcode, _hdbc, SQL_HANDLE_DBC))
+    RETCODE retcode;
+    bool alloc_ok;
+    {
+        // Allocating a statement handle - and, on failure, reading the DBC's
+        // own diagnostics for it - touches _hdbc directly, so both have to be
+        // serialized against close()/open() the same way PgConnection
+        // serializes against _conn. The blocking SQLExecDirect()/SQLFetch()
+        // calls below run *without* this lock held, unlike PgConnection's
+        // per-call locking around libpq - ODBC gives no way to split a single
+        // SQLExecDirect() into short non-blocking steps, so holding
+        // _connectionGuard for the whole query would make context()/
+        // dbmsInfo() (which also lock it) stall for the query's entire
+        // duration instead of a moment.
+        QMutexLocker lk(&_connectionGuard);
+        retcode = SQLAllocHandle(SQL_HANDLE_STMT, _hdbc, &hstmt_local);
+        alloc_ok = check(retcode, _hdbc, SQL_HANDLE_DBC);
+    }
+    if (!alloc_ok)
         return false;
-    _hstmt = hstmt_local;
+
+    {
+        QMutexLocker lk(&_hstmtGuard);
+        _hstmt = hstmt_local;
+    }
 
     std::unique_ptr<SQLHSTMT, std::function<void(SQLHSTMT*)>> hstmt_guard(&hstmt_local, [this](SQLHSTMT *hstmt)
     {
+        // _hstmtGuard stays held across the free itself: cancel() holds the
+        // same lock for the duration of its SQLCancel() call, so this either
+        // waits for a SQLCancel() already in flight to finish before freeing
+        // the handle out from under it, or - if we get here first - makes
+        // cancel() see a cleared _hstmt and skip the call entirely. Either
+        // way SQLCancel() never touches a freed handle.
+        QMutexLocker lk(&_hstmtGuard);
         _hstmt = nullptr;
         SQLFreeHandle(SQL_HANDLE_STMT, *hstmt);
         setQueryState(QueryState::Inactive);
@@ -539,7 +613,13 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
             else
             {
                 retcode = SQLRowCount(hstmt_local, &cb);
-                if (check(retcode, _hdbc, SQL_HANDLE_DBC) && cb != -1)
+                bool rowcount_ok;
+                {
+                    // only the diagnostics fetch (on failure) touches _hdbc
+                    QMutexLocker lk(&_connectionGuard);
+                    rowcount_ok = check(retcode, _hdbc, SQL_HANDLE_DBC);
+                }
+                if (rowcount_ok && cb != -1)
                     emit message(tr("%1 rows affected").arg(cb));
             }
 
@@ -571,14 +651,32 @@ bool OdbcConnection::executeAsync(const QString &query, const QVector<QVariant> 
     // the lambda outlives this call and runs in another thread, hence the copy:
     // the caller's params may be gone by the time the query starts
     const QVector<QVariant> params_copy = (params ? *params : QVector<QVariant>());
-    QThread* thread = new QThread();
-    connect(thread, &QThread::started, thread, [this, query, thread, params_copy]() {
+
+    // Tracked in _queryThread/_queryWorker - unlike the previous, untracked
+    // QThread, this lets close() and ~OdbcConnection() find out a query is
+    // still running before they touch _hdbc/_henv, exactly as with
+    // PgConnection.
+    QThread *thread = new QThread();
+    QObject *worker = new QObject();
+    worker->moveToThread(thread);
+    _queryThread = thread;
+    _queryWorker = worker;
+
+    connect(thread, &QThread::started, worker, [this, query, params_copy, thread]() {
         execute(query, params_copy.isEmpty() ? nullptr : &params_copy);
         thread->quit();
     });
+    connect(thread, &QThread::finished, worker, &QObject::deleteLater);
     connect(thread, &QThread::finished, this, [this, thread]() {
-        thread->deleteLater();
+        // A newer executeAsync() call may already have replaced _queryThread
+        // by the time this queued slot runs; only clear our own bookkeeping.
+        if (_queryThread == thread)
+        {
+            _queryThread = nullptr;
+            _queryWorker = nullptr;
+        }
         emit queryFinished();
+        thread->deleteLater();
     });
     thread->start();
     return true;
@@ -586,9 +684,16 @@ bool OdbcConnection::executeAsync(const QString &query, const QVector<QVariant> 
 
 bool OdbcConnection::open()
 {
+    // Still a fully synchronous, blocking call, same as PQconnectdb() in
+    // PgConnection::open() - ODBC has no portable non-blocking connect API to
+    // build an openAsync() on top of the way libpq's PQconnectStart() allows.
+    // A slow or unreachable server will still stall whichever thread calls
+    // this (typically the GUI thread, for the first connect - see the wider
+    // review). That is a pre-existing limitation this change does not fix.
+    QMutexLocker lk(&_connectionGuard);
     if (!_hdbc)
         return false;
-    if (isOpened())
+    if (_opened)
         return true;
 
     SQLCHAR szConnStrOut[1024];
@@ -604,19 +709,34 @@ bool OdbcConnection::open()
                                 1024, &swStrLen, SQL_DRIVER_NOPROMPT);
     if (check(retcode, _hdbc, SQL_HANDLE_DBC))
     {
-        _dbmsScriptingID = dbmsName() + dbmsVersion() + "_odbc";
+        _opened = true;
+        // dbmsNameLocked()/dbmsVersionLocked(), not the public getters: we
+        // already hold _connectionGuard here.
+        _dbmsScriptingID = dbmsNameLocked() + dbmsVersionLocked() + "_odbc";
         return true;
     }
+    _opened = false;
     return false;
 }
 
 QString OdbcConnection::dbmsInfo() const noexcept
 {
-    return dbmsName() + " v." + dbmsVersion();
+    // A single lock for both calls - see the comment on execute()'s
+    // SQLAllocHandle() for why this can stall for as long as a concurrently
+    // running query, not just briefly.
+    QMutexLocker lk(&_connectionGuard);
+    return dbmsNameLocked() + " v." + dbmsVersionLocked();
 }
 
 QString OdbcConnection::dbmsName() const noexcept
 {
+    QMutexLocker lk(&_connectionGuard);
+    return dbmsNameLocked();
+}
+
+QString OdbcConnection::dbmsNameLocked() const noexcept
+{
+    // caller must hold _connectionGuard
     QString info;
     if (!_hdbc)
         return info;
@@ -632,6 +752,13 @@ QString OdbcConnection::dbmsName() const noexcept
 
 QString OdbcConnection::dbmsVersion() const noexcept
 {
+    QMutexLocker lk(&_connectionGuard);
+    return dbmsVersionLocked();
+}
+
+QString OdbcConnection::dbmsVersionLocked() const noexcept
+{
+    // caller must hold _connectionGuard
     QString info;
     if (!_hdbc)
         return info;
@@ -693,6 +820,7 @@ bool OdbcConnection::isNumericType(int sqlType) const noexcept
 
 QString OdbcConnection::context() const noexcept
 {
+    QMutexLocker lk(&_connectionGuard);
     if (!_hdbc)
         return "";
 
@@ -731,45 +859,79 @@ QString OdbcConnection::database() const noexcept
 
 void OdbcConnection::close() noexcept
 {
+    // SQLDisconnect() must not run concurrently with an in-flight
+    // SQLExecDirect()/SQLFetch() on the same _hdbc. Unlike PgConnection's
+    // worker, execute() has no event loop of its own to forward a request
+    // into while it is blocked inside a driver call - see the destructor -
+    // so the only safe option here is to ask it to stop and actually wait for
+    // it, rather than trying to run the disconnect "inside" that thread.
+    //
+    // Called reentrantly, from the worker thread itself (checkStmt()'s 08S01
+    // reconnect - see there), there is nothing to stop: this thread *is* the
+    // one currently between driver calls, so it goes straight to closeLocked().
+    QThread *thread = _queryThread;
+    if (thread && thread->isRunning() && QThread::currentThread() != thread)
+    {
+        cancel();
+        thread->wait();
+    }
+
+    QMutexLocker lk(&_connectionGuard);
+    closeLocked();
+}
+
+void OdbcConnection::closeLocked() noexcept
+{
+    // the caller must hold _connectionGuard
+
     // _dbmsScriptingID survives on purpose - see PgConnection::closeLocked()
     clearResultsets();
-    if (!OdbcConnection::isOpened())
+    if (!_hdbc || !_opened)
+    {
+        _opened = false;
         return;
+    }
     SQLDisconnect(_hdbc);
+    _opened = false;
 }
 
 bool OdbcConnection::isOpened() const noexcept
 {
-    if (!_hdbc)
-        return false;
-    SQLINTEGER isConnectionDead;
-    RETCODE retcode = SQLGetConnectAttr(_hdbc,
-                                        SQL_ATTR_CONNECTION_DEAD,
-                                        &isConnectionDead,
-                                        sizeof(isConnectionDead),
-                                        nullptr);
-    if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO)
-        return !isConnectionDead;
-    return false;
+    // Lock-free on purpose - see the comment on _opened in the header, and
+    // PgConnection::isOpened() for the underlying reasoning: this is called
+    // from the tree's paint routine and the status bar timer, and must never
+    // block on _connectionGuard (which a running query can hold for its
+    // entire duration) nor make a fresh ODBC call of its own.
+    return _opened;
 }
 
 void OdbcConnection::cancel() noexcept
 {
-    SQLHSTMT hstmt_local = _hstmt;
-    if (_query_state == QueryState::Running)
-    {
-        setQueryState(QueryState::Cancelling);
-        emit message(tr("cancelling..."));
+    if (_query_state != QueryState::Running)
+        return;
 
-        QThread* thread = new QThread;
-        connect(thread, &QThread::started, this, [this, hstmt_local]() {
-            checkStmt(SQLCancel(hstmt_local), hstmt_local);
-        });
-        connect(thread, &QThread::finished, [thread]() {
-            thread->deleteLater();
-        });
-        thread->start();
-    }
+    setQueryState(QueryState::Cancelling);
+    emit message(tr("cancelling..."));
+
+    // SQLCancel() is explicitly meant to be called, without any locking of
+    // its own, from a thread other than the one blocked inside the driver
+    // call it targets - no separate QThread is needed just to make this call,
+    // unlike PgConnection::cancel() reaching into libpq's own cancel API
+    // through a temporary handle. _hstmtGuard here is not about serializing
+    // with the running query - it is about _hstmt's *lifetime*: it stops
+    // execute() from freeing the handle while SQLCancel() is still using it
+    // (see the hstmt_guard lambda in execute()), and makes this a safe no-op
+    // if the query has already finished and freed it.
+    //
+    // check(), not checkStmt(): checkStmt()'s 08S01 branch calls close(),
+    // which - seeing this same thread's SQLCancel() in flight from a
+    // *different* thread than the worker - would call cancel() again to stop
+    // it, and that recursive call would deadlock trying to re-lock
+    // _hstmtGuard against itself. Nothing here needs the auto-reconnect
+    // check() skips, either.
+    QMutexLocker lk(&_hstmtGuard);
+    if (_hstmt)
+        check(SQLCancel(_hstmt), _hstmt, SQL_HANDLE_STMT);
 }
 
 /*

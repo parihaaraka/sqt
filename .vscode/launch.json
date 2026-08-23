@@ -1,0 +1,136 @@
+{
+    "version": "0.2.0",
+    // Debugging goes through cpptools' gdb adapter: its IntelliSense is off
+    // (clangd does that job), but the debug adapter is the reason the
+    // extension stays installed.
+    "configurations": [
+        {
+            "name": "sqt (gdb)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/vscode/sqt",
+            "args": [],
+            "stopAtEntry": false,
+            // Deliberately the build directory, not the source root: decor/
+            // and scripts/ are symlinked next to the binary there (see the
+            // POST_BUILD step in CMakeLists.txt), and ResourceLocator looks
+            // beside the executable first. Starting anywhere else gives an
+            // app with no icons and no tree scripts.
+            "cwd": "${workspaceFolder}/build/vscode",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Pretty-print std:: containers",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    // Qt raises and catches SIGSTOP/SIGTRAP-ish signals of its
+                    // own in places; nothing to stop the session for.
+                    "description": "Do not stop on SIG32/SIG33 (used by the runtime)",
+                    "text": "handle SIG32 SIG33 nostop noprint pass",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "build",
+            "internalConsoleOptions": "neverOpen"
+        },
+        {
+            // Same, without rebuilding first - for when the binary is known
+            // good and the point is to reproduce something quickly.
+            "name": "sqt (gdb, no rebuild)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/vscode/sqt",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build/vscode",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Pretty-print std:: containers",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "internalConsoleOptions": "neverOpen"
+        },
+        {
+            // One unit test binary, picked when the session starts. The names
+            // are the ones tests/CMakeLists.txt registers with sqt_add_test().
+            "name": "unit test (gdb, pick one)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/vscode/tests/tst_${input:testName}",
+            // -v2 prints each QVERIFY/QCOMPARE as it runs, which is what one
+            // usually wants when attaching a debugger to a failing test.
+            "args": [
+                "-v2"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build/vscode/tests",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Pretty-print std:: containers",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "build",
+            "internalConsoleOptions": "openOnSessionStart"
+        },
+        {
+            // For a throwaway harness from tmp/ built by hand (see the
+            // "standalone harnesses" recipe in the project notes). Asks for
+            // the path so that no single hard-coded name goes stale.
+            "name": "tmp harness (gdb, pick binary)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/tmp/${input:harnessName}",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/tmp",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Pretty-print std:: containers",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "internalConsoleOptions": "openOnSessionStart"
+        }
+    ],
+    "inputs": [
+        {
+            "id": "testName",
+            "type": "pickString",
+            "description": "Which unit test to debug",
+            "options": [
+                "scriptversionfilter",
+                "decimalsum",
+                "resourcelocator",
+                "queryoptions",
+                "sqlparser",
+                "textcodec",
+                "pgtypmod"
+            ],
+            "default": "sqlparser"
+        },
+        {
+            "id": "harnessName",
+            "type": "promptString",
+            "description": "Harness binary under tmp/ (e.g. mytest)",
+            "default": ""
+        }
+    ]
+}

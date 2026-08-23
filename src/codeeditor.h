@@ -154,6 +154,17 @@ private:
     // caret rendering is handled for every active cursor using the same
     // QTextLayout geometry as Qt's own renderer.
     bool _overwriteMode = false;
+
+    // Raised by insertFromMimeData() when it distributed a paste across
+    // several cursors itself. keyPressEvent() checks it right after handing
+    // the key to QPlainTextEdit (Ctrl+V / Shift+Insert arrive that way): the
+    // edit did not go through Qt's single native cursor, so the single-cursor
+    // tail there must be skipped entirely - syncFromNativeCursor() would
+    // collapse the whole set back to one cursor (making a second paste
+    // impossible without recreating every cursor by hand), and the undo
+    // history reset would drop the snapshot the paste has just recorded.
+    bool _multiPasteHandled = false;
+
     QCompleter *_completer = nullptr;
     MultiTextCursor _multiCursor;
     int _nativeCursorWidth = 1;

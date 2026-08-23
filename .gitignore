@@ -2,12 +2,10 @@ __*
 tmp
 *.pro.user*
 .qtcreator
+.gigacode*
+.clinerules
 .cache
 build*/
-# The vcpkg checkout and the tree it installs into. Not vcpkg.json, which is
-# ours and is tracked.
 /vcpkg/
 /vcpkg_installed/
 
-.gigacode*
-.clinerules

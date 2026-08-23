@@ -251,8 +251,14 @@ void CodeEditor::syncToNativeCursor()
         // anyway, on its own blink cycle - so with several cursors, take
         // overwrite fully into our own hands and keep Qt's flag off.
         setOverwriteMode(false);
-        if (!_caretBlinkTimer->isActive())
-            _caretBlinkTimer->start();
+        // Solid right now, blinking only from here on - the same rule
+        // resetCaretBlink() applies to keyboard activity. Unconditionally, and
+        // *not* "only if the timer is idle": a cursor added while the blink
+        // cycle happens to be in its off half would otherwise stay invisible
+        // for up to half a flash interval, which reads as Alt+Click having
+        // done nothing. start() restarts a running timer.
+        _caretBlinkVisible = true;
+        _caretBlinkTimer->start();
     }
     else
     {
@@ -587,6 +593,16 @@ void CodeEditor::applyReturnWithIndent(QTextCursor &c)
 {
     QTextDocument *doc = c.document();
 
+    // Everything this function touches - dropping the selection, trimming
+    // whitespace on both sides of the split point, inserting the new line
+    // with its indentation - is one logical Enter and has to be undone by a
+    // single Ctrl+Z. Nesting inside MultiTextCursor::editBlock's own block
+    // (the several-cursors path) is fine: Qt counts edit blocks and only the
+    // outermost one closes the undo command. It also remembers the caret
+    // position from the start of that top-level block, so undo puts the
+    // caret back where Enter was pressed.
+    c.beginEditBlock();
+
     // previous indentation
     c.removeSelectedText();
     QRegularExpression indentRegex("(^\\s*)(?=[^\\s\\r\\n]+)");
@@ -611,8 +627,30 @@ void CodeEditor::applyReturnWithIndent(QTextCursor &c)
         }
     }
 
+    // grab the indentation before the document is modified any further
+    // (a null cursor yields an empty string, which is exactly what we want)
+    const QString indent = prevC.selectedText();
+
+    // Nothing but whitespace is left of the line being abandoned - typically
+    // an auto-indented line that was never typed into, followed by another
+    // Enter - so take that leftover indentation along instead of leaving a
+    // line of invisible trailing spaces behind. It is *selected* rather than
+    // deleted on its own, so the insertion below replaces it in one step.
+    const int blockStart = c.block().position();
+    const int pos = c.position();
+    bool indentOnlyLeft = (pos > blockStart);
+    for (int p = blockStart; indentOnlyLeft && p < pos; ++p)
+    {
+        QChar ch = doc->characterAt(p);
+        indentOnlyLeft = (ch == QLatin1Char(' ') || ch == QLatin1Char('\t'));
+    }
+    if (indentOnlyLeft)
+        c.setPosition(blockStart, QTextCursor::KeepAnchor);
+
     // insert indentation
-    c.insertText("\n" + prevC.selectedText());
+    c.insertText("\n" + indent);
+
+    c.endEditBlock();
 }
 
 void CodeEditor::applyHome(QTextCursor &c, bool keepAnchor)
@@ -1397,7 +1435,29 @@ void CodeEditor::keyPressEvent(QKeyEvent *e)
     int prevRevision = document()->revision();
     QTextCursor prevCursor = textCursor();
     int prevPos = prevCursor.position();
+    // Cleared before the call, not after, so a paste performed through some
+    // other route (context menu, drop) can never leave the flag raised and
+    // have it mistaken for a paste done by *this* key press.
+    _multiPasteHandled = false;
     QPlainTextEdit::keyPressEvent(e);
+
+    // Ctrl+V / Shift+Insert reach QPlainTextEdit, which routes them to our
+    // insertFromMimeData(). With several cursors that override does the whole
+    // job itself - edits through every cursor, re-syncs the native one and
+    // records its own undo snapshot - so none of the single-cursor
+    // bookkeeping below applies: syncFromNativeCursor() would collapse the
+    // set to one cursor, and the undo history reset would discard the
+    // snapshot needed to restore the set on Ctrl+Z.
+    if (_multiPasteHandled)
+    {
+        _multiPasteHandled = false;
+        // Its prefix tracking below assumes a single cursor; nothing sane to
+        // show after text landed at several places at once.
+        if (_completer && _completer->popup()->isVisible())
+            _completer->popup()->hide();
+        return;
+    }
+
     QTextCursor afterCursor = textCursor();
     int newPos = afterCursor.position();
 
@@ -1460,10 +1520,28 @@ void CodeEditor::insertFromMimeData(const QMimeData *source)
         return;
     }
 
+    // Normalize line endings before splitting anything: text put on the
+    // clipboard by another application may use CRLF (or even a bare CR), and
+    // QTextCursor::insertText() turns a lone '\r' into a block separator - so
+    // a one-line-per-cursor distribution built with a plain split('\n') would
+    // leave a trailing '\r' on every line and insert a stray line break at
+    // every cursor.
+    QString pasted = source->text();
+    pasted.replace(QLatin1String("\r\n"), QLatin1String("\n"));
+    pasted.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+
     // Multi-cursor paste: if the clipboard has exactly as many lines as
     // there are cursors, distribute one line per cursor (top-to-bottom),
     // like VS Code. Otherwise paste the whole text into every cursor.
-    QStringList lines = source->text().split('\n');
+    QStringList lines = pasted.split(QLatin1Char('\n'));
+
+    // Whole lines copied elsewhere come with the last one's newline still
+    // attached, which split() reports as an extra empty trailing part. Drop
+    // it when doing so is exactly what makes N copied lines match N cursors,
+    // instead of falling back to "the whole blob into every cursor".
+    if (lines.size() == _multiCursor.count() + 1 && lines.constLast().isEmpty())
+        lines.removeLast();
+
     bool perCursor = (lines.size() == _multiCursor.count());
 
     QVector<int> ascending = cursorsOrderedByPosition();
@@ -1480,7 +1558,7 @@ void CodeEditor::insertFromMimeData(const QMimeData *source)
     for (int i : std::as_const(order))
     {
         QTextCursor &c = _multiCursor.cursors()[i];
-        QString t = perCursor ? lines[lineForCursor[i]] : source->text();
+        QString t = perCursor ? lines[lineForCursor[i]] : pasted;
         if (c.hasSelection())
             c.removeSelectedText();
         c.insertText(t);
@@ -1489,7 +1567,13 @@ void CodeEditor::insertFromMimeData(const QMimeData *source)
     _multiCursor.mergeOverlapping();
 
     syncToNativeCursor();
+    ensureCursorVisible();
     recordMultiEditUndo(preState);
+
+    // Tell keyPressEvent() (Ctrl+V / Shift+Insert get here through
+    // QPlainTextEdit::keyPressEvent) that the whole edit was done here, so it
+    // skips its single-cursor tail - see _multiPasteHandled.
+    _multiPasteHandled = true;
 }
 
 namespace
@@ -1750,7 +1834,17 @@ void CodeEditor::mousePressEvent(QMouseEvent *event)
     if (event->button() == Qt::LeftButton && event->modifiers().testFlag(Qt::AltModifier))
     {
         _multiCursor.addCursor(cursorForPosition(event->pos()));
-        //syncToNativeCursor();
+        // Not optional, and not just bookkeeping. Adding a cursor flips
+        // paintEvent() over to the multi-cursor path, which suppresses Qt's
+        // native caret and paints every caret itself off _caretBlinkTimer.
+        // Without this call nothing starts that timer and nothing repaints the
+        // viewport, so: the caret just added stays invisible (Qt's own blink
+        // timer only ever repaints the *native* caret's rect, not the place
+        // that was clicked), and the carets already on screen freeze solid -
+        // until some later action (an arrow key, typing, an Alt+drag) syncs on
+        // its own. It also applies the cursorWidth(0)/overwrite handling that
+        // the multi-cursor state relies on.
+        syncToNativeCursor();
         event->accept();
         return;
     }

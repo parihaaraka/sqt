@@ -1,0 +1,146 @@
+{
+    // ------------------------------------------------------------------
+    // Where VS Code builds.
+    //
+    // build/ is not a build directory, it *contains* them, one per IDE:
+    //
+    //   build/Desktop_Qt_6_10_1-*   QtCreator
+    //   build/Clang_17-*            QtCreator
+    //   build/vscode                this one
+    //
+    // The setting matters more than it looks: cmake.buildDirectory defaults
+    // to ${workspaceFolder}/build, so with cmake.configureOnOpen (on by
+    // default, and on in the user settings too) CMake Tools used to
+    // configure straight into the root of build/ and scatter a CMakeCache,
+    // build.ninja and compile_commands.json among the per-IDE folders.
+    // ------------------------------------------------------------------
+    "cmake.buildDirectory": "${workspaceFolder}/build/vscode",
+    "cmake.generator": "Ninja",
+    "cmake.configureSettings": {
+        // The compile database clangd reads. Not optional here: without it
+        // the whole setup below has nothing to work from.
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+    },
+    // There are no CMakePresets.json in the project (the ones under
+    // .qtcreator/ are QtCreator's own), so drive plain cmake and do not let
+    // the extension look for presets.
+    "cmake.useCMakePresets": "never",
+    "cmake.configureOnOpen": true,
+    // The status bar's launch/debug target. Run from the build directory:
+    // decor/ and scripts/ are symlinked next to the binary there, so the app
+    // runs against the live scripts of this tree.
+    "cmake.launchBehavior": "reuseTerminal",
+
+    // ------------------------------------------------------------------
+    // IntelliSense: clangd only.
+    //
+    // Two C++ engines over one project means every mistake is reported
+    // twice and every disagreement between them looks like a third error.
+    // cpptools stays installed - it provides the gdb debug adapter that
+    // launch.json uses - but its IntelliSense is off.
+    // ------------------------------------------------------------------
+    "C_Cpp.intelliSenseEngine": "disabled",
+    "C_Cpp.autocomplete": "disabled",
+    "C_Cpp.formatting": "disabled",
+    "C_Cpp.errorSquiggles": "disabled",
+    // ... and clangd should stop offering to disable cpptools, which is
+    // exactly what we do not want done for us.
+    "clangd.detectExtensionConflicts": false,
+
+    "clangd.arguments": [
+        // This is what teaches clangd about Qt: every -isystem of every Qt
+        // module, the QT_*_LIB defines, the include path of the generated
+        // ui_*.h / moc_*.cpp, libpq and unixODBC - all of it comes from the
+        // compile database, so nothing has to be listed by hand here and
+        // nothing goes stale when CMakeLists.txt changes.
+        //
+        // Spelled out rather than left to the automatic search, which walks
+        // up from the file and takes the first compile_commands.json it
+        // meets - for a while that was a stale one in the root of build/.
+        //
+        // For clangd started outside VS Code (a bare `clangd`, another
+        // editor) there is also build/compile_commands.json, a symlink to
+        // vscode/compile_commands.json. A symlink rather than a copy so it
+        // cannot go stale; recreate it with
+        //   ln -sfn vscode/compile_commands.json build/compile_commands.json
+        "--compile-commands-dir=${workspaceFolder}/build/vscode",
+        // Cross-file navigation and rename over the whole project. The
+        // index lands in .cache/clangd/ (already gitignored).
+        "--background-index",
+        "--all-scopes-completion",
+        "--completion-style=detailed",
+        // The build is gcc; ask the real driver for its system include
+        // paths and predefined macros instead of assuming clang's. This is
+        // what keeps libstdc++ headers from producing phantom errors.
+        "--query-driver=/usr/bin/g++*,/usr/bin/c++,/usr/bin/gcc*,/usr/bin/cc",
+        // src/ is flat and the Qt-style includes (<QWidget>) are not
+        // something to be guessed at by an editor: no include is ever added
+        // silently on completion.
+        "--header-insertion=never",
+        "--pch-storage=memory",
+        "--limit-results=200"
+    ],
+    "clangd.onConfigChanged": "restart",
+
+    // Header/source pairs live side by side in the flat src/, so the
+    // switch-header-source command needs no hints.
+    "[cpp]": {
+        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+    },
+    "[c]": {
+        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+    },
+
+    // ------------------------------------------------------------------
+    // File types this project uses that VS Code cannot guess.
+    // ------------------------------------------------------------------
+    "files.associations": {
+        // The highlighting dictionaries are json with comments and tabs.
+        // Written as full-path globs: there is one hl.conf per dbms
+        // (scripts/postgres/, scripts/odbc/<driver>/), and a pattern with no
+        // slash in it is the one case where the matching rules differ
+        // between VS Code versions.
+        "**/hl.conf": "jsonc",
+        "**/hl_json.conf": "jsonc",
+        // Qt Designer forms and resource files are xml.
+        "*.ui": "xml",
+        "*.qrc": "xml",
+        "*.rc": "plaintext"
+    },
+
+    // ------------------------------------------------------------------
+    // Noise control. The four build directories together hold tens of
+    // thousands of object files, and .cache/clangd is a binary index;
+    // searching or watching them is pure cost.
+    //
+    // files.exclude is deliberately left alone: tmp/ and build/ stay
+    // visible in the explorer, they just do not turn up in search results.
+    // ------------------------------------------------------------------
+    "search.exclude": {
+        "**/build/**": true,
+        "**/.cache/**": true,
+        "**/tmp/**": true,
+        "**/vcpkg/**": true,
+        "**/vcpkg_installed/**": true,
+        "**/.qtcreator/**": true
+    },
+    "files.watcherExclude": {
+        "**/build/**": true,
+        "**/.cache/**": true,
+        "**/tmp/**": true,
+        "**/vcpkg/**": true,
+        "**/vcpkg_installed/**": true,
+        "**/.qtcreator/**": true
+    },
+
+    // The project's own style, as the existing sources are written.
+    "editor.insertSpaces": true,
+    "editor.tabSize": 4,
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    // ... except in the SQL scripts, where trailing layout is sometimes
+    // meaningful to the reader and the diffs are the user's own.
+    "[sql]": {
+        "files.trimTrailingWhitespace": false
+    }
+}

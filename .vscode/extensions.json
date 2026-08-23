@@ -1,0 +1,15 @@
+{
+    "recommendations": [
+        // The C++ language server. Reads build/vscode/compile_commands.json,
+        // which is where the knowledge of Qt comes from.
+        "llvm-vs-code-extensions.vscode-clangd",
+        // Configure/build/test from the status bar, into build/vscode.
+        "ms-vscode.cmake-tools",
+        // Kept for its gdb debug adapter (launch.json), not for IntelliSense:
+        // that is switched off in settings.json so the two servers do not
+        // both report the same code twice.
+        "ms-vscode.cpptools",
+        "twxs.cmake"
+    ],
+    "unwantedRecommendations": []
+}
