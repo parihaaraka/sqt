@@ -65,6 +65,11 @@ public:
     bool isModified() const;
     void setModified(bool m = true);
     void setTextCursor(const QTextCursor &cursor);
+    /// Marks a range as "the place you were sent to" (a file search hit) in the
+    /// underlying editor, if it is a code editor. See CodeEditor::setMatchHighlight -
+    /// the point is a mark that stays visible while the focus is in the results tree.
+    void setMatchHighlight(const QTextCursor &range, const QColor &color = QColor());
+    void clearMatchHighlight();
     QString toPlainText();
     QTextCursor textCursor() const;
     QTextDocument* document() const;

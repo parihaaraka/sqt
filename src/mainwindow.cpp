@@ -145,8 +145,9 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->actionSave_as->setShortcuts(QKeySequence::SaveAs);
     ui->actionFind->setShortcuts(QKeySequence::Find);
 
-    // Ctrl+E opens an editor tab for whatever is current: a file when the search
-    // panel has the focus, the tree's object otherwise.
+    // Ctrl+E opens an editor tab for whatever is current: the previewed file
+    // when the focus is in the preview pane, the search's file when the focus is
+    // in the search panel, the tree's object otherwise.
     QAction *editAction = new QAction(this);
     editAction->setShortcut({"Ctrl+E"});
     connect(editAction, &QAction::triggered, this, [this]() {
@@ -158,6 +159,16 @@ MainWindow::MainWindow(QWidget *parent) :
         {
             if (const auto hit = _searchPanel->currentHit())
                 openFileHitInEditor(*hit);
+            return;
+        }
+        // Reading the found place in the pane and pressing Ctrl+E means "let me
+        // edit this" - the file on screen, at the line being read. The pane is
+        // not part of the search panel (it is the object content pane, borrowed
+        // for the preview), so without this the key opened the script of a tree
+        // node on a tab nobody was looking at.
+        if (_paneHit && fw && (fw == _objectScript || _objectScript->isAncestorOf(fw)))
+        {
+            openPaneFileInEditor();
             return;
         }
         on_actionNew_triggered();
@@ -189,6 +200,16 @@ MainWindow::MainWindow(QWidget *parent) :
                 buffers.insert(QFileInfo(w->fileName()).absoluteFilePath(), w->toPlainText());
         }
         return buffers;
+    });
+
+    // The content pane shows what the left pane's current tab points at, so
+    // switching tabs takes the pane along: the results of a file search next to
+    // the script of a database object nobody has selected read as one thing.
+    // Only while that pane is the visible one, though - Ctrl+Shift+F pressed in
+    // an editor tab must leave the editor on screen until a hit is chosen.
+    connect(ui->objectsTab, &QTabWidget::currentChanged, this, [this](int) {
+        if (ui->contentSplitter->isVisible())
+            refreshContentPane();
     });
 
     _frPanel = new FindAndReplacePanel();
@@ -758,7 +779,7 @@ void MainWindow::viewModeActionTriggered(QAction *action)
     refreshConnectionState();
     setUpdatesEnabled(true);
     if (ui->tabWidget->isHidden())
-        scriptSelectedObjects();
+        refreshContentPane();
     else if (ui->tabWidget->currentWidget())
         ui->tabWidget->currentWidget()->setFocus();
 }
@@ -1289,6 +1310,10 @@ void MainWindow::scriptSelectedObjects()
 {
     //if (!_objectScript->isVisible() && !ui->tableView->isVisible())
     //    return;
+    // From here on the pane belongs to a tree node, not to a file: Ctrl+E in it
+    // means "the node's script" again, and refreshContentPane() has nothing to
+    // rebuild.
+    _paneHit.reset();
     _tableModel->clear();
     QModelIndex srcIndex =
             static_cast<QSortFilterProxyModel*>(ui->objectsView->model())->
@@ -1417,6 +1442,12 @@ void MainWindow::showContent(QModelIndex &index, const Scripting::CppConductor *
      * We use first non-empty thing in the following order:
      * sql script -> html -> last resultset
      */
+
+    // Whatever the pane held, it is a tree node's content from here on. Not only
+    // scriptSelectedObjects() ends up here - Disconnect clears the pane through
+    // this function directly - and a stale file left remembered would send
+    // Ctrl+E to a file nobody is looking at.
+    _paneHit.reset();
 
     _objectScript->clear();
     _tableModel->clear();
@@ -1801,11 +1832,19 @@ void MainWindow::on_actionFind_in_files_triggered()
         if (srcIndex.isValid())
             con = _objectsModel->dbConnection(srcIndex);
     }
-    // Kept weakly: this is a borrowed link, and holding a strong reference here
-    // would keep a backend busy for as long as the window lives.
+    // A clone of its own, not the borrowed link: the original belongs to a tree
+    // node or to a tab, either of which may be gone by the next search, and the
+    // search would then have no dbms left to highlight or open a file with (see
+    // the member's comment). Nothing is opened here - a clone knows its dbms
+    // without a link - so this costs no backend.
     if (con)
     {
-        _searchConnection = con;
+        _searchConnection.reset(con->clone());
+        // Its own object, so its own reports; the log, since a file search has
+        // no messages pane of its own and none of this is a query's result.
+        connect(_searchConnection.get(), &DbConnection::error, this, &MainWindow::onError);
+        connect(_searchConnection.get(), &DbConnection::message, this, &MainWindow::onMessage);
+        con = _searchConnection;
         // Each connection has its own root folder, and switching to this one
         // brings its folder back. Done before the panel is shown, so that the
         // path field is already right when it appears.
@@ -1851,7 +1890,8 @@ void MainWindow::on_actionFind_in_files_triggered()
     _searchPanel->activateSearchField();
 }
 
-void MainWindow::gotoFilePosition(QueryWidget *w, int line, int column, int length)
+void MainWindow::gotoFilePosition(QueryWidget *w, int line, int column, int length,
+                                  const QColor &matchColor)
 {
     QPlainTextEdit *ed = qobject_cast<QPlainTextEdit*>(w->editor());
     if (!ed)
@@ -1859,7 +1899,12 @@ void MainWindow::gotoFilePosition(QueryWidget *w, int line, int column, int leng
 
     QTextBlock block = ed->document()->findBlockByNumber(line - 1);
     if (!block.isValid())
+    {
+        // A stale line number: whatever the pane marked before is not the place
+        // asked for, and leaving the old mark behind would be a lie.
+        w->clearMatchHighlight();
         return;
+    }
 
     QTextCursor c(block);
     // Column and length come from the same normalized text the search read, so
@@ -1877,6 +1922,17 @@ void MainWindow::gotoFilePosition(QueryWidget *w, int line, int column, int leng
     // centerCursor() rather than ensureCursorVisible(): the point of the jump is
     // to see the match in its surroundings, not pinned to the last line.
     ed->centerCursor();
+
+    // The selection alone is not enough to show where the match is. The pane
+    // keeps no focus (the results tree has it, and that is the point - the
+    // arrows keep walking the hits), so the selection is painted from the
+    // palette's Inactive group, which in most themes is a grey barely different
+    // from the background. The mark below is painted by the editor itself, in a
+    // colour of our choosing, and does not care about the focus.
+    if (c.hasSelection())
+        w->setMatchHighlight(c, matchColor);
+    else
+        w->clearMatchHighlight();
 }
 
 void MainWindow::previewFileHit(const FileSearchHit &hit, bool focusPane)
@@ -1928,15 +1984,47 @@ void MainWindow::previewFileHit(const FileSearchHit &hit, bool focusPane)
     // that was current when the search was invoked.
     _tableModel->clear();
     ui->tableView->hide();
-    showTextualContent(text, "script", _searchConnection.lock());
+    showTextualContent(text, "script", _searchConnection);
     // The title bar has no room for this, so the file the pane is showing is
     // named in the status bar - it is not obvious from the text itself.
     ui->statusBar->showMessage(QString("%1:%2").arg(
                                    QDir::toNativeSeparators(hit.fileName)).arg(hit.line), 5000);
 
-    gotoFilePosition(_objectScript, hit.line, hit.column, hit.length);
+    // The tree's own match colour, so that the highlighted fragment in the
+    // results and the marked place in the pane are visibly the same thing.
+    gotoFilePosition(_objectScript, hit.line, hit.column, hit.length,
+                     _searchPanel ? _searchPanel->matchColor() : QColor());
     if (focusPane)
         _objectScript->setFocus();
+
+    // What the pane is showing now - Ctrl+E in it opens this very file, and a
+    // switch back to the tree knows the pane has to be rebuilt.
+    _paneHit = hit;
+}
+
+void MainWindow::refreshContentPane()
+{
+    // Which of the left pane's tabs is up decides what the pane shows. F2 used
+    // to call scriptSelectedObjects() outright, so switching to the content view
+    // while the search results were on screen put the script of a database
+    // object nobody had selected there - and the found place, which is what the
+    // key was pressed for, was nowhere to be seen.
+    if (_searchPanel && ui->objectsTab->currentWidget() == ui->searchPage)
+    {
+        if (const auto hit = _searchPanel->currentHit())
+            previewFileHit(*hit, false);
+        // No results yet, or nothing selected among them: the pane is left as it
+        // is. Clearing it would throw away a preview that is still worth reading,
+        // and the tree's object has no business appearing here either.
+        return;
+    }
+    // Back on the tree. The node's script is rebuilt only if a file has taken
+    // the pane over in the meantime - rerunning the content script on every tab
+    // switch would reopen the link that selecting the node has just released.
+    if (!_paneHit)
+        return;
+    _paneHit.reset();
+    scriptSelectedObjects();
 }
 
 void MainWindow::openFileHitInEditor(const FileSearchHit &hit)
@@ -1985,9 +2073,16 @@ void MainWindow::openFileHitInEditor(const FileSearchHit &hit)
 
     // A tab of its own, on a clone of the search's connection - the tab must be
     // able to run what it shows, and against the database the script belongs to.
-    auto con = _searchConnection.lock();
-    QueryWidget *w = (con && (con->isOpened() || !con->database().isEmpty()) ?
-                          new QueryWidget(con->clone(), ui->tabWidget) :
+    //
+    // A remembered connection is handed over whatever its socket is doing. The
+    // former test (opened, or a database already chosen) left a tab with no
+    // connection at all whenever the link had dropped in the meantime, and such
+    // a tab has no dbms: no keyword dictionary (the "emergency" colouring), no
+    // database button, no way to reconnect. The clone carries the connection
+    // string, the database and the dbms identity, so it highlights straight away
+    // and its first query opens the link by itself.
+    QueryWidget *w = (_searchConnection ?
+                          new QueryWidget(_searchConnection->clone(), ui->tabWidget) :
                           new QueryWidget(ui->tabWidget));
 
     // Connected before the file is read: openFile() reports its failure through
@@ -2021,5 +2116,30 @@ void MainWindow::openFileHitInEditor(const FileSearchHit &hit)
         ui->actionQuery_editor->activate(QAction::Trigger);
     gotoFilePosition(w, hit.line, hit.column, hit.length);
     w->setFocus();
+}
+
+void MainWindow::openPaneFileInEditor()
+{
+    if (!_paneHit)
+        return;
+
+    // The pane's own cursor, not the hit the preview was opened at: the file has
+    // been read since, and the place under the cursor is the place the editor is
+    // wanted for. A selection is carried over as it stands (its start and its
+    // length), so a match just walked onto stays selected in the tab.
+    FileSearchHit hit = *_paneHit;
+    QTextCursor c = _objectScript->textCursor();
+    if (!c.isNull())
+    {
+        const int start = qMin(c.position(), c.anchor());
+        const QTextBlock block = _objectScript->document()->findBlock(start);
+        if (block.isValid())
+        {
+            hit.line = block.blockNumber() + 1;
+            hit.column = start - block.position() + 1;
+            hit.length = (c.hasSelection() ? qAbs(c.position() - c.anchor()) : 0);
+        }
+    }
+    openFileHitInEditor(hit);
 }
 

@@ -49,6 +49,17 @@ public:
     bool hasMultipleCursors() const { return _multiCursor.isMultiple(); }
     void collapseToSingleCursor();
 
+    /// Marks \a range as "the place you were sent to" - a file search hit, in
+    /// practice. Deliberately not the text cursor's selection: Qt paints that
+    /// with the palette's Inactive group whenever the widget has no focus, and
+    /// browsing the results keeps the focus in the tree, so on a dark Windows
+    /// theme the selection is invisible exactly when it matters. This is our own
+    /// ExtraSelection with explicit colours, so it looks the same focused or not.
+    /// \a color is the hue to paint it with (the results tree's match colour, so
+    /// that the two agree); an invalid one falls back to the palette.
+    void setMatchHighlight(const QTextCursor &range, const QColor &color = QColor());
+    void clearMatchHighlight();
+
 protected:
     void resizeEvent(QResizeEvent *event) override;
     virtual bool eventFilter(QObject *object, QEvent *event) override;
@@ -71,7 +82,11 @@ private:
     QList<QTextEdit::ExtraSelection> matchBracket(QString &docContent, const QTextCursor &selectedBracket, int darkerFactor = 100) const;
     QList<QTextEdit::ExtraSelection> currentLineSelection() const;
     QList<QTextEdit::ExtraSelection> multiCursorSelections() const;
-    QList<QTextEdit::ExtraSelection> baseExtraSelections() const; // currentLineSelection() + multiCursorSelections(), used in 3 places
+    /// Whether marking the occurrences of \a selectedText still makes sense:
+    /// with several cursors it does only while they all hold that same word.
+    bool multiCursorSharesSelection(const QString &selectedText) const;
+    QList<QTextEdit::ExtraSelection> matchHighlightSelections() const; // the "sent here" mark, if any
+    QList<QTextEdit::ExtraSelection> baseExtraSelections() const; // match + current line + multi-cursor, used in 3 places
     bool isEnveloped(int pos) const;
     int indentSize() const; // small wrapper so the setting key/default lives in one place
 
@@ -168,6 +183,12 @@ private:
     QCompleter *_completer = nullptr;
     MultiTextCursor _multiCursor;
     int _nativeCursorWidth = 1;
+
+    // The "sent here" mark (see setMatchHighlight). A cursor with a selection
+    // when active, its colour alongside; kept in baseExtraSelections() so it
+    // survives every rehighlight, which rebuilds the selection list from scratch.
+    QTextCursor _matchHighlight;
+    QColor _matchHighlightColor;
 
 signals:
     void completerRequest();

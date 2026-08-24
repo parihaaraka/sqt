@@ -1,7 +1,9 @@
 #include "filesearchpanel.h"
 #include "filesearchmodel.h"
 #include "settings.h"
+#include "styling.h"
 #include "textcodec.h"
+
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
@@ -214,6 +216,12 @@ void FileSearchPanel::buildUi()
     _model = new FileSearchModel(this);
     _results->setModel(_model);
     _results->installEventFilter(this);
+    // The row stays selected while the focus moves to the preview pane or to an
+    // editor tab, and some themes paint that unfocused selection nearly the
+    // colour of the background - so the place one is looking at gets lost. Kept
+    // in step with the theme by the ApplicationPaletteChange branch of
+    // eventFilter().
+    fixInactiveSelection(_results);
     root->addWidget(_results, 1);
 
     // The preview follows the cursor, exactly as it does in the object tree:
@@ -305,6 +313,11 @@ void FileSearchPanel::setHighlightSettings(const QJsonDocument &settings)
     // The rows on screen were painted with the previous palette.
     if (_model->fileCount())
         _results->viewport()->update();
+}
+
+QColor FileSearchPanel::matchColor() const
+{
+    return _delegate->matchColor();
 }
 
 QStringList FileSearchPanel::historyOf(const QComboBox *combo)
@@ -666,6 +679,15 @@ void FileSearchPanel::showResultsContextMenu(const QPoint &pos)
 
 bool FileSearchPanel::eventFilter(QObject *target, QEvent *event)
 {
+    if (event->type() == QEvent::ApplicationPaletteChange && target == _results)
+    {
+        // The theme has been switched under us, so the correction has to be
+        // recomputed from the new palette (fixInactiveSelection() always starts
+        // from qApp's own one, so this does not stack up).
+        fixInactiveSelection(_results);
+        return false;
+    }
+
     if (event->type() != QEvent::KeyPress)
         return QWidget::eventFilter(target, event);
 

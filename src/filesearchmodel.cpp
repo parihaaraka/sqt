@@ -154,7 +154,7 @@ QVariant FileSearchModel::data(const QModelIndex &index, int role) const
             tip += QObject::tr(" (%n match(es))", "", int(row.marks.size()));
         // <pre> would keep the indentation, but it also refuses to wrap; the
         // snippet has its leading blanks trimmed off already.
-        return tip + "<br/>" + markUp(h.snippet, row.marks,
+        return tip + "<br/><br/>" + markUp(h.snippet, row.marks,
                                       QStringLiteral("<b>"), QStringLiteral("</b>"));
     }
     default:
@@ -340,6 +340,21 @@ void FileSearchItemDelegate::rebuildCss(const QColor &text, const QColor &base) 
             .arg(light.name(), file.name(), match.name());
     _cssText = text;
     _cssBase = base;
+}
+
+QColor FileSearchItemDelegate::matchColor() const
+{
+    // The same derivation the marked text in a row gets, minus the toning down
+    // against a row background: the preview pane paints this as a translucent
+    // background instead of as text, and does its own mixing. What must agree
+    // between the two is the hue, and that is what this returns.
+    const bool dark = isDarkMode();
+    QColor match = hlFormat(_hlSettings["literal"], QVariant(),
+                            dark ? QColor("#bc6") : QColor("#c00"))
+            .foreground().color();
+    if (!match.isValid())
+        match = (dark ? QColor("#bc6") : QColor("#c00"));
+    return match;
 }
 
 void FileSearchItemDelegate::prepareDoc(

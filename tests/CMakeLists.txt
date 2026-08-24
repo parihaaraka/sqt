@@ -35,4 +35,16 @@ sqt_add_test(pgtypmod "${SQT_SRC_DIR}/pgtypmod.cpp")
 # and matching rules are testable; textcodec comes along as it decodes the files
 sqt_add_test(filesearch "${SQT_SRC_DIR}/filesearch.cpp" "${SQT_SRC_DIR}/textcodec.cpp")
 
+# The palette arithmetic behind the unfocused selection is pure computation, so
+# it is worth pinning down. Unlike the rest it does need QtWidgets (it reads a
+# QWidget's palette) and hence a QApplication - so the test runs offscreen, which
+# keeps it usable on a build machine with no display.
+if(TARGET Qt6::Widgets)
+    sqt_add_test(styling "${SQT_SRC_DIR}/styling.cpp")
+    target_link_libraries(tst_styling PRIVATE Qt6::Gui Qt6::Widgets)
+    set_tests_properties(styling PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()
+
+
+
 

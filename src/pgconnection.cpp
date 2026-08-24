@@ -59,6 +59,13 @@ DbConnection *PgConnection::clone()
     PgConnection *res = new PgConnection();
     res->_connection_string = _connection_string;
     res->_database = _database;
+    // The clone talks to the same server, so it names the same script bundle -
+    // and it has to know that before it is opened, exactly as a connection whose
+    // socket has died still knows it (see closeLocked()). Otherwise
+    // Scripting::dbmsScriptPath() opens a link just to ask the server who it is,
+    // and with the server unreachable it throws instead: no scripts, no
+    // highlighting dictionary, an editor tab left with the emergency colouring.
+    res->_dbmsScriptingID = _dbmsScriptingID;
     return res;
 }
 

@@ -57,6 +57,10 @@ public:
     /// without it the colors come from the palette alone.
     void setHighlightSettings(const QJsonDocument &settings);
 
+    /// The hue the results tree marks a match with, for the preview pane to mark
+    /// the same hit with. See FileSearchItemDelegate::matchColor.
+    QColor matchColor() const;
+
     void loadSettings();
     void saveSettings();
 

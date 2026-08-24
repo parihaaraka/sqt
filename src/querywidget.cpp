@@ -417,6 +417,20 @@ void QueryWidget::setTextCursor(const QTextCursor &cursor)
         rich->setTextCursor(cursor);
 }
 
+void QueryWidget::setMatchHighlight(const QTextCursor &range, const QColor &color)
+{
+    // Only a CodeEditor carries the mark; the html browser used for object
+    // content has no such notion, and a file preview is always the former.
+    if (CodeEditor *ed = qobject_cast<CodeEditor*>(_editor))
+        ed->setMatchHighlight(range, color);
+}
+
+void QueryWidget::clearMatchHighlight()
+{
+    if (CodeEditor *ed = qobject_cast<CodeEditor*>(_editor))
+        ed->clearMatchHighlight();
+}
+
 QString QueryWidget::toPlainText()
 {
     if (!_editor)

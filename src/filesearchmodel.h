@@ -100,6 +100,11 @@ public:
     /// document (no connection, or a bundle without one) is fine.
     void setHighlightSettings(const QJsonDocument &settings);
 
+    /// The hue a match is marked with. Public because the preview pane marks the
+    /// same hit in the same color - the tree and the pane are read as one thing,
+    /// and two different "found here" colors would be a puzzle to nobody's gain.
+    QColor matchColor() const;
+
     void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override;
     QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override;
 

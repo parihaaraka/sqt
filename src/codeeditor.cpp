@@ -78,6 +78,12 @@ CodeEditor::CodeEditor(QWidget *parent) : QPlainTextEdit(parent)
         _hlTimer->start();
     });
     connect(this, &CodeEditor::textChanged, [this]() {
+        // The mark points into a text that no longer is the one it was measured
+        // in - either the whole content was replaced (the preview pane showing
+        // the next thing) or the user started editing, and in both cases "the
+        // place you were sent to" has stopped meaning anything.
+        _matchHighlight = QTextCursor();
+        _matchHighlightColor = QColor();
         setExtraSelections(baseExtraSelections());
         _hlTimer->start();
     });
@@ -88,6 +94,12 @@ CodeEditor::CodeEditor(QWidget *parent) : QPlainTextEdit(parent)
 
     updateLeftSideBarWidth();
     installEventFilter(this);
+
+    // A selection made in a widget that has since lost the focus is painted from
+    // the palette's Inactive group, and several themes make that all but
+    // invisible against the text area. Corrected here once, and again whenever
+    // the theme changes (see the eventFilter).
+    fixInactiveSelection(this);
 }
 
 void CodeEditor::leftSideBarPaintEvent(QPaintEvent *event)
@@ -1021,6 +1033,12 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
         _leftSideBar->setFont(font());
         updateLeftSideBarWidth();
         break;
+    case QEvent::ApplicationPaletteChange:
+        // The theme has been switched under us, so the correction has to be
+        // recomputed from the new palette (fixInactiveSelection() always starts
+        // from qApp's pristine one, so this does not stack up).
+        fixInactiveSelection(this);
+        break;
     case QEvent::ShortcutOverride:
     {
         // Qt asks the focused widget "is this yours?" via ShortcutOverride
@@ -1912,6 +1930,28 @@ bool operator == (QTextEdit::ExtraSelection &l, QTextEdit::ExtraSelection &r)
     return (l.cursor == r.cursor && l.format == r.format);
 }
 
+// With several cursors, marking the occurrences of the main cursor's word is
+// only honest while every cursor holds that same word - the Ctrl+D case, where
+// the marks show which occurrences are not taken yet. Once the selections
+// differ, the marks belong to one of them and the text ends up striped by two
+// unrelated meanings, so there is nothing sensible to draw. Cursors without a
+// selection say nothing either way and are ignored.
+//
+// This costs a few string comparisons against a scan of the whole document
+// below, and answering "no" here skips that scan altogether.
+bool CodeEditor::multiCursorSharesSelection(const QString &selectedText) const
+{
+    if (!_multiCursor.isMultiple())
+        return true;
+
+    for (const QTextCursor &c: _multiCursor.cursors())
+    {
+        if (c.hasSelection() && c.selectedText() != selectedText)
+            return false;
+    }
+    return true;
+}
+
 void CodeEditor::onHlTimerTimeout()
 {
     // ------------ match selected word ------------
@@ -1919,7 +1959,7 @@ void CodeEditor::onHlTimerTimeout()
     QString selectedText = curCursor.selectedText();
     QList<QTextEdit::ExtraSelection> selections;
     QString content;
-    if (!selectedText.isEmpty())
+    if (!selectedText.isEmpty() && multiCursorSharesSelection(selectedText))
     {
         // prevent search for not a word
         bool mayBeWord = true;
@@ -1946,10 +1986,13 @@ void CodeEditor::onHlTimerTimeout()
             int total_hits = 0;
             int wordLength = selectedText.length();
             content = text();
-            QColor selectionColor(Qt::yellow);
-            selectionColor.setAlphaF(0.7f);
+            // A translucent wash from the palette and nothing more (see
+            // occurrenceMark): strong enough to spot, weak enough to read the
+            // syntax colouring through. The hard-coded yellow this replaces made
+            // brown keywords unreadable on a dark theme and ignored the colour
+            // scheme entirely.
             QTextEdit::ExtraSelection s;
-            s.format.setBackground(selectionColor);
+            s.format.setBackground(occurrenceMark(palette()));
 
             auto verifyPos = [&selections, wordLength, &s, &testCursor, &content, &total_hits](int &pos, int &counter)
             {
@@ -2145,9 +2188,65 @@ QList<QTextEdit::ExtraSelection> CodeEditor::currentLineSelection() const
     return QList<QTextEdit::ExtraSelection> {s};
 }
 
+void CodeEditor::setMatchHighlight(const QTextCursor &range, const QColor &color)
+{
+    _matchHighlight = range;
+    _matchHighlightColor = color;
+    // Straight through setExtraSelections(): the mark has to appear now, while
+    // whoever jumped here is still looking, not on the next cursor move.
+    setExtraSelections(baseExtraSelections());
+}
+
+void CodeEditor::clearMatchHighlight()
+{
+    if (_matchHighlight.isNull())
+        return;
+    _matchHighlight = QTextCursor();
+    _matchHighlightColor = QColor();
+    setExtraSelections(baseExtraSelections());
+}
+
+QList<QTextEdit::ExtraSelection> CodeEditor::matchHighlightSelections() const
+{
+    if (_matchHighlight.isNull() || !_matchHighlight.hasSelection())
+        return QList<QTextEdit::ExtraSelection>();
+
+    QColor color = _matchHighlightColor;
+    if (!color.isValid())
+        color = palette().color(QPalette::Active, QPalette::Highlight);
+
+    QList<QTextEdit::ExtraSelection> result;
+
+    // The whole line, very faintly: what actually catches the eye when the match
+    // itself is two characters long. currentLineSelection() cannot serve here -
+    // it gives up on a read-only editor, which the preview pane always is.
+    QTextEdit::ExtraSelection line;
+    QColor lineColor(color);
+    lineColor.setAlphaF(0.13f);
+    line.format.setBackground(lineColor);
+    line.format.setProperty(QTextFormat::FullWidthSelection, true);
+    line.cursor = _matchHighlight;
+    line.cursor.clearSelection();
+    result.append(line);
+
+    // The match itself, translucent so the syntax highlighting stays legible
+    // underneath - the point of showing the file as sql in the first place.
+    QTextEdit::ExtraSelection s;
+    QColor matchColor(color);
+    matchColor.setAlphaF(0.45f);
+    s.format.setBackground(matchColor);
+    s.cursor = _matchHighlight;
+    result.append(s);
+
+    return result;
+}
+
 QList<QTextEdit::ExtraSelection> CodeEditor::baseExtraSelections() const
 {
-    return currentLineSelection() + multiCursorSelections();
+    // The match mark goes first, so that the full-width line selection the
+    // cursorPositionChanged handler pops off the back is still the current-line
+    // one - and so the caret's own line wins when the two coincide.
+    return matchHighlightSelections() + currentLineSelection() + multiCursorSelections();
 }
 
 QList<QTextEdit::ExtraSelection> CodeEditor::multiCursorSelections() const

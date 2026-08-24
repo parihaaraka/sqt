@@ -93,6 +93,12 @@ DbConnection *OdbcConnection::clone()
     OdbcConnection *res = new OdbcConnection();
     res->_connection_string = _connection_string;
     res->_database = _database;
+    // Same data source, same script bundle - and known before the clone is
+    // opened, just as a connection whose link has died keeps it (see
+    // closeLocked()). Without it Scripting has to connect merely to ask the
+    // driver for the dbms name, and an unreachable server then costs the clone
+    // its scripts and its highlighting dictionary.
+    res->_dbmsScriptingID = _dbmsScriptingID;
     return res;
 }
 

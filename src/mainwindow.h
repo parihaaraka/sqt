@@ -6,6 +6,7 @@
 #include <QItemSelection>
 #include <QLabel>
 #include <memory>
+#include <optional>
 #include "dbconnection.h"
 #include "filesearch.h"     // FileSearchHit travels through the slots below
 
@@ -79,8 +80,19 @@ private slots:
     void on_actionObject_tree_triggered();
     /// Shows the place \a hit points at in the content pane, as sql.
     void previewFileHit(const FileSearchHit &hit, bool focusPane);
+    /// Refreshes the content pane from whichever of the two left tabs is up: the
+    /// tree's current object, or the search's current hit. F2 and a focus change
+    /// go through this rather than straight to scriptSelectedObjects(), which
+    /// would put the tree's object on screen while the search results are shown.
+    void refreshContentPane();
     /// Ctrl+E over the results: an editor tab with the file, cursor on the hit.
     void openFileHitInEditor(const FileSearchHit &hit);
+    /// Ctrl+E with the focus in the preview pane: the very file the pane shows,
+    /// opened at the pane's own cursor rather than at the hit the preview
+    /// started from. Reading a found place usually means walking away from it,
+    /// and it is the place being read that the editor is wanted for.
+    void openPaneFileInEditor();
+
     /// Points the locator at the current assets directory and drops everything
     /// cached on top of it: the scripts, the keyword dictionaries, the tree
     /// icons and the branch arrows. Nothing is reopened and no tab is closed.
@@ -126,11 +138,31 @@ private:
     // Created in the constructor, but the Ctrl+E lambda above is installed
     // before that, so it must be safe to test.
     FileSearchPanel *_searchPanel = nullptr;
-    /// The connection the file search works against: the one that was current
-    /// when Ctrl+Shift+F was pressed. A script on disk belongs to a database in
-    /// the user's head, and that is the database whose dictionary should
-    /// highlight it - not whichever node the tree happens to point at later.
-    std::weak_ptr<DbConnection> _searchConnection;
+    /// The connection the file search works against: a private clone of the one
+    /// that was current when Ctrl+Shift+F was pressed. A script on disk belongs
+    /// to a database in the user's head, and that is the database whose
+    /// dictionary should highlight it - not whichever node the tree happens to
+    /// point at later.
+    ///
+    /// Owned rather than borrowed, and for a reason: a weak_ptr here expired
+    /// behind the user's back on every ordinary turn of events - collapsing or
+    /// refreshing a database node destroys its DbObject, whose destructor
+    /// unregisters the connection, and closing the tab the link came from
+    /// deletes that tab's clone. The search then lost its dbms, hence its
+    /// highlighting dictionary, hence the ability to open a found file as
+    /// anything but plain text. A clone keeps the connection string, the
+    /// database and (see PgConnection::clone()) the dbms identity, so all of
+    /// that survives even a server that has gone away. It is never opened just
+    /// to colour a file - naming the script bundle needs no link - so holding it
+    /// costs no backend.
+    std::shared_ptr<DbConnection> _searchConnection;
+    /// The place the content pane is showing, while it shows a file rather than
+    /// the script of a tree node. Coming back to the tree rebuilds the pane only
+    /// then: scriptSelectedObjects() reruns the node's content script and
+    /// reopens a link that has just been given back, which is too much for a
+    /// mere tab switch. Ctrl+E in the pane needs the same knowledge - which file
+    /// is on screen - and would otherwise open the tree's object instead.
+    std::optional<FileSearchHit> _paneHit;
     /// Identity of \a con for the search panel's per-connection settings, plus
     /// the readable \a label to store next to them. The key is a digest of the
     /// connection string with the password removed - stable across restarts,
@@ -139,7 +171,12 @@ private:
     static QString searchProfileKey(const std::shared_ptr<DbConnection> &con,
                                     QString *label = nullptr);
     /// Positions \a w on \a line / \a column (1-based) and centers the view.
-    static void gotoFilePosition(QueryWidget *w, int line, int column, int length);
+    /// \a matchColor marks the range as a search hit (see
+    /// CodeEditor::setMatchHighlight): the text cursor's own selection is not
+    /// enough, since it is painted with the palette's Inactive group while the
+    /// focus stays in the results tree.
+    static void gotoFilePosition(QueryWidget *w, int line, int column, int length,
+                                 const QColor &matchColor = QColor());
     QTimer *_hideTimer;
     QTimer *_durationRefreshTimer;
     void log(const QString &msg);
