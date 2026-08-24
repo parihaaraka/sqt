@@ -31,5 +31,8 @@ sqt_add_test(queryoptions "${SQT_SRC_DIR}/queryoptions.cpp")
 sqt_add_test(sqlparser "${SQT_SRC_DIR}/sqlparser.cpp")
 sqt_add_test(textcodec "${SQT_SRC_DIR}/textcodec.cpp")
 sqt_add_test(pgtypmod "${SQT_SRC_DIR}/pgtypmod.cpp")
+# the file search engine carries no gui/db dependency on purpose, so its mask
+# and matching rules are testable; textcodec comes along as it decodes the files
+sqt_add_test(filesearch "${SQT_SRC_DIR}/filesearch.cpp" "${SQT_SRC_DIR}/textcodec.cpp")
 
 

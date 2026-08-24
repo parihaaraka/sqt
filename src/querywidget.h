@@ -45,6 +45,9 @@ public:
     bool saveFile(const QString &fileName, const QString &encoding = QString());
     QString encoding() { return _encoding; }
     DbConnection* dbConnection() { return _connection.get(); }
+    /// The same link, shareable - the file search borrows it to highlight the
+    /// scripts it finds and to clone a connection for the tabs it opens.
+    const std::shared_ptr<DbConnection>& sharedDbConnection() const { return _connection; }
     void setDbConnection(DbConnection *connection);
     void ShowFindPanel(FindAndReplacePanel *panel);
     /// Attaches a highlighter built for the connection's dbms. Pass force=true

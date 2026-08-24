@@ -30,6 +30,11 @@
 #include "settingsdialog.h"
 #include "queryoptions.h"
 #include "resourcelocator.h"
+#include "filesearchpanel.h"
+#include "misc.h"
+#include "textcodec.h"
+#include <QCryptographicHash>
+#include <QDir>
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QActionGroup>
@@ -140,10 +145,51 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->actionSave_as->setShortcuts(QKeySequence::SaveAs);
     ui->actionFind->setShortcuts(QKeySequence::Find);
 
-    QAction *editAction = new QAction(ui->objectsView);
+    // Ctrl+E opens an editor tab for whatever is current: a file when the search
+    // panel has the focus, the tree's object otherwise.
+    QAction *editAction = new QAction(this);
     editAction->setShortcut({"Ctrl+E"});
-    connect(editAction, &QAction::triggered, this, &MainWindow::on_actionNew_triggered);
-    ui->objectsView->addAction(editAction);
+    connect(editAction, &QAction::triggered, this, [this]() {
+        // Anywhere inside the search panel, not just its tree: after Enter in
+        // the text field the focus is still there, and Ctrl+E then clearly means
+        // "open what I have found", not "open the tree's object".
+        QWidget *fw = QApplication::focusWidget();
+        if (_searchPanel && fw && (fw == _searchPanel || _searchPanel->isAncestorOf(fw)))
+        {
+            if (const auto hit = _searchPanel->currentHit())
+                openFileHitInEditor(*hit);
+            return;
+        }
+        on_actionNew_triggered();
+    });
+    addAction(editAction);
+
+    _searchPanel = new FileSearchPanel(this);
+    ui->searchPage->layout()->addWidget(_searchPanel);
+    // The panel's own remarks and failures follow the house rules: the log for
+    // a failure, the status bar for a remark. Neither may reach a query's pane.
+    connect(_searchPanel, &FileSearchPanel::message, this, &MainWindow::onMessage);
+    connect(_searchPanel, &FileSearchPanel::error, this, &MainWindow::onError);
+    connect(_searchPanel, &FileSearchPanel::statusMessage, this,
+            [this](const QString &msg, int msecs) { ui->statusBar->showMessage(msg, msecs); });
+    connect(_searchPanel, &FileSearchPanel::hitSelected, this,
+            [this](FileSearchHit hit) { previewFileHit(hit, false); });
+    connect(_searchPanel, &FileSearchPanel::hitActivated, this,
+            [this](FileSearchHit hit) { previewFileHit(hit, true); });
+    connect(_searchPanel, &FileSearchPanel::openInEditorRequested,
+            this, &MainWindow::openFileHitInEditor);
+    // An edited tab is what the user sees, so it is what gets searched - the
+    // file on disk would give hits at the wrong lines and miss the new ones.
+    _searchPanel->setBufferProvider([this]() {
+        QHash<QString, QString> buffers;
+        for (int i = 0; i < ui->tabWidget->count(); ++i)
+        {
+            QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(i));
+            if (w && w->isModified() && !w->fileName().isEmpty())
+                buffers.insert(QFileInfo(w->fileName()).absoluteFilePath(), w->toPlainText());
+        }
+        return buffers;
+    });
 
     _frPanel = new FindAndReplacePanel();
     ui->menuEdit->addActions(_frPanel->actions());
@@ -1186,7 +1232,15 @@ void MainWindow::refreshActions()
     QueryWidget *qw = (ui->tabWidget->isHidden() ? _objectScript : w);
     const auto actions = ui->menuEdit->actions();
     for (QAction *action: actions)
+    {
+        // Find/replace needs an editor to work on, but the two navigation
+        // entries do not: switching to the file search (or back to the tree) is
+        // exactly what one wants with no tab open, and disabling an action
+        // disables its shortcut with it.
+        if (action == ui->actionFind_in_files || action == ui->actionObject_tree)
+            continue;
         action->setEnabled(qw);
+    }
     _frPanel->setEditor(qw);
 }
 
@@ -1684,5 +1738,288 @@ void MainWindow::reloadAssets()
     }
     if (_objectScript && _objectScript->dbConnection())
         _objectScript->highlight(nullptr, true);
+}
+
+QString MainWindow::searchProfileKey(const std::shared_ptr<DbConnection> &con, QString *label)
+{
+    if (label)
+        label->clear();
+    if (!con)
+        return QString();
+
+    // The connection string names the server; the database within it may be
+    // switched at any time and the scripts still belong to the same repository,
+    // so it is deliberately not part of the identity.
+    QString cs = con->connectionString();
+    if (cs.isEmpty())
+        return QString();
+
+    // The password never goes into the key material: the settings file is plain
+    // text, and a digest of a secret is still something one should not store.
+    static const QRegularExpression pwd(
+                R"((^|\s)(password)\s*=\s*('(?:[^'\\]|\\.)*'|\S*))",
+                QRegularExpression::CaseInsensitiveOption);
+    cs.replace(pwd, "\\1");
+
+    if (label)
+    {
+        // Readable, and enough to recognize the entry by: the live context when
+        // there is one ("user@host:port/db"), the sanitized string otherwise.
+        const QString ctx = con->context();
+        *label = (ctx.isEmpty() ? cs.simplified() : ctx);
+    }
+
+    return QString::fromLatin1(
+                QCryptographicHash::hash(cs.simplified().toUtf8(),
+                                         QCryptographicHash::Sha1).toHex().left(16));
+}
+
+void MainWindow::on_actionObject_tree_triggered()
+{
+    // Ctrl+Shift+O is the way back from the search results to the tree. The
+    // focus goes with it: the point is to keep working from the keyboard, and a
+    // raised tab whose tree is not focused still needs a click.
+    ui->objectsTab->setCurrentWidget(ui->objectsPage);
+    ui->objectsView->setFocus();
+}
+
+void MainWindow::on_actionFind_in_files_triggered()
+{
+    // The connection of the context the shortcut came from. A script on disk is
+    // written against a particular database, and the tab (or the tree node) the
+    // user was looking at names it better than anything else we could guess.
+    std::shared_ptr<DbConnection> con;
+    if (QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
+        w && !ui->tabWidget->isHidden())
+    {
+        con = w->sharedDbConnection();
+    }
+    if (!con)
+    {
+        QModelIndex srcIndex = static_cast<QSortFilterProxyModel*>(ui->objectsView->model())->
+                mapToSource(ui->objectsView->currentIndex());
+        if (srcIndex.isValid())
+            con = _objectsModel->dbConnection(srcIndex);
+    }
+    // Kept weakly: this is a borrowed link, and holding a strong reference here
+    // would keep a backend busy for as long as the window lives.
+    if (con)
+    {
+        _searchConnection = con;
+        // Each connection has its own root folder, and switching to this one
+        // brings its folder back. Done before the panel is shown, so that the
+        // path field is already right when it appears.
+        QString label;
+        const QString key = searchProfileKey(con, &label);
+        _searchPanel->setConnectionProfile(key, label);
+
+        // The results are colored with the very dictionary the editor uses for
+        // this dbms, so a match in the tree and the same text in the preview
+        // read alike. A bundle without a palette of its own is not an error -
+        // the panel falls back to the window's palette.
+        try
+        {
+            QJsonDocument hlSettings;
+            if (const QString hl = Scripting::dbmsFile(con.get(), "hl.conf"); !hl.isEmpty())
+                hlSettings = readJsonFile(hl);
+            _searchPanel->setHighlightSettings(hlSettings);
+        }
+        catch (const QString &err)
+        {
+            log(err);
+        }
+    }
+
+    // The selected text, or the word under the cursor - the same seeding the
+    // find panel does, and the usual reason one presses this shortcut.
+    QString seed;
+    if (QueryWidget *w = (ui->tabWidget->isHidden() ?
+                              _objectScript :
+                              qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget())))
+    {
+        QTextCursor c = w->textCursor();
+        if (!c.hasSelection())
+            c.select(QTextCursor::WordUnderCursor);
+        // a multiline selection is a block of code, not something to look for
+        seed = c.selectedText();
+        if (seed.contains(QChar::ParagraphSeparator) || seed.contains('\n'))
+            seed.clear();
+    }
+
+    ui->objectsTab->setCurrentWidget(ui->searchPage);
+    _searchPanel->setSearchText(seed);
+    _searchPanel->activateSearchField();
+}
+
+void MainWindow::gotoFilePosition(QueryWidget *w, int line, int column, int length)
+{
+    QPlainTextEdit *ed = qobject_cast<QPlainTextEdit*>(w->editor());
+    if (!ed)
+        return;
+
+    QTextBlock block = ed->document()->findBlockByNumber(line - 1);
+    if (!block.isValid())
+        return;
+
+    QTextCursor c(block);
+    // Column and length come from the same normalized text the search read, so
+    // they are safe to use directly - but a file changed since is not, hence
+    // the clamping to the block.
+    const int col = qBound(0, column - 1, block.length() - 1);
+    c.setPosition(block.position() + col);
+    if (length > 0)
+    {
+        const int end = qMin(block.position() + col + length,
+                             ed->document()->characterCount() - 1);
+        c.setPosition(end, QTextCursor::KeepAnchor);
+    }
+    w->setTextCursor(c);
+    // centerCursor() rather than ensureCursorVisible(): the point of the jump is
+    // to see the match in its surroundings, not pinned to the last line.
+    ed->centerCursor();
+}
+
+void MainWindow::previewFileHit(const FileSearchHit &hit, bool focusPane)
+{
+    // The pane the object content is normally shown in. Switching the view mode
+    // here would fight the user, so a hidden pane is simply raised - the search
+    // results and the preview belong to the same glance.
+    if (ui->contentSplitter->isHidden())
+        ui->actionObject_content->activate(QAction::Trigger);
+
+    // The buffer of a modified tab is what was searched, so it is what must be
+    // previewed; the file on disk would show the match at the wrong line.
+    QString text;
+    bool fromBuffer = false;
+    const QString absolute = QFileInfo(hit.fileName).absoluteFilePath();
+    for (int i = 0; i < ui->tabWidget->count() && !fromBuffer; ++i)
+    {
+        QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(i));
+        if (w && w->isModified() && !w->fileName().isEmpty() &&
+            QFileInfo(w->fileName()).absoluteFilePath() == absolute)
+        {
+            text = w->toPlainText();
+            fromBuffer = true;
+        }
+    }
+
+    if (!fromBuffer)
+    {
+        FileSearchParams params;
+        // Decoded exactly as the search decoded it, so the preview shows the
+        // text the hit's line and column were measured in.
+        params.encoding = hit.encoding;
+        params.fallbackEncoding = SqtSettings::value("encodings").toString()
+                .split(',', Qt::SkipEmptyParts).value(1).trimmed();
+        // Reading the whole file to show a fragment is what makes the sql
+        // highlighting and the surrounding lines possible; these are scripts,
+        // and the search has already refused anything of unreasonable size.
+        FileSearch::FileText content = FileSearch::readFile(hit.fileName, params);
+        if (!content.error.isEmpty())
+        {
+            // a failure the user did not ask for goes to the log, not to a popup
+            onError(tr("`%1`: %2").arg(QDir::toNativeSeparators(hit.fileName), content.error));
+            return;
+        }
+        text = content.text;
+    }
+
+    // Interpreted as sql and highlighted with the dictionary of the connection
+    // that was current when the search was invoked.
+    _tableModel->clear();
+    ui->tableView->hide();
+    showTextualContent(text, "script", _searchConnection.lock());
+    // The title bar has no room for this, so the file the pane is showing is
+    // named in the status bar - it is not obvious from the text itself.
+    ui->statusBar->showMessage(QString("%1:%2").arg(
+                                   QDir::toNativeSeparators(hit.fileName)).arg(hit.line), 5000);
+
+    gotoFilePosition(_objectScript, hit.line, hit.column, hit.length);
+    if (focusPane)
+        _objectScript->setFocus();
+}
+
+void MainWindow::openFileHitInEditor(const FileSearchHit &hit)
+{
+    const QString absolute = QFileInfo(hit.fileName).absoluteFilePath();
+
+    // An already open tab is the one to jump in: opening a second copy of the
+    // same file would leave the user with two buffers to keep in sync.
+    for (int i = 0; i < ui->tabWidget->count(); ++i)
+    {
+        QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(i));
+        if (w && !w->fileName().isEmpty() &&
+            QFileInfo(w->fileName()).absoluteFilePath() == absolute)
+        {
+            if (ui->contentSplitter->isVisible())
+                ui->actionQuery_editor->activate(QAction::Trigger);
+            ui->tabWidget->setCurrentIndex(i);
+            gotoFilePosition(w, hit.line, hit.column, hit.length);
+            w->setFocus();
+            return;
+        }
+    }
+
+    // The encoding the search decoded this file with, so that the tab shows the
+    // very text the hit's line and column were measured in. The file dialog's
+    // combo is *not* a substitute: it is empty until the user has opened Open or
+    // Save at least once, and QueryWidget::openFile() refuses an encoding it
+    // cannot name - which is what made this silently do nothing.
+    QString encoding = hit.encoding;
+    if (encoding.isEmpty())
+        encoding = _fileDialog.encoding();
+    if (encoding.isEmpty())
+    {
+        // First usable name from the settings, utf-8 as the last resort.
+        const QStringList names = SqtSettings::value("encodings").toString()
+                .split(',', Qt::SkipEmptyParts);
+        for (const QString &n: names)
+        {
+            encoding = TextCodec::canonicalName(n.trimmed());
+            if (!encoding.isEmpty())
+                break;
+        }
+        if (encoding.isEmpty())
+            encoding = QStringLiteral("UTF-8");
+    }
+
+    // A tab of its own, on a clone of the search's connection - the tab must be
+    // able to run what it shows, and against the database the script belongs to.
+    auto con = _searchConnection.lock();
+    QueryWidget *w = (con && (con->isOpened() || !con->database().isEmpty()) ?
+                          new QueryWidget(con->clone(), ui->tabWidget) :
+                          new QueryWidget(ui->tabWidget));
+
+    // Connected before the file is read: openFile() reports its failure through
+    // these, and a tab deleted below would take the explanation with it.
+    connect(w, &QueryWidget::sqlChanged, this, &MainWindow::sqlChanged);
+    // anything not produced by a query run belongs to the log, not to the tab
+    connect(w, &QueryWidget::message, this, &MainWindow::onMessage);
+    connect(w, &QueryWidget::error, this, &MainWindow::onError);
+
+    const int ind = ui->tabWidget->addTab(w, QString());
+    ui->tabWidget->setCurrentIndex(ind);
+
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    ScopeGuard<void(*)()> cursorGuard(QApplication::restoreOverrideCursor);
+
+    if (!w->openFile(hit.fileName, encoding))
+    {
+        ui->tabWidget->removeTab(ind);
+        delete w;
+        return;
+    }
+
+    w->setTitle(QFileInfo(hit.fileName).fileName());
+    ui->tabWidget->setTabToolTip(ind, hit.fileName);
+    w->highlight();
+    w->setReadOnly(false);
+    w->setModified(false);
+    updateTabCaption(w);
+
+    if (ui->contentSplitter->isVisible())
+        ui->actionQuery_editor->activate(QAction::Trigger);
+    gotoFilePosition(w, hit.line, hit.column, hit.length);
+    w->setFocus();
 }
 

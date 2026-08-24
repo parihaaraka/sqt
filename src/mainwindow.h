@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <memory>
 #include "dbconnection.h"
+#include "filesearch.h"     // FileSearchHit travels through the slots below
 
 namespace Ui {
 class MainWindow;
@@ -24,22 +25,23 @@ class FindAndReplacePanel;
 class DbObjectsModel;
 class CodeBlockProperties;
 class MyProxyStyle;
+class FileSearchPanel;
 
 class MainWindow : public QMainWindow
 {
 	Q_OBJECT
-	
+
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     virtual ~MainWindow() override;
     void activateEditorBlock(CodeBlockProperties *blockProperties);
     void queryStateChanged(QueryWidget *w, QueryState state);
     QueryWidget* openScriptTab(const QString &text, const QString &title, DbConnection *connection = nullptr);
-	
+
 protected:
     virtual void closeEvent(QCloseEvent *event) override;
     virtual void changeEvent(QEvent *e) override;
-	
+
 private slots:
     void on_addConnectionAction_triggered();
     void on_actionAbout_triggered();
@@ -67,6 +69,18 @@ private slots:
     void openFile(const QString &fileName, const QString &encoding);
 
     void on_actionSettings_triggered();
+    /// Ctrl+Shift+F: raises the search tab, seeds it with the selected text or
+    /// the word under the cursor and remembers the connection of the widget the
+    /// shortcut came from - files are highlighted and opened with that one.
+    void on_actionFind_in_files_triggered();
+    /// Ctrl+Shift+O: back to the object tree, with the focus in it. The
+    /// counterpart of Ctrl+Shift+F, so that the two tabs of the left pane can be
+    /// swapped without reaching for the mouse.
+    void on_actionObject_tree_triggered();
+    /// Shows the place \a hit points at in the content pane, as sql.
+    void previewFileHit(const FileSearchHit &hit, bool focusPane);
+    /// Ctrl+E over the results: an editor tab with the file, cursor on the hit.
+    void openFileHitInEditor(const FileSearchHit &hit);
     /// Points the locator at the current assets directory and drops everything
     /// cached on top of it: the scripts, the keyword dictionaries, the tree
     /// icons and the branch arrows. Nothing is reopened and no tab is closed.
@@ -109,6 +123,23 @@ private:
     bool closeTab(int index);
     bool ensureSaved(int index, bool ask_name = false, bool forceWarning = false);
     FindAndReplacePanel *_frPanel;
+    // Created in the constructor, but the Ctrl+E lambda above is installed
+    // before that, so it must be safe to test.
+    FileSearchPanel *_searchPanel = nullptr;
+    /// The connection the file search works against: the one that was current
+    /// when Ctrl+Shift+F was pressed. A script on disk belongs to a database in
+    /// the user's head, and that is the database whose dictionary should
+    /// highlight it - not whichever node the tree happens to point at later.
+    std::weak_ptr<DbConnection> _searchConnection;
+    /// Identity of \a con for the search panel's per-connection settings, plus
+    /// the readable \a label to store next to them. The key is a digest of the
+    /// connection string with the password removed - stable across restarts,
+    /// while a password (or a database switched inside the session) leaves it
+    /// alone, and nothing secret reaches the settings file.
+    static QString searchProfileKey(const std::shared_ptr<DbConnection> &con,
+                                    QString *label = nullptr);
+    /// Positions \a w on \a line / \a column (1-based) and centers the view.
+    static void gotoFilePosition(QueryWidget *w, int line, int column, int length);
     QTimer *_hideTimer;
     QTimer *_durationRefreshTimer;
     void log(const QString &msg);

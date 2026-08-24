@@ -11,6 +11,7 @@ The main target audience are db programmers.
 * alternative sorting (e.g., sort table columns in original/alphabetical order);
 * multiple selection to generate appropriate SQL code (e.g., select/insert/update commands with selected columns only);
 * convenient (Qt Creator-like) search/replace panel;
+* search through a folder of sql scripts (`Ctrl+Shift+F`, `Ctrl+Shift+O` - get back to the objects tree);
 * multiple resultsets support;
 * multicursor;
 * bookmarks (mark: `Ctrl+M`, previous: `Ctrl+,`, next: `Ctrl+.`, last: `Ctrl+L`);
@@ -26,6 +27,13 @@ The main target audience are db programmers.
 
 ![screenshot](https://github.com/parihaaraka/sqt/wiki/img/screenshot1.png)
 ![screenshot](https://github.com/parihaaraka/sqt/wiki/img/charts.png)
+
+### Search in files
+
+The connection used for highlighting and for the editor tab is the one that was
+current when `Ctrl+Shift+F` was pressed. Its root folder is remembered per
+connection: the scripts of a database live in their own repository, so coming
+back to a connection brings its folder back with it.
 
 ## COPY to/from local file via meta-comments (pg only)
 Use `COPY FROM STDIN` and `COPY TO STDOUT` forms of the command with some magic in comments:
