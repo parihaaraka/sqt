@@ -68,6 +68,20 @@ private:
     DataTable* _temp_result; ///< temporary resultset for asynchronous processing
     QString _query_tmp; ///< query storage during asynchronous connection if needed
     PgParams _params_tmp;
+    /// Whether the current query has left libpq's output buffer completely.
+    ///
+    /// This is what tells a query that may have been executed from one that
+    /// provably was not, when the link dies mid-run. A simple query is a single
+    /// protocol message, and the backend reads a message whole before executing
+    /// it, so an incomplete one cannot have had any effect - it is safe to
+    /// reconnect and send it again. Set when PQflush() reports the buffer empty;
+    /// set right away for a parameterized query, where the guarantee does not
+    /// hold (the extended protocol executes Execute without waiting for Sync,
+    /// so the unsent remainder may be the Sync alone).
+    bool _query_flushed = false;
+    /// A query is resent at most once per run, so that a link that dies on every
+    /// attempt cannot turn into an endless loop of reconnects.
+    bool _resent_once = false;
     int _temp_result_rowcount;
     PgCopyContext _copy_context;
     std::vector<char> _copy_in_buf;
@@ -91,6 +105,17 @@ private:
 
     static void noticeReceiver(void *arg, const PGresult *res);
     void fetchNotifications();
+    /// Handles a run whose link has died. The caller must hold _connectionGuard
+    /// and pass libpq's own diagnostics, which is only readable while the handle
+    /// is still there.
+    ///
+    /// Returns true when the query provably never reached the server: the link
+    /// has been released and the caller is to unlock the guard and openAsync(),
+    /// which sends the query again once connected. Returns false when the query
+    /// may have been executed - the run is then already finished (reported and
+    /// set Inactive here), and it is the user who decides whether repeating it
+    /// is safe.
+    bool linkLostMidQuery(const QString &libpqError);
     void fetch() noexcept;
     void asyncConnectionProceed();
     void getCopyData();

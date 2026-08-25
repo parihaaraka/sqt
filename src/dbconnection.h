@@ -130,6 +130,13 @@ signals:
     /// object itself stays alive and registered, so this is not a disconnect -
     /// it only means that whatever displays the connection's state is stale now.
     void connectionLost();
+    /// The run ended without an answer, and whether the server executed the
+    /// query is unknowable: it had been delivered in full when the link died.
+    /// Emitted just before the Inactive state, so that the widget can say so
+    /// instead of reporting the run as completed - "done" would invite a retry,
+    /// and a retry may repeat a statement that has already had its effect.
+    void outcomeUnknown();
+
     void fetched(DataTable *table);
     // use QueryState as argument instead of _query_state due to queued connection
     // (slot may have _query_state to be distinct from the state the signal was emitted with)

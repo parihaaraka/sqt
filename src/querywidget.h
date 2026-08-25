@@ -115,6 +115,10 @@ private:
     // arrives - only a flag raised at the start of the run can tell the query's
     // own output from everything else.
     bool _queryActive = false;
+    // The run ended without an answer and may or may not have been executed
+    // (DbConnection::outcomeUnknown). Reporting it as "done" would invite a
+    // retry, which is the one thing that must not be automatic here.
+    bool _outcomeUnknown = false;
     // formats a message for the shared log, naming the tab it came from
     QString logMessage(const QString &text) const;
     QString _encoding;

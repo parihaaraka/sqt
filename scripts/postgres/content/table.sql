@@ -365,7 +365,8 @@ begin
 							when 'x'::"char" then 'EXCLUDE constraint'
 						end,
 						case when not x.indisvalid then 'INVALID' end,
-						case when x.indpred is not null then 'partial' end
+						case when x.indpred is not null then 'partial' end,
+						'name: ' || i.relname
 					), ''), ''),
 				E'\n' order by def) || E'\n$Indexes$'
 		into _indexes

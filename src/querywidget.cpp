@@ -219,11 +219,26 @@ void QueryWidget::setDbConnection(DbConnection *connection)
         connect(connection, &DbConnection::message, this, &QueryWidget::onMessage, Qt::QueuedConnection);
         connect(connection, &DbConnection::error, this, &QueryWidget::onError, Qt::QueuedConnection);
 
+        // Arrives just before the Inactive state below, and a queued connection
+        // preserves that order for one sender/receiver pair - so the flag is
+        // always set by the time the state change is handled.
+        connect(connection, &DbConnection::outcomeUnknown, this, [this]() {
+            _outcomeUnknown = true;
+        }, Qt::QueuedConnection);
+
         connect(connection, &DbConnection::queryStateChanged, this, [this](QueryState queryState) {
             // actual query execution time before post-processing
             if (queryState == QueryState::Inactive)
             {
-                onMessage(tr("%1: done in %2").arg(QTime::currentTime().toString("HH:mm:ss"), _connection->elapsed()));
+                // "done" would mean the server has answered; when it never did,
+                // say so instead, or the natural retry may run the query twice
+                if (_outcomeUnknown)
+                    onMessage(tr("%1: interrupted after %2, outcome unknown")
+                              .arg(QTime::currentTime().toString("HH:mm:ss"), _connection->elapsed()));
+                else
+                    onMessage(tr("%1: done in %2").arg(QTime::currentTime().toString("HH:mm:ss"), _connection->elapsed()));
+                _outcomeUnknown = false;
+
                 // The last word of the run, so the flag goes down after it and
                 // not before: everything the connection has emitted up to this
                 // point is the query's own output. Queued deliveries from one

@@ -45,16 +45,6 @@ private:
         p.setColor(QPalette::Active, QPalette::Highlight, highlight);
         return p;
     }
-    /// What the wash actually looks like once composed over the background it
-    /// is drawn on - the only thing the eye ever sees of it.
-    static QColor composed(const QColor &over, const QColor &translucent)
-    {
-        const qreal a = translucent.alphaF();
-        return QColor::fromRgbF(over.redF()   * (1 - a) + translucent.redF()   * a,
-                                over.greenF() * (1 - a) + translucent.greenF() * a,
-                                over.blueF()  * (1 - a) + translucent.blueF()  * a);
-    }
-
 
 private slots:
     void readablePaletteIsLeftAlone_data();
@@ -63,8 +53,8 @@ private slots:
     void invisibleSelectionIsCorrected();
     void correctionIsStable();
     void widgetOverrideDoesNotCompound();
-    void occurrenceMarkStaysReadable_data();
-    void occurrenceMarkStaysReadable();
+    void occurrenceMarkIsAnInversion_data();
+    void occurrenceMarkIsAnInversion();
 };
 
 void TestStyling::readablePaletteIsLeftAlone_data()
@@ -155,7 +145,7 @@ void TestStyling::widgetOverrideDoesNotCompound()
     QCOMPARE(w.palette().color(QPalette::Inactive, QPalette::Highlight), once);
 }
 
-void TestStyling::occurrenceMarkStaysReadable_data()
+void TestStyling::occurrenceMarkIsAnInversion_data()
 {
     QTest::addColumn<QColor>("base");
     QTest::addColumn<QColor>("text");
@@ -163,76 +153,114 @@ void TestStyling::occurrenceMarkStaysReadable_data()
 
     QTest::newRow("dark") << QColor("#1e1e1e") << QColor("#d4d4d4") << QColor("#264f78");
     QTest::newRow("light") << QColor("#ffffff") << QColor("#202020") << QColor("#3584e4");
-    // Ubuntu's orange accent: the case the complaint came from, where washing the
-    // page with the accent itself gave either mud or rust.
+    // A dark page that is dark *grey* rather than black - the case the complaint
+    // came from, where a translucent wash has the least room to work in.
+    QTest::newRow("dark grey page") << QColor("#2b2b2b") << QColor("#d4d4d4") << QColor("#e95420");
+    // Ubuntu's orange accent, on both polarities: washing the page with the
+    // accent itself used to give either mud or rust.
     QTest::newRow("ubuntu dark") << QColor("#1e1e1e") << QColor("#d4d4d4") << QColor("#e95420");
     QTest::newRow("ubuntu light") << QColor("#ffffff") << QColor("#202020") << QColor("#e95420");
-    // Accents that carry no contrast of their own against the page. These used to
-    // need a special case; now that the visibility comes from lightness rather
-    // than from the accent, they are ordinary inputs.
+    // Accents that carry no contrast of their own against the page. They needed a
+    // special case back when the mark was the accent washed over the page; now
+    // that only the hue is borrowed, they are ordinary inputs.
     QTest::newRow("dark, dim highlight") << QColor("#1e1e1e") << QColor("#d4d4d4") << QColor("#232323");
     QTest::newRow("light, pale highlight") << QColor("#ffffff") << QColor("#202020") << QColor("#f4f4f4");
-    // The degenerate one: Highlight *is* the text background - no hue at all to
-    // borrow, so the mark comes out grey, which is fine.
+    // The degenerate one: Highlight *is* the text background - no hue to borrow,
+    // so the plate comes out a plain grey, which is fine.
     QTest::newRow("highlight equals base") << QColor("#2b2b2b") << QColor("#cccccc") << QColor("#2b2b2b");
     // And a fully achromatic accent, where getHslF() reports hue -1.
     QTest::newRow("grey accent") << QColor("#1e1e1e") << QColor("#d4d4d4") << QColor("#808080");
+    // Low-contrast palettes, where the page and its text are closer together than
+    // any theme should put them. Nothing here may divide by that closeness.
+    QTest::newRow("murky dark") << QColor("#2b2b2b") << QColor("#6a6a6a") << QColor("#e95420");
+    QTest::newRow("murky light") << QColor("#f0f0f0") << QColor("#a0a0a0") << QColor("#3584e4");
+    // A mid-grey page: dark enough to count as a dark editor, light enough that
+    // the plate lands within 4.5:1 of it - which is precisely when the glyphs stop
+    // being able to be the page's own colour and the fallback in occurrenceMark()
+    // has to push them towards black. Without a row like this the fallback is dead
+    // code as far as the test is concerned: replacing its condition with `false`
+    // left all the other rows passing.
+    QTest::newRow("mid-grey page") << QColor("#4a4a4a") << QColor("#e0e0e0") << QColor("#e95420");
 }
 
-void TestStyling::occurrenceMarkStaysReadable()
+void TestStyling::occurrenceMarkIsAnInversion()
 {
     QFETCH(QColor, base);
     QFETCH(QColor, text);
     QFETCH(QColor, highlight);
 
-    const QColor mark = occurrenceMark(editorPalette(base, text, highlight));
-    const QColor washed = composed(base, mark);
+    const OccurrenceMark mark = occurrenceMark(editorPalette(base, text, highlight));
 
-    // The mark is built from three separate decisions (see occurrenceMark), and
-    // there is one assertion per decision.
+    // The mark is three separate decisions (see occurrenceMark), and there is one
+    // group of assertions per decision. Note what is *not* asserted: any
+    // relationship to `text`. That is the whole point of the design - the glyphs
+    // on the plate are the mark's own, so legibility no longer depends on the
+    // colour the word happened to have. The earlier translucent versions had to
+    // check exactly that, and could never satisfy it and visibility at once.
 
-    // 1. The skew, which is what makes the mark visible at all: a dark page is
-    // marked with something lighter than itself, a light page with something
-    // darker. Two earlier versions instead washed the page with the theme's
-    // accent as-is, which on a dark theme meant a dark brown that vanished into
-    // the background - the complaint that led here.
+    // 1. Polarity: the plate is on the opposite side of the page from the text.
+    // A dark editor gets a plate lighter than its page, a light one gets a darker
+    // plate. This is what makes the mark visible without touching its opacity.
     const bool darkEditor = luminance(base) < luminance(text);
-    QVERIFY2(darkEditor ? luminance(washed) > luminance(base)
-                        : luminance(washed) < luminance(base),
-             qPrintable(QString("%1 editor: mark composes to %2, on the wrong side of Base %3")
+    QVERIFY2(darkEditor ? luminance(mark.background) > luminance(base)
+                        : luminance(mark.background) < luminance(base),
+             qPrintable(QString("%1 editor: plate %2 is on the wrong side of Base %3")
                         .arg(darkEditor ? "dark" : "light")
-                        .arg(washed.name()).arg(base.name())));
+                        .arg(mark.background.name()).arg(base.name())));
 
-    // 2. Visibility, as a band. The floor is the point of the mark; the ceiling
-    // keeps it from growing into a highlighter stroke again, and bounds what the
-    // glyphs on top can lose - a shift of X:1 costs the text no more than X,
-    // hence the 1/1.6 = 0.62 factor below rather than a second free constant.
-    QVERIFY2(contrast(washed, base) >= 1.3,
-             qPrintable(QString("mark %1 over %2 composes to %3 - only a %4:1 shift, invisible")
-                        .arg(mark.name(QColor::HexArgb)).arg(base.name())
-                        .arg(washed.name()).arg(contrast(washed, base))));
-    QVERIFY2(contrast(washed, base) <= 1.6,
-             qPrintable(QString("mark shifts the background by %1:1 - too loud")
-                        .arg(contrast(washed, base))));
-    QVERIFY2(contrast(text, washed) >= contrast(text, base) * 0.62,
-             qPrintable(QString("text contrast falls from %1 to %2")
-                        .arg(contrast(text, base)).arg(contrast(text, washed))));
+    // 2. The two contrasts that decide whether it works at all: the plate has to
+    // be findable against the page, and the glyphs have to be readable on the
+    // plate. Being independent is exactly what the split buys - both hold at once
+    // here, which no single-knob wash could manage.
+    QVERIFY2(contrast(mark.background, base) >= 3.0,
+             qPrintable(QString("plate %1 against page %2 is only %3:1 - hard to find")
+                        .arg(mark.background.name()).arg(base.name())
+                        .arg(contrast(mark.background, base))));
+    QVERIFY2(contrast(mark.foreground, mark.background) >= 4.5,
+             qPrintable(QString("glyphs %1 on plate %2 are only %3:1 - hard to read")
+                        .arg(mark.foreground.name()).arg(mark.background.name())
+                        .arg(contrast(mark.foreground, mark.background))));
 
-    // 3. Colourfulness, deliberately low: the mark carries a trace of the theme's
-    // hue, never its full accent. This is what keeps it from arguing with the
-    // syntax colouring it lands on.
-    QVERIFY2(mark.hslSaturationF() <= 0.21,
-             qPrintable(QString("mark %1 keeps saturation %2 - too colourful")
-                        .arg(mark.name(QColor::HexArgb)).arg(mark.hslSaturationF())));
-    QVERIFY2(mark.hslSaturationF() <= highlight.hslSaturationF() + 0.001,
-             qPrintable(QString("mark is more saturated (%1) than the theme's accent (%2)")
-                        .arg(mark.hslSaturationF()).arg(highlight.hslSaturationF())));
+    // The mark stays a mark and does not become a light source: a plate at full
+    // white on a dark page glares, and the tuning that arrived at kPlateLightness
+    // was mostly about staying below this.
+    QVERIFY2(contrast(mark.background, base) <= 12.0,
+             qPrintable(QString("plate %1 is %2:1 off the page - a glare, not a mark")
+                        .arg(mark.background.name()).arg(contrast(mark.background, base))));
 
-    // A wash, not a fill: the text underneath shows through rather than being
-    // replaced by a block of colour. The alpha stays low precisely because the
-    // lightness skew, not the alpha, is doing the work.
-    QVERIFY(mark.alphaF() > 0.02);
-    QVERIFY(mark.alphaF() < 0.5);
+    // 3. Colourfulness, deliberately low: the plate carries a trace of the
+    // theme's hue, never the accent itself, so it reads as "this word again"
+    // rather than as a colour with a meaning of its own.
+    QVERIFY2(mark.background.hslSaturationF() <= 0.23,
+             qPrintable(QString("plate %1 keeps saturation %2 - too colourful")
+                        .arg(mark.background.name()).arg(mark.background.hslSaturationF())));
+    QVERIFY2(mark.background.hslSaturationF() <= highlight.hslSaturationF() + 0.001,
+             qPrintable(QString("plate is more saturated (%1) than the theme's accent (%2)")
+                        .arg(mark.background.hslSaturationF()).arg(highlight.hslSaturationF())));
+
+    // Both colours are opaque. The plate is painted over whatever is already
+    // there (the current-line wash, for one), so translucency here would make the
+    // result depend on what it happens to land on - the very thing this replaced.
+    QCOMPARE(mark.background.alphaF(), 1.0f);
+    QCOMPARE(mark.foreground.alphaF(), 1.0f);
+
+    // 4. The glyphs are the page's own colour - that is what makes the mark read
+    // as a cut-out of the page rather than as a second colour scheme - unless the
+    // palette leaves them too close to the plate to read, in which case they head
+    // for the far pole instead. Both branches are exercised by the rows above.
+    if (contrast(base, mark.background) >= 4.5)
+    {
+        QCOMPARE(mark.foreground, base);
+    }
+    else
+    {
+        // Still an inversion, just a firmer one: away from the plate, i.e. past
+        // the page rather than back across it.
+        QVERIFY2(darkEditor ? luminance(mark.foreground) <= luminance(base)
+                            : luminance(mark.foreground) >= luminance(base),
+                 qPrintable(QString("glyphs %1 went the wrong way from page %2")
+                            .arg(mark.foreground.name()).arg(base.name())));
+    }
 }
 
 QTEST_MAIN(TestStyling)

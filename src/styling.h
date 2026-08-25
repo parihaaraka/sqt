@@ -21,23 +21,39 @@ QColor readableInactiveHighlight(const QPalette &p);
 /// on QEvent::ApplicationPaletteChange without the corrections compounding.
 void fixInactiveSelection(QWidget *w);
 
-/// How the editor marks the other occurrences of the word under the cursor: a
-/// pale translucent wash and nothing else, the way VS Code does it - an
-/// underline as well read as clutter.
+/// The two colours of the same-word mark: an opaque plate and the glyph colour
+/// to put on it.
+struct OccurrenceMark
+{
+    QColor background;
+    QColor foreground;
+};
+
+/// How the editor marks the other occurrences of the word under the cursor: as
+/// an inversion of the page - a soft plate of the *opposite* polarity, carrying
+/// glyphs the colour of the page itself. On a dark editor that means dark text
+/// on a light plate, and the other way round on a light one.
 ///
-/// Derived entirely from \a p (the hue from Highlight, the strength from Base),
-/// so a theme swap carries the mark along instead of leaving the hard-coded
-/// yellow that used to turn brown keywords into mustard on a dark theme.
+/// Three earlier attempts all washed the page with a translucent colour and left
+/// the syntax colouring to show through, and all three failed for one structural
+/// reason: a wash has a single knob, and shifting the background by X:1 costs the
+/// glyphs on top no less than the same X. Either the mark could not be seen or
+/// the words under it could not be read - and on a dark *grey* page (not black)
+/// there is even less room to trade. Giving the mark its own foreground breaks
+/// that tie: legibility stops depending on the colour the word happened to be.
 ///
-/// Visibility comes from *lightness*, skewed by the polarity of \a p itself (a
-/// dark editor is marked with something lighter than its page, a light one with
-/// something darker), while the colourfulness is deliberately cut down towards
-/// grey - only a trace of the theme's hue is kept. Turning the alpha of the
-/// theme's accent up and down instead moves both at once, which over Ubuntu's
-/// orange gives a choice between a muddy brown that vanishes and a rust block.
+/// The price, paid knowingly, is that the highlighter's colour is replaced
+/// inside the mark. That is a matter of appearance, not of information: the word
+/// is by definition the one under the cursor, whose colouring is visible at the
+/// cursor itself.
+///
+/// Derived entirely from \a p, so a theme swap carries the mark along: the hue
+/// comes from Highlight (the system selection colour, with most of its
+/// colourfulness taken out - a soft tinted grey rather than the accent itself),
+/// the polarity from Base against Text, the glyph colour from Base.
 ///
 /// See the constants at the top of the implementation: they are the whole
 /// appearance of the mark, in one place, meant for tuning by hand.
-QColor occurrenceMark(const QPalette &p);
+OccurrenceMark occurrenceMark(const QPalette &p);
 
 #endif // STYLING_H

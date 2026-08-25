@@ -116,6 +116,12 @@ void PgConnection::openAsync() noexcept
     {
         const int status = PQtransactionStatus(_conn);
         emit error(tr("unable to open connection (transaction status %1)").arg(status));
+        // A run that asked for the reconnect has to end here, or it stays in
+        // Reconnecting forever: the tab keeps showing "reconnecting...", the
+        // widget's _queryActive flag never goes down, and F5 means "cancel"
+        // from then on.
+        if (queryState() == QueryState::Reconnecting)
+            setQueryState(QueryState::Inactive);
         return;
     }
 
@@ -134,9 +140,12 @@ void PgConnection::openAsync() noexcept
     _conn = PQconnectStart(finalConnectionString().c_str());
     if (PQstatus(_conn) == CONNECTION_BAD)
     {
-        // connection failed
-        setQueryState(QueryState::Inactive);
+        // connection failed. The reason goes out *before* the Inactive state:
+        // that state is what lowers the widget's _queryActive flag, and this is
+        // the outcome of the run that asked for the reconnect, so it belongs to
+        // the tab's messages pane rather than to the shared log.
         emit error(PQerrorMessage(_conn));
+        setQueryState(QueryState::Inactive);
         if (_conn)
         {
             PQfinish(_conn);
@@ -475,11 +484,41 @@ bool PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
             _params_tmp.clear();
             for (const QVariant &v: params_copy)
                 _params_tmp.add(v);
+            // a new run, so it has its own right to a single silent resend
+            _resent_once = false;
         }
+        // Nothing of this attempt has reached the socket yet. A parameterized
+        // query counts as delivered from the outset: see _query_flushed - the
+        // extended protocol gives no guarantee to lean on.
+        _query_flushed = (_params_tmp.count() > 0);
 
         int async_sent_ok = 0;
         if (_conn)
         {
+            // Read whatever the link has to say before the query is handed to
+            // libpq. A server that has ended the session (a restart, an
+            // administrator command, an idle timeout) has normally sent its
+            // FATAL and its FIN long ago, but nothing on an idle link reads
+            // them: PQstatus() still says OK, the query goes into the buffer,
+            // and the kernel accepts it happily - a half-closed socket is still
+            // writable. The loss then surfaces on the *read* that follows, where
+            // a query already on the wire is indistinguishable from one the
+            // server never saw, and the user is left to check by hand what the
+            // run did. Collecting the news first lets the branch below state
+            // with certainty that the query was not delivered, and simply send
+            // it again on a fresh link.
+            //
+            // More than one read is needed: the first one returns the bytes that
+            // were waiting (the FATAL) and reports success, and only the next
+            // one runs into the end of the stream and marks the connection bad.
+            // PQconsumeInput() never blocks, so a couple of extra calls on a
+            // healthy link cost one syscall each and change nothing.
+            for (int i = 0; i < 3 && PQstatus(_conn) == CONNECTION_OK; ++i)
+            {
+                if (!PQconsumeInput(_conn))
+                    break;
+            }
+
             async_sent_ok = _params_tmp.count() ?
                         PQsendQueryParams(_conn,
                                           _query_tmp.toStdString().c_str(),
@@ -509,18 +548,26 @@ bool PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
             if (!was_in_transaction)
                 setQueryState(QueryState::Reconnecting);
 
-            if (_conn) // to avoid "connection pointer is NULL"
+            // libpq's own wording ("no connection to the server") reads as a
+            // failure of the run, while the query is merely about to be sent
+            // again; an open transaction, though, has really been lost.
+            // The announcement is made even when the handle is already gone
+            // (a loss noticed while idle releases it), or the pane would show
+            // "connection established" out of nowhere.
+            if (was_in_transaction)
             {
-                // libpq's own wording ("no connection to the server") reads as
-                // a failure of the run, while the query is merely about to be
-                // sent again; an open transaction, though, has really been lost
-                if (was_in_transaction)
+                if (_conn) // to avoid "connection pointer is NULL"
                     emit error(PQerrorMessage(_conn));
-                else
-                    emit message(tr("connection lost, reconnecting..."));
+            }
+            else
+                emit message(tr("connection lost, reconnecting..."));
+
+            if (_conn)
+            {
                 closeLocked(); // the guard is held right here
                 emit connectionLost();
             }
+
             lk.unlock();
             _async_stage = async_stage::none;
             // do not try to excute the query again if there was an opened transaction
@@ -535,15 +582,13 @@ bool PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
         {
             _async_stage = async_stage::flush;
             int res = PQflush(_conn);
-            if (res < 0)    // error
-            {
-                _async_stage = async_stage::none;
-                watchSocket(SocketWatchMode::Read);
-            }
-            else
+            if (res >= 0)
             {
                 if (!res)
                 {
+                    // the query has left libpq's buffer whole - from here on it
+                    // may have been executed, see _query_flushed
+                    _query_flushed = true;
                     _async_stage = async_stage::wait_ready_read;
                     watchSocket(SocketWatchMode::Read);
                 }
@@ -553,9 +598,21 @@ bool PgConnection::executeAsync(const QString &query, const QVector<QVariant> *p
                 }
                 return;
             }
+
+            // the write failed, so the query is incomplete and the server
+            // cannot have acted on it: this normally reconnects and resends
+            const QString err = PQerrorMessage(_conn);
+            const bool resend = linkLostMidQuery(err);
+            lk.unlock();
+            if (resend)
+                openAsync();
+            return;
         }
-        setQueryState(QueryState::Inactive);
+        // libpq refused the query itself (out of memory, wrong state) on a link
+        // that is still alive: that refusal is the result of the run, hence
+        // reported before the Inactive state that ends it
         emit error(PQerrorMessage(_conn));
+        setQueryState(QueryState::Inactive);
     };
 
     if (query.isEmpty())
@@ -864,9 +921,63 @@ void PgConnection::fetchNotifications()
     }
 }
 
+bool PgConnection::linkLostMidQuery(const QString &libpqError)
+{
+    // the caller holds _connectionGuard
+
+    // A query that never left libpq's buffer in full cannot have been executed
+    // (see _query_flushed), so the link is worth restoring and the query worth
+    // sending again - exactly what the user would do by hand, minus the
+    // guesswork. A COPY is excluded: it has a local file half-written or
+    // half-read behind it, and an open transaction is lost with the link, which
+    // changes what the query would mean on a fresh session.
+    const bool resendable = (!_query_flushed && !_copy_context && !_resent_once &&
+                             PQtransactionStatus(_conn) != PQTRANS_INTRANS);
+
+    _copy_context.clear();
+    // the notifiers would keep firing on a dead descriptor
+    watchSocket(SocketWatchMode::None);
+    _async_stage = async_stage::none;
+    // the link is gone whether or not the handle is kept below, and isOpened()
+    // (the tree indicator) reads this flag
+    _opened = false;
+
+    if (resendable)
+    {
+        _resent_once = true;
+        // the run continues, so it stays away from Inactive: the query is about
+        // to be sent again on a fresh link
+        setQueryState(QueryState::Reconnecting);
+        emit message(tr("connection lost before the query was sent, reconnecting..."));
+        closeLocked(); // the guard is held by the caller
+        emit connectionLost();
+        return true;
+    }
+
+    // The query had already been delivered, so the server may well have executed
+    // it - possibly committed it - and sqt has no way to tell. Resending is out
+    // of the question here: this is the result of the run, and it belongs to the
+    // tab's messages pane, hence emitted *before* the Inactive state, which is
+    // what lowers the widget's _queryActive flag. The dead handle is kept (its
+    // CONNECTION_BAD status is what paints the tree indicator red, and the
+    // pending resultsets stay alive until the next run replaces them); the next
+    // query reopens the link.
+    if (!libpqError.isEmpty())
+        emit error(libpqError);
+    emit error(tr("The query had been sent when the connection dropped, so it is "
+                  "unknown whether the server executed it. If it modifies data, "
+                  "check the effect of this run before repeating it."));
+    // tells the widget to report the run as interrupted rather than done
+    emit outcomeUnknown();
+    setQueryState(QueryState::Inactive);
+    emit connectionLost();
+    return false;
+}
+
 void PgConnection::fetch() noexcept
 {
     _connectionGuard.lock();
+
     // Nobody waits for a result on an idle link: whatever arrives on it is a
     // notification, and whatever happens to it is not the output of a query.
     // The transaction status alone cannot tell the two apart - libpq reports
@@ -884,19 +995,17 @@ void PgConnection::fetch() noexcept
             if (PQstatus(_conn) == CONNECTION_BAD)
             {
                 QString err = PQerrorMessage(_conn);
-                _copy_context.clear();
-                // the notifiers would keep firing on a dead descriptor
-                watchSocket(SocketWatchMode::None);
-                _async_stage = async_stage::none;
-                // the link is gone whether or not the handle is kept below,
-                // and isOpened() (the tree indicator) reads this flag
-                _opened = false;
 
                 // An idle link that drops costs the user nothing and needs no
                 // announcement: release the handle so that the tree indicator
                 // turns red, and let the next query restore the connection.
                 if (is_notification)
                 {
+                    _copy_context.clear();
+                    // the notifiers would keep firing on a dead descriptor
+                    watchSocket(SocketWatchMode::None);
+                    _async_stage = async_stage::none;
+                    _opened = false;
                     setQueryState(QueryState::Inactive);
                     lk.unlock();
                     close();
@@ -904,20 +1013,15 @@ void PgConnection::fetch() noexcept
                     return;
                 }
 
-                // The query had already been delivered, so the server may well
-                // have executed it - possibly committed it - and sqt has no way
-                // to tell. Resending is out of the question here; this is the
-                // result of the run and it belongs to the tab's messages pane,
-                // hence emitted *before* the Inactive state, which is what
-                // lowers the widget's _queryActive flag. The dead handle is
-                // kept (its CONNECTION_BAD status is what paints the tree
-                // indicator red, and the pending resultsets stay alive until
-                // the next run replaces them); the next query reopens the link.
-                emit error(err);
-                setQueryState(QueryState::Inactive);
-                emit connectionLost();
-                break;
+                // a query of ours was in flight: either it is provably safe to
+                // send again, or the user has to be told what is unknown
+                const bool resend = linkLostMidQuery(err);
+                lk.unlock();
+                if (resend)
+                    openAsync(); // sends the query again once connected
+                return;
             }
+
             emit error(PQerrorMessage(_conn));
             break;  // incorrect processing?
         }
@@ -1194,12 +1298,27 @@ void PgConnection::readyReadSocket()
             readyWriteSocket();
             return;
         }
-        emit error(PQerrorMessage(_conn));
+
+        const QString err = PQerrorMessage(_conn);
+        if (PQstatus(_conn) == CONNECTION_BAD)
+        {
+            // the query was still on its way out, so it is normally resent
+            const bool resend = linkLostMidQuery(err);
+            lk.unlock();
+            if (resend)
+                openAsync();
+            return;
+        }
+
+        // the link is alive, so this is the outcome of the run and belongs to
+        // the pane: reported before the Inactive state that ends it
+        emit error(err);
         setQueryState(QueryState::Inactive);
         _async_stage = async_stage::none;
         watchSocket(SocketWatchMode::Read);
         break;
     }
+
     default:
         fetch();
         break;
@@ -1229,21 +1348,32 @@ void PgConnection::readyWriteSocket()
 
     if (_async_stage == async_stage::flush || _async_stage == async_stage::flush_copy)
     {
+        const bool query_flush = (_async_stage == async_stage::flush);
         int res = PQflush(_conn);
-        if (res < 0)    // error
-            _async_stage = async_stage::none;
-        else
+        if (res >= 0)
         {
             if (!res)
             {
+                // the query is out of libpq's buffer whole - past this point it
+                // may have been executed, see _query_flushed
+                if (query_flush)
+                    _query_flushed = true;
                 _async_stage = async_stage::wait_ready_read;
                 watchSocket(SocketWatchMode::Read);
             }
             // current mode is rw
             return;
         }
-        emit error(PQerrorMessage(_conn));
-        _async_stage = async_stage::none;
+
+        // The write failed, so the run is over either way. Sending the query
+        // again is normally safe here - its last bytes never made it out - and
+        // the helper ends the run when it is not.
+        const QString err = PQerrorMessage(_conn);
+        const bool resend = linkLostMidQuery(err);
+        lk.unlock();
+        if (resend)
+            openAsync();
+        return;
     }
 
     watchSocket(SocketWatchMode::Read);

@@ -1986,13 +1986,15 @@ void CodeEditor::onHlTimerTimeout()
             int total_hits = 0;
             int wordLength = selectedText.length();
             content = text();
-            // A translucent wash from the palette and nothing more (see
-            // occurrenceMark): strong enough to spot, weak enough to read the
-            // syntax colouring through. The hard-coded yellow this replaces made
-            // brown keywords unreadable on a dark theme and ignored the colour
-            // scheme entirely.
+            // An inversion of the page, both colours from the palette (see
+            // occurrenceMark): a soft plate of the opposite polarity, carrying the
+            // page's own colour as its glyphs. Stating the foreground is the whole
+            // point - every earlier version left the highlighter's colour in place
+            // and had to keep the plate so faint that it could barely be seen.
+            const OccurrenceMark mark = occurrenceMark(palette());
             QTextEdit::ExtraSelection s;
-            s.format.setBackground(occurrenceMark(palette()));
+            s.format.setBackground(mark.background);
+            s.format.setForeground(mark.foreground);
 
             auto verifyPos = [&selections, wordLength, &s, &testCursor, &content, &total_hits](int &pos, int &counter)
             {

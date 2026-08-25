@@ -88,38 +88,36 @@ QColor readableInactiveHighlight(const QPalette &p)
 
 namespace
 {
-    // The same-word mark, all of it: these five numbers are its whole appearance
+    // The same-word mark, all of it: these four numbers are its whole appearance
     // and are meant to be tuned by hand.
     //
-    // Two earlier attempts turned a single knob - the alpha of the theme's
-    // selection colour - and both looked wrong for the same reason: alpha moves
-    // visibility and colourfulness together. Over Ubuntu's orange accent that
-    // gives either a muddy brown indistinguishable from the page, or a rust
-    // block. So the channels are split here: colourfulness is cut on purpose,
-    // and the visibility comes from lightness instead.
+    // Three earlier attempts turned a single knob - how strongly a translucent
+    // colour washed the page - and all three failed the same way, because a wash
+    // trades one thing against the other: whatever contrast it gains against the
+    // page it takes from the glyphs sitting on it. So the mark now brings its own
+    // foreground and the two are set independently.
 
     /// How much of the theme's saturation survives, and the ceiling on it. Low,
     /// because the mark should read as "this word again" rather than as a colour
-    /// of its own - and it lands on text the highlighter has already coloured.
+    /// of its own: a soft tinted grey that belongs to the colour scheme, not a
+    /// block of the accent.
     constexpr qreal kChromaKeep = 0.35;
-    constexpr qreal kChromaCap  = 0.20;
+    constexpr qreal kChromaCap  = 0.22;
 
-    /// Lightness of the tint on a dark editor; a light one gets 1 - this. The
-    /// skew that does the visible work: a dark page is marked with something
-    /// lighter than itself, a light page with something darker.
-    constexpr qreal kTintLightness = 0.85;
+    /// Lightness of the plate on a dark editor; a light one gets 1 - this. The
+    /// one knob that matters: the plate is of the opposite polarity to the page,
+    /// and this says how far it goes. Too high glares, too low stops reading as
+    /// an inversion - 0.66 is a mid-light tint, visible without shouting.
+    constexpr qreal kPlateLightness = 0.66;
 
-    /// How far the composed background must end up from Base - the one number
-    /// that decides "can I see it". It also bounds what the glyphs on top can
-    /// lose, since a shift of X:1 can cost the text no more than the same X.
-    constexpr qreal kTargetShift = 1.50;
-
-    /// Never wash the text out, whatever the palette: an upper bound on alpha in
-    /// case some theme makes the target unreachable.
-    constexpr qreal kAlphaCap = 0.50;
+    /// The glyphs on the plate are the page's own colour, which is what makes the
+    /// mark read as a cut-out of the page. Should some palette put the two too
+    /// close together, they are pushed apart towards the far pole until they
+    /// reach this - comfortable reading, WCAG's AA for body text.
+    constexpr qreal kTextOnPlate = 4.5;
 }
 
-QColor occurrenceMark(const QPalette &p)
+OccurrenceMark occurrenceMark(const QPalette &p)
 {
     const QColor base = p.color(QPalette::Active, QPalette::Base);
     const QColor text = p.color(QPalette::Active, QPalette::Text);
@@ -132,25 +130,36 @@ QColor occurrenceMark(const QPalette &p)
     const bool darkEditor = relativeLuminance(base) < relativeLuminance(text);
 
     // The theme's hue with most of its colourfulness taken out - enough to tell
-    // the mark belongs to this colour scheme, not enough to argue with the syntax
-    // colouring underneath. An achromatic or unset Highlight needs no special
-    // case: getHslF() reports hue -1 for it, and the result is plain grey.
+    // the mark belongs to this colour scheme, not enough to become a colour in its
+    // own right. An achromatic or unset Highlight needs no special case:
+    // getHslF() reports hue -1 for it, and the result is plain grey.
     float h = 0, s = 0, l = 0;
     highlight.getHslF(&h, &s, &l);
-    const QColor tint = QColor::fromHslF(h < 0 ? 0.f : h,
-                                         qMin(s * float(kChromaKeep), float(kChromaCap)),
-                                         float(darkEditor ? kTintLightness : 1.0 - kTintLightness));
+    OccurrenceMark mark;
+    mark.background = QColor::fromHslF(h < 0 ? 0.f : h,
+                                       qMin(s * float(kChromaKeep), float(kChromaCap)),
+                                       float(darkEditor ? kPlateLightness : 1.0 - kPlateLightness));
 
-    // Then the *smallest* alpha that carries the background as far as asked -
-    // smallest, so as much of the highlighter's work shows through as possible.
-    // (The old hard-coded yellow sat at 0.7 and buried the glyphs completely.)
-    qreal alpha = 0.02;
-    while (alpha < kAlphaCap &&
-           contrastRatio(mix(base, tint, alpha), base) < kTargetShift)
-        alpha += 0.01;
+    // The page's own colour on top: the mark then looks like the page showing
+    // through a plate rather than like a second colour scheme. Opaque throughout -
+    // with the foreground stated outright there is nothing to gain from letting
+    // the syntax colouring show through, and an opaque plate composes predictably
+    // over whatever else is painted below (the current-line wash, say).
+    mark.foreground = base;
 
-    QColor mark = tint;
-    mark.setAlphaF(alpha);
+    // A palette where Base and the plate happen to sit close together would leave
+    // the words on the mark harder to read than the ones off it, which is the one
+    // outcome this design exists to prevent. Then the glyphs give up on matching
+    // the page and head for the far pole instead - away from the plate, so still
+    // an inversion, just a firmer one.
+    if (contrastRatio(mark.foreground, mark.background) < kTextOnPlate)
+    {
+        const QColor pole = darkEditor ? QColor(Qt::black) : QColor(Qt::white);
+        for (int i = 0; i < 20 &&
+             contrastRatio(mark.foreground, mark.background) < kTextOnPlate; ++i)
+            mark.foreground = mix(mark.foreground, pole, 0.2);
+    }
+
     return mark;
 }
 
