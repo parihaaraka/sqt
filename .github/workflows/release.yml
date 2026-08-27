@@ -307,6 +307,14 @@ jobs:
       # What makes the difference between "the build passed" and "the program
       # starts": windeployqt not finding Qt, or vcpkg's dlls not being copied,
       # produces a perfectly well-formed archive that cannot run.
+      #
+      # Judged in both directions. Absent files are the failure that matters,
+      # but unexpected ones are how the archive grew to ~90 files and 30-odd
+      # spare MB in the first place - an app-local Universal CRT, Qt Quick and
+      # the D3D12 shader compiler pulled in by QML debugger plugins, PostgreSQL's
+      # ecpg libraries - none of which anything here loads. Every one of those
+      # arrived quietly, because a check that only looks for what it needs
+      # cannot see them.
       - name: check the archive
         timeout-minutes: 5
         working-directory: build
@@ -319,18 +327,72 @@ jobs:
           # tar does not read zip files.
           cmake -E tar xf "../$zip"
           root=$(ls -d sqt-*-windows-x64)
+
+          echo "== archive contents"
+          du -sh "$root"
+          (cd "$root" && find . -type f | sort)
+          echo
+
           missing=
           for f in sqt.exe Qt6Core.dll Qt6Gui.dll Qt6Widgets.dll Qt6Qml.dll \
-                   platforms/qwindows.dll libpq.dll decor scripts; do
+                   Qt6Network.dll Qt6Svg.dll \
+                   platforms/qwindows.dll styles/qmodernwindowsstyle.dll \
+                   iconengines/qsvgicon.dll imageformats/qsvg.dll \
+                   imageformats/qico.dll libpq.dll decor scripts \
+                   LICENSE README.md; do
             if [ ! -e "$root/$f" ]; then
               echo "missing from the archive: $f" >&2
               missing=1
             fi
           done
-          [ -z "$missing" ]
+
+          # Anything outside decor/ and scripts/ has to be named here. The
+          # patterns cover what legitimately varies: libpq's dependencies are
+          # named differently from one vcpkg version to the next, and the MSVC
+          # runtime's file set moves with the runner's Visual Studio.
+          unexpected=
+          while read -r f; do
+            case "$f" in
+              ./decor/*|./scripts/*) ;;
+              ./sqt.exe|./LICENSE|./README.md) ;;
+              ./Qt6Core.dll|./Qt6Gui.dll|./Qt6Widgets.dll) ;;
+              ./Qt6Qml.dll|./Qt6Network.dll|./Qt6Svg.dll) ;;
+              ./platforms/qwindows.dll|./styles/*.dll) ;;
+              ./iconengines/qsvgicon.dll) ;;
+              ./imageformats/qsvg.dll|./imageformats/qico.dll) ;;
+              ./libpq.dll) ;;
+              # libpq's dependencies: openssl, zlib, lz4, zstd, and openssl's
+              # optional legacy provider.
+              ./libcrypto-*.dll|./libssl-*.dll|./legacy.dll) ;;
+              ./z.dll|./zlib1.dll|./lz4.dll|./zstd.dll) ;;
+              # the MSVC runtime, without the app-local UCRT
+              ./msvcp140*.dll|./vcruntime140*.dll) ;;
+              *)
+                echo "unexpected in the archive: $f" >&2
+                unexpected=1
+                ;;
+            esac
+          done < <(cd "$root" && find . -type f)
+
+          if [ -n "$unexpected" ]; then
+            echo >&2
+            echo "Each file in the archive has to be something the program" >&2
+            echo "loads. If the ones above are needed, add them to this" >&2
+            echo "check; if not, add them to SQT_DEPLOY_JUNK or to" >&2
+            echo "VCPKG_DLL_EXCLUDE in CMakeLists.txt." >&2
+          fi
+          # An explicit exit, not `[ -z "$missing" ] && [ -z "$unexpected" ]`:
+          # set -e ignores a failure inside an && list (only its last command
+          # counts), so that spelling would report success on a bad archive.
+          if [ -n "$missing" ] || [ -n "$unexpected" ]; then
+            exit 1
+          fi
+
           # Runs the unpacked copy, so a dll left behind shows up here rather
           # than on someone's desktop. A gui subsystem binary prints nothing
-          # visible, hence only the exit code is judged.
+          # visible, hence only the exit code is judged. This is also what
+          # proves the pruning went no further than it should have: a plugin
+          # removed by mistake fails here, not on a user's machine.
           "./$root/sqt.exe" --version
           echo "the unpacked binary starts"
 

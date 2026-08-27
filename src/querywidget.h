@@ -5,6 +5,7 @@
 #include <QSplitter>
 #include <QTextCursor>
 #include <QPlainTextEdit>
+#include <QPair>
 #include <memory>
 #include <QJsonObject>
 
@@ -72,6 +73,11 @@ public:
     void clearMatchHighlight();
     QString toPlainText();
     QTextCursor textCursor() const;
+    /// [start, end) of the SQL statement at the caret, ignoring any current
+    /// selection - what Ctrl+Return sends when there is none, and what
+    /// Ctrl+Shift+A selects to preview that. {-1, -1} if no dictionary-driven
+    /// lexer is available for this connection (see SqlLexer::sharedFor()).
+    QPair<int, int> currentStatementBounds();
     QTextDocument* document() const;
     QWidget* editor() const;
     void setPlainText(const QString &text);
@@ -100,6 +106,8 @@ public slots:
     void clearResult();
     void onCompleterRequest();
     void onScriptObjectRequest();
+    void onExecuteStatementRequest();
+    void onSelectStatementRequest();
     //void onCustomGridContextMenuRequested(const QPoint & pos);
     //void on_customEditorContextMenuRequested(const QPoint & pos);
 

@@ -105,20 +105,31 @@ private:
     QString multiCursorSelectedText() const;    // every selection, joined by '\n' in document order
     const QVector<int> cursorsOrderedByPosition() const; // indices into _multiCursor.cursors(), ascending by selectionStart()
     bool copySelectionToClipboard() const;      // whatever createMimeDataFromSelection() yields -> clipboard
-    static bool isNavigationKey(int key);
     static QTextCursor::MoveOperation moveOperationForKey(int key, bool ctrl);
 
-    // Ctrl+Left/Right word jump, VS Code style: a run of whitespace is
-    // always swallowed on the way but never itself a stopping point - the
-    // cursor lands right where a word/punctuation run ends (nextWordBoundary)
-    // or begins (previousWordBoundary), so Ctrl+Shift+Right selecting a word
-    // doesn't pull in the space after it. One exception: a single separator
-    // glued directly onto a word with no space between (the '.' in
-    // "qwe.rty") isn't its own stop - it merges into that word, matching VS
-    // Code. QTextCursor::NextWord/PreviousWord give us neither of this, so
-    // this walks the document by hand instead.
-    static int nextWordBoundary(QTextDocument *doc, int pos);
-    static int previousWordBoundary(QTextDocument *doc, int pos);
+    /// Every key the editor treats specially, dispatched by key code. True
+    /// when the event is consumed, false to let QPlainTextEdit have it.
+    bool handleKeyPress(QKeyEvent *keyEvent);
+
+    /// An arrow/Home/End/PageUp/PageDown press applied to every cursor.
+    /// False with a single cursor: Qt's own navigation is better left alone.
+    bool moveAllCursors(int key, bool ctrl, bool shift);
+
+
+    // Ctrl+Left/Right word jump lives in wordnav.h (WordNav::nextBoundary /
+    // previousBoundary) - free functions over a QTextDocument, so the rules
+    // can be unit-tested without an editor widget (tests/tst_wordnav.cpp).
+
+    // Shift+Delete / Ctrl+X with nothing selected: cut whole lines. Returns
+    // false when there is nothing to cut (empty document), leaving the
+    // clipboard untouched.
+    bool cutCurrentLines();
+
+    // The caret's own line, or every line any selection touches, as one
+    // range covering them whole (leading '\n' included where there is one) -
+    // what cutCurrentLines() removes and puts on the clipboard.
+    QTextCursor lineRangeForCut(const QTextCursor &c) const;
+
 
     // ---- per-cursor editing primitives ----
     // Identical logic whether there is one active cursor or many: with a
@@ -193,6 +204,13 @@ private:
 signals:
     void completerRequest();
     void scriptObjectRequest();
+    /// Ctrl+Return: run the current selection, or (with none) the statement
+    /// under the caret - see MainWindow::executeQuery().
+    void executeStatementRequest();
+    /// Ctrl+Shift+A: select the statement under the caret without running
+    /// it - a dry-run preview of what Ctrl+Return would send with no
+    /// selection.
+    void selectStatementRequest();
 };
 
 #endif // CODEEDITOR_H

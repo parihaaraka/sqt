@@ -143,8 +143,31 @@ if(WIN32)
         endif()
     endforeach()
 
+    # What vcpkg's bin holds that this application does not link. libpq is
+    # installed alongside its sibling client libraries, and copying the whole
+    # directory took them along - so the archive carried an embedded-SQL
+    # preprocessor runtime that nothing here has ever called.
+    #
+    # Stated as what to leave out rather than as a list of what to take: the
+    # names of libpq's actual dependencies (z / zlib1, libcrypto-3-x64, ...)
+    # vary between triplets and vcpkg versions, and an allow-list that goes
+    # stale silently drops a dependency the program needs to start - a far
+    # worse outcome than a spare 200 KB dll.
+    set(VCPKG_DLL_EXCLUDE
+        "libecpg"         # embedded SQL in C: preprocessor runtime
+        "libecpg_compat"  # its compatibility layer
+        "libpgtypes"      # ecpg's type conversion helpers
+    )
+
     if(VCPKG_BIN_DIR)
-        file(GLOB VCPKG_DLLS "${VCPKG_BIN_DIR}/*.dll")
+        file(GLOB VCPKG_ALL_DLLS "${VCPKG_BIN_DIR}/*.dll")
+        set(VCPKG_DLLS "")
+        foreach(DLL ${VCPKG_ALL_DLLS})
+            get_filename_component(DLL_NAME "${DLL}" NAME_WE)
+            if(NOT DLL_NAME IN_LIST VCPKG_DLL_EXCLUDE)
+                list(APPEND VCPKG_DLLS "${DLL}")
+            endif()
+        endforeach()
         if(VCPKG_DLLS)
             add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different ${VCPKG_DLLS} "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
@@ -304,10 +327,54 @@ if(WIN32)
             if(NOT _windeployqt_result EQUAL 0)
                 message(FATAL_ERROR \"windeployqt failed: \${_windeployqt_result}\")
             endif()")
+
+        # What windeployqt leaves behind that this application cannot use.
+        #
+        # It deploys the entire QML tooling directory for anything linking Qml -
+        # sqt links it for QJSEngine alone (see scripting.cpp) - and then
+        # resolves the dependencies of the plugins it just copied: two of them,
+        # qmldbg_inspector and qmldbg_quickprofiler, link Qt Quick, which brings
+        # QtOpenGL and the Direct3D 12 shader compiler along. Some 30 MB in aid
+        # of a QML debugger that can only be reached through the
+        # -qmljsdebugger command line option, and a scene graph this
+        # widget-based program never creates. None of it is what QJSEngine runs
+        # on: that lives entirely inside Qt6Qml.dll, which stays.
+        #
+        # Removed after the fact rather than suppressed with a windeployqt
+        # option: the relevant options differ between Qt versions, and an
+        # unknown one makes the tool fail outright - so this list, unlike a
+        # flag, cannot break the release when Qt is updated.
+        set(SQT_DEPLOY_JUNK
+            qmltooling              # QML debugger services; -qmljsdebugger only
+            qml                     # QML module imports; empty, nothing imports any
+            generic                 # qtuiotouchplugin: TUIO touch input over UDP
+            Qt6Quick.dll            # required by the qmltooling plugins, by nothing else
+            Qt6QmlModels.dll        # ditto
+            Qt6QmlMeta.dll          # ditto
+            Qt6QmlWorkerScript.dll  # ditto
+            Qt6OpenGL.dll           # ditto; widgets paint through the raster engine
+            dxcompiler.dll          # D3D12 shader compiler, reached only through Quick's RHI
+            dxil.dll                # its shader signing companion
+            imageformats/qgif.dll   # only png, svg and ico are ever loaded
+            imageformats/qjpeg.dll  # ditto
+            tls                     # QSslSocket backends; libpq brings its own TLS
+            networkinformation      # connectivity reporting for QNetworkInformation
+        )
+
+        set(SQT_PRUNE_CODE "message(STATUS \"Pruning unused Qt deployment artifacts\")\n")
+        foreach(JUNK IN LISTS SQT_DEPLOY_JUNK)
+            string(APPEND SQT_PRUNE_CODE
+                   "file(REMOVE_RECURSE \"\${CMAKE_INSTALL_PREFIX}/${JUNK}\")\n")
+        endforeach()
+        # After the windeployqt call above: install code runs in the order it is
+        # declared, so this always sees a fully populated tree.
+        install(CODE "${SQT_PRUNE_CODE}")
     endif()
 
-    if(VCPKG_BIN_DIR)
-        install(DIRECTORY "${VCPKG_BIN_DIR}/" DESTINATION . FILES_MATCHING PATTERN "*.dll")
+    if(VCPKG_DLLS)
+        # The same filtered list the build directory gets, rather than the whole
+        # of vcpkg's bin - see VCPKG_DLL_EXCLUDE above.
+        install(FILES ${VCPKG_DLLS} DESTINATION .)
     endif()
     if(EXISTING_MINGW_DLLS)
         install(FILES ${EXISTING_MINGW_DLLS} DESTINATION .)
@@ -315,9 +382,29 @@ if(WIN32)
     if(MSVC)
         # msvcp140.dll and friends, so the zip runs on a machine without the
         # redistributable installed.
+        #
+        # Deliberately *without* CMAKE_INSTALL_UCRT_LIBRARIES: that one adds an
+        # app-local copy of the Universal CRT - ucrtbase.dll plus 44
+        # api-ms-win-*.dll forwarders, i.e. 45 of the archive's ~90 files - and
+        # it is only ever needed on Windows 7 or 8 that never received
+        # KB2999226. Every Windows 10 and 11 has the UCRT as part of the system.
+        # Should those be worth supporting again, turn this back on rather than
+        # shipping the files by accident.
         set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION .)
-        set(CMAKE_INSTALL_UCRT_LIBRARIES ON)
+        # Collect the list without installing it, so the result can be filtered.
+        set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP ON)
         include(InstallRequiredSystemLibraries)
+
+        set(SQT_RUNTIME_LIBS "")
+        foreach(RUNTIME_LIB ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS})
+            # concrt140.dll is the Concurrency Runtime, which the MSVC standard
+            # library stopped using after VS2015; nothing in this program or in
+            # Qt loads it.
+            if(NOT RUNTIME_LIB MATCHES "concrt140")
+                list(APPEND SQT_RUNTIME_LIBS "${RUNTIME_LIB}")
+            endif()
+        endforeach()
+        install(PROGRAMS ${SQT_RUNTIME_LIBS} DESTINATION .)
     endif()
 endif()
 

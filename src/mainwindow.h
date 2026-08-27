@@ -38,6 +38,11 @@ public:
     void activateEditorBlock(CodeBlockProperties *blockProperties);
     void queryStateChanged(QueryWidget *w, QueryState state);
     QueryWidget* openScriptTab(const QString &text, const QString &title, DbConnection *connection = nullptr);
+    /// What on_actionExecute_query_triggered() does, minus the cancel/stop-
+    /// timer branch, so QueryWidget's Ctrl+Return handler can reuse it. With
+    /// currentStatementOnly and no selection, only the top-level SQL
+    /// statement under the caret is sent - see SqlLexer::statementBounds().
+    void executeQuery(QueryWidget *q, bool currentStatementOnly);
 
 protected:
     virtual void closeEvent(QCloseEvent *event) override;

@@ -17,6 +17,7 @@
 #include <QMouseEvent>
 #include "settings.h"
 #include "styling.h"
+#include "wordnav.h"
 #include <QDebug>
 #include <qclipboard.h>
 
@@ -316,29 +317,11 @@ void CodeEditor::resetCaretBlink()
     _caretBlinkTimer->start(); // restart the countdown so it doesn't blink again until idle
 }
 
-bool CodeEditor::isNavigationKey(int key)
-{
-    switch (key)
-    {
-    case Qt::Key_Left:
-    case Qt::Key_Right:
-    case Qt::Key_Up:
-    case Qt::Key_Down:
-    case Qt::Key_Home:
-    case Qt::Key_End:
-    case Qt::Key_PageUp:
-    case Qt::Key_PageDown:
-        return true;
-    default:
-        return false;
-    }
-}
-
 QTextCursor::MoveOperation CodeEditor::moveOperationForKey(int key, bool ctrl)
 {
     switch (key)
     {
-    case Qt::Key_Left:  return ctrl ? QTextCursor::NoMove : QTextCursor::Left;  // ctrl case handled separately, see nextWordBoundary/previousWordBoundary
+    case Qt::Key_Left:  return ctrl ? QTextCursor::NoMove : QTextCursor::Left;  // ctrl case handled separately, see WordNav
     case Qt::Key_Right: return ctrl ? QTextCursor::NoMove : QTextCursor::Right; // ditto
     case Qt::Key_Up:    return QTextCursor::Up;
     case Qt::Key_Down:  return QTextCursor::Down;
@@ -346,93 +329,6 @@ QTextCursor::MoveOperation CodeEditor::moveOperationForKey(int key, bool ctrl)
     case Qt::Key_End:   return ctrl ? QTextCursor::End   : QTextCursor::EndOfLine;
     default:            return QTextCursor::NoMove;
     }
-}
-
-namespace
-{
-    enum class WordCharClass { Space, Word, Other };
-
-    WordCharClass classifyWordChar(QChar ch)
-    {
-        // QChar::isSpace() already covers QChar::ParagraphSeparator (the
-        // character QTextDocument uses between blocks), so word jumps cross
-        // line boundaries the same way Qt's own NextWord/PreviousWord do.
-        if (ch.isSpace())
-            return WordCharClass::Space;
-        if (ch.isLetterOrNumber() || ch == QLatin1Char('_'))
-            return WordCharClass::Word;
-        return WordCharClass::Other;
-    }
-}
-
-int CodeEditor::nextWordBoundary(QTextDocument *doc, int pos)
-{
-    // characterCount() counts one extra (implicit, non-printable) trailing
-    // character; the last real, addressable position is one before it.
-    const int end = doc->characterCount() - 1;
-    if (pos >= end)
-        return end;
-
-    // Swallow whitespace on the way, but never stop inside it.
-    while (pos < end && classifyWordChar(doc->characterAt(pos)) == WordCharClass::Space)
-        ++pos;
-    if (pos >= end)
-        return end;
-
-    // Then cross exactly one run of same-class characters (a word, or a
-    // punctuation/operator run) and stop right where it ends.
-    WordCharClass cls = classifyWordChar(doc->characterAt(pos));
-    int runEnd = pos;
-    while (runEnd < end && classifyWordChar(doc->characterAt(runEnd)) == cls)
-        ++runEnd;
-
-    // Exception: a single separator glued directly onto a following word,
-    // with no whitespace in between - the '.' in "qwe.rty", the '=' in
-    // "a=b" - isn't its own stop. VS Code treats it as glue and jumps
-    // straight through it into that word (so "qwe.rty" is two Ctrl+Right
-    // presses, not three). A *run* of separators (e.g. "..."), or one
-    // bounded by whitespace on the far side (e.g. "foo = bar"), still gets
-    // its own stop same as before - only a lone, word-adjacent one merges.
-    if (cls == WordCharClass::Other && runEnd - pos == 1 &&
-        runEnd < end && classifyWordChar(doc->characterAt(runEnd)) == WordCharClass::Word)
-    {
-        int wordEnd = runEnd;
-        while (wordEnd < end && classifyWordChar(doc->characterAt(wordEnd)) == WordCharClass::Word)
-            ++wordEnd;
-        return wordEnd;
-    }
-
-    return runEnd;
-}
-
-int CodeEditor::previousWordBoundary(QTextDocument *doc, int pos)
-{
-    if (pos <= 0)
-        return 0;
-
-    int p = pos - 1;
-    while (p > 0 && classifyWordChar(doc->characterAt(p)) == WordCharClass::Space)
-        --p;
-    if (classifyWordChar(doc->characterAt(p)) == WordCharClass::Space)
-        return 0; // ran into the very start of the document, still in whitespace
-
-    WordCharClass cls = classifyWordChar(doc->characterAt(p));
-    int runStart = p;
-    while (runStart > 0 && classifyWordChar(doc->characterAt(runStart - 1)) == cls)
-        --runStart;
-
-    // Mirror of the forward exception above: a lone separator glued
-    // directly onto a preceding word is glue, not its own stop.
-    if (cls == WordCharClass::Other && p == runStart &&
-        runStart > 0 && classifyWordChar(doc->characterAt(runStart - 1)) == WordCharClass::Word)
-    {
-        int wordStart = runStart;
-        while (wordStart > 0 && classifyWordChar(doc->characterAt(wordStart - 1)) == WordCharClass::Word)
-            --wordStart;
-        return wordStart;
-    }
-
-    return runStart;
 }
 
 // Ctrl+D: select the word under the (main) cursor, or - if something is
@@ -617,7 +513,9 @@ void CodeEditor::applyReturnWithIndent(QTextCursor &c)
 
     // previous indentation
     c.removeSelectedText();
-    QRegularExpression indentRegex("(^\\s*)(?=[^\\s\\r\\n]+)");
+    // Compiled once, not on every Enter: a QRegularExpression parses its
+    // pattern in the constructor, and these two never change.
+    static const QRegularExpression indentRegex("(^\\s*)(?=[^\\s\\r\\n]+)");
     QTextCursor prevC = doc->find(indentRegex, c, QTextDocument::FindBackward);
 
     if (!prevC.isNull())
@@ -633,7 +531,8 @@ void CodeEditor::applyReturnWithIndent(QTextCursor &c)
         if (!prevC.isNull())
         {
             // remove subsequent \s
-            QTextCursor nextC = doc->find(QRegularExpression("(\\s+)(?=\\S+)"), c);
+            static const QRegularExpression trailingSpaceRegex("(\\s+)(?=\\S+)");
+            QTextCursor nextC = doc->find(trailingSpaceRegex, c);
             if (nextC.selectionStart() == c.selectionStart())
                 nextC.removeSelectedText();
         }
@@ -667,14 +566,25 @@ void CodeEditor::applyReturnWithIndent(QTextCursor &c)
 
 void CodeEditor::applyHome(QTextCursor &c, bool keepAnchor)
 {
-    QTextDocument *doc = c.document();
-    int startOfText = c.block().position();
-    QTextCursor notSpace = doc->find(QRegularExpression("\\S"), startOfText);
-    if (!notSpace.isNull() && notSpace.block() == c.block() && notSpace.position() - 1 > startOfText)
-        startOfText = notSpace.position() - 1;
-    int nextPos = startOfText;
-    if (c.position() <= startOfText && c.position() > c.block().position())
-        nextPos = c.block().position();
+    // A plain scan of this one line's leading blanks. It used to be
+    // doc->find(QRegularExpression("\\S"), blockStart), which compiled a
+    // regex on every Home press and - worse - searched the whole *document*
+    // forward from the line's start, so on a blank line it ran on until the
+    // next non-blank character anywhere below it.
+    const QTextBlock block = c.block();
+    const QString line = block.text();
+    int indentLen = 0;
+    while (indentLen < line.length() && line.at(indentLen).isSpace())
+        ++indentLen;
+    if (indentLen == line.length())
+        indentLen = 0; // a blank line has no "start of text" to stop at
+
+    const int blockStart = block.position();
+    const int startOfText = blockStart + indentLen;
+    // Standing at (or before) the first real character: toggle on to the
+    // line's true start, before the indentation.
+    const int nextPos = (c.position() <= startOfText && c.position() > blockStart)
+                            ? blockStart : startOfText;
     c.setPosition(nextPos, keepAnchor ? QTextCursor::KeepAnchor : QTextCursor::MoveAnchor);
 }
 
@@ -999,6 +909,127 @@ bool CodeEditor::copySelectionToClipboard() const
     return true;
 }
 
+// Every line the cursor touches, whole - what a cut with nothing selected
+// operates on. The trailing '\n' goes with the line so that cutting one and
+// pasting it back reproduces it exactly; on the document's last line, which
+// has no '\n' after it, the *leading* one is taken instead, so the cut
+// doesn't leave an empty line behind.
+QTextCursor CodeEditor::lineRangeForCut(const QTextCursor &c) const
+{
+    QTextDocument *doc = document();
+    QTextBlock first = doc->findBlock(c.selectionStart());
+    QTextBlock last = doc->findBlock(c.selectionEnd());
+
+    // A selection ending exactly at a line's start doesn't make that line
+    // part of the cut - nothing of it is actually highlighted.
+    if (c.hasSelection() && last != first && c.selectionEnd() == last.position())
+        last = last.previous();
+
+    QTextCursor range(doc);
+    range.setPosition(first.position());
+    int end = last.position() + last.length(); // length() includes the block separator
+    if (end - 1 >= doc->characterCount() - 1)
+    {
+        // Last line of the document: no '\n' of its own to take, so swallow
+        // the one before it instead (if any).
+        end = doc->characterCount() - 1;
+        if (first.previous().isValid())
+            range.setPosition(first.position() - 1);
+    }
+    range.setPosition(end, QTextCursor::KeepAnchor);
+    return range;
+}
+
+// Shift+Delete (and Ctrl+X with nothing selected): cut whole lines - the
+// caret's own line, or every line the selection touches. With several
+// cursors, each contributes its lines. Sorted, de-duplicated and cut from
+// the bottom up so overlapping ranges (two cursors on one line) neither
+// duplicate the text on the clipboard nor invalidate each other's positions.
+bool CodeEditor::cutCurrentLines()
+{
+    QVector<QTextCursor> ranges;
+    for (const int i : cursorsOrderedByPosition())
+        ranges.append(lineRangeForCut(_multiCursor.cursors()[i]));
+
+    QStringList parts;
+    QVector<QTextCursor> toRemove;
+    int lastStart = -1;
+    for (const QTextCursor &r : std::as_const(ranges))
+    {
+        if (r.selectionStart() == lastStart) // another cursor on the same line
+            continue;
+        lastStart = r.selectionStart();
+        if (!r.hasSelection())
+            continue;
+        parts << QString(r.selectedText()).replace(QChar::ParagraphSeparator, QLatin1Char('\n'));
+        toRemove.append(r);
+    }
+
+    if (parts.isEmpty())
+        return false; // empty document: leave the clipboard alone
+
+    QString text = parts.join(QString());
+    if (!text.endsWith(QLatin1Char('\n')))
+        text.append(QLatin1Char('\n')); // the last line of the document has no '\n' of its own
+    QApplication::clipboard()->setText(text);
+
+    QVector<QPair<int,int>> preState = snapshotCursors(_multiCursor);
+
+    // The edit block is opened on the caret *itself*, not on a fresh
+    // QTextCursor(document()). beginEditBlock() stores the calling cursor's
+    // position in the document's editBlockCursorPosition, and that is where
+    // undo() later puts the caret - so opening the block with a brand new
+    // cursor, which starts at position 0, made Ctrl+Z restore the lines but
+    // throw the caret to the very top of the text.
+    //
+    // Checked both ways on a bare QTextDocument: opened by a fresh cursor, undo
+    // lands at 0; opened by the caret, it lands exactly where the caret was -
+    // even though the caret's own line is one of those removed. The document
+    // carries the live cursor along, and the resulting difference is what makes
+    // Qt emit the CursorMoved undo item.
+    //
+    // mainIndex() is in range here: with no cursors at all there would have
+    // been no ranges, and the function has already returned above.
+    QTextCursor &caret = _multiCursor.cursors()[_multiCursor.mainIndex()];
+
+    // Bottom-up, so each removal leaves the ranges above it untouched.
+    caret.beginEditBlock();
+    for (int i = toRemove.size() - 1; i >= 0; --i)
+    {
+        QTextCursor r = toRemove[i];
+        r.removeSelectedText();
+    }
+    caret.endEditBlock();
+
+    // Every cursor's line is gone; the cursors themselves have already been
+    // carried along by the document to wherever their text used to start.
+    // Collapse the selections so what is left is a plain caret per cursor.
+    _multiCursor.forEachCursor([](QTextCursor &cur) { cur.clearSelection(); });
+    _multiCursor.mergeOverlapping();
+    syncToNativeCursor();
+    ensureCursorVisible();
+
+    // Whether the snapshot is needed depends on how many cursors this cut
+    // *started* with, not on how many are left: cutting the lines under two
+    // carets that happen to sit on adjacent lines merges them into one, and
+    // testing isMultiple() afterwards would discard the very snapshot Ctrl+Z
+    // needs to bring both carets back.
+    if (preState.size() > 1)
+    {
+        recordMultiEditUndo(preState);
+    }
+    else
+    {
+        // A single-cursor cut is one plain document edit: Qt undoes it and
+        // restores the caret from the edit block above on its own. Any snapshot
+        // kept for an earlier multi-cursor edit no longer sits on top of the
+        // undo stack (same reasoning as applySingleCursorEdit).
+        _multiUndoHistory.clear();
+        _multiRedoHistory.clear();
+    }
+    return true;
+}
+
 // ---------------------------------------------------------------------
 
 // Whether this key event is the Copy shortcut (Ctrl+C or Ctrl+Insert).
@@ -1054,8 +1085,18 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
         // even runs. Claim it ourselves whenever several cursors are
         // active so Ctrl+C / Ctrl+Insert / Ctrl+X / Shift+Delete actually
         // reach us.
+        //
+        // A cut has to be claimed for the same reason even with a single
+        // cursor and nothing selected, since that is now a line cut (see
+        // cutCurrentLines()) - Qt would otherwise decline it as "nothing to
+        // cut" and hand the key sequence to whatever global action holds it.
         QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
-        if (_multiCursor.isMultiple() && (isCopyShortcut(keyEvent) || isCutShortcut(keyEvent)))
+        if (_multiCursor.isMultiple() && isCopyShortcut(keyEvent))
+        {
+            event->accept();
+            return true;
+        }
+        if (isCutShortcut(keyEvent) && !isReadOnly())
         {
             event->accept();
             return true;
@@ -1063,131 +1104,195 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
         break;
     }
     case QEvent::KeyPress:
+        // One dispatch point for every key; see handleKeyPress().
+        if (handleKeyPress(static_cast<QKeyEvent *>(event)))
+            return true;
+        break;
+    default:
+        break;
+    }
+
+    return QObject::eventFilter(object, event);
+}
+
+// Navigation applied to every cursor. Returns false with a single cursor -
+// QPlainTextEdit's own, battle-tested navigation is better left alone there.
+bool CodeEditor::moveAllCursors(int key, bool ctrl, bool shift)
+{
+    if (!_multiCursor.isMultiple())
+        return false;
+
+    const QTextCursor::MoveMode mode = shift ? QTextCursor::KeepAnchor : QTextCursor::MoveAnchor;
+
+    if (key == Qt::Key_PageUp || key == Qt::Key_PageDown)
     {
-        QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+        const int page = qMax(1, viewport()->height() / qMax(1, fontMetrics().height()));
+        const QTextCursor::MoveOperation op = (key == Qt::Key_PageUp) ? QTextCursor::Up : QTextCursor::Down;
+        _multiCursor.forEachCursor([mode, op, page](QTextCursor &cur) { cur.movePosition(op, mode, page); });
+    }
+    else
+    {
+        const QTextCursor::MoveOperation op = moveOperationForKey(key, ctrl);
+        _multiCursor.forEachCursor([op, mode](QTextCursor &cur) { cur.movePosition(op, mode); });
+    }
+    syncToNativeCursor();
+    return true;
+}
 
-        // Same reasoning as the call at the top of keyPressEvent(): keep the
-        // caret(s) solid during keyboard activity. Needed here too because
-        // multi-cursor navigation/creation (arrows, Ctrl+Alt+Up/Down, Ins,
-        // etc.) is handled entirely in this filter and returns true before
-        // the event ever reaches keyPressEvent().
-        resetCaretBlink();
+// Every key this editor treats specially, dispatched by key code. Returns
+// true when the event is consumed, false to let QPlainTextEdit have it.
+//
+// This used to be a chain of some twenty `if`s inline in eventFilter(), each
+// re-testing keyEvent->key() until one matched - so the keys near the bottom
+// (Tab, Home, every ordinary printable character) paid for every test above
+// them, and one key's behaviour was spread over several distant branches. A
+// switch gives the compiler a jump table and the reader one place per key; a
+// `break` out of it means "not mine after all" and lands on the typed-text
+// tail at the end.
+//
+// The three shortcuts that are a key *sequence* rather than a key - Copy,
+// Cut, and the undo/redo pair - stay ahead of the switch: each of them has
+// two spellings (Ctrl+C / Ctrl+Insert, Ctrl+X / Shift+Delete, Ctrl+Y /
+// Ctrl+Shift+Z), so a single case label cannot express them, and one shared
+// predicate is what keeps them in step with the ShortcutOverride handling
+// above.
+bool CodeEditor::handleKeyPress(QKeyEvent *keyEvent)
+{
+    // Same reasoning as the call at the top of keyPressEvent(): keep the
+    // caret(s) solid during keyboard activity. Needed here too because
+    // multi-cursor navigation/creation (arrows, Ctrl+Alt+Up/Down, Ins, etc.)
+    // is handled entirely here and returns true before the event ever reaches
+    // keyPressEvent().
+    resetCaretBlink();
 
-        if (keyEvent->key() == Qt::Key_Escape && _multiCursor.isMultiple())
+    const bool ctrl = keyEvent->modifiers().testFlag(Qt::ControlModifier);
+    const bool alt = keyEvent->modifiers().testFlag(Qt::AltModifier);
+    const bool shift = keyEvent->modifiers().testFlag(Qt::ShiftModifier);
+    const bool meta = keyEvent->modifiers().testFlag(Qt::MetaModifier);
+
+    // ---- claimed even in a read-only editor ----
+    switch (keyEvent->key())
+    {
+    case Qt::Key_Escape:
+        if (_multiCursor.isMultiple())
         {
             collapseToSingleCursor();
             return true;
         }
+        break;
 
-        if (keyEvent->key() == Qt::Key_F1)
+    case Qt::Key_F1:
+    {
+        const QString url = SqtSettings::value(shift ? "shiftF1url" : "f1url").toString();
+        QDesktopServices::openUrl(QUrl(url));
+        return true;
+    }
+
+    default:
+        break;
+    }
+
+    // Copy with several cursors: every selection, joined by newlines in
+    // document order (like VS Code), instead of just the main cursor's. Ahead
+    // of the read-only gate, since copying out of a read-only editor is
+    // perfectly normal.
+    if (isCopyShortcut(keyEvent) && _multiCursor.isMultiple())
+    {
+        copySelectionToClipboard();
+        return true;
+    }
+
+    if (isReadOnly())
+        return false;
+
+    // ---- Cut ----
+    // With something selected: the selection, every cursor's in document
+    // order (the mirror of the copy above). With nothing selected at all: the
+    // whole line each caret sits on, VS Code style, which is what makes
+    // Shift+Delete a "cut this line" key.
+    if (isCutShortcut(keyEvent))
+    {
+        bool anySelection = false;
+        for (const QTextCursor &cur : _multiCursor.cursors())
+            anySelection = anySelection || cur.hasSelection();
+
+        if (!anySelection)
         {
-            QString url = SqtSettings::value(keyEvent->modifiers().testFlag(Qt::ShiftModifier) ?
-                                                 "shiftF1url" : "f1url").toString();
-            QDesktopServices::openUrl(QUrl(url));
+            cutCurrentLines();
             return true;
         }
 
-        // ---- Copy with several cursors: copy every selection, joined by
-        // newlines in document order (like VS Code), instead of just the
-        // main cursor's selection. Works even in read-only mode, same as a
-        // normal copy would. ----
-        if (isCopyShortcut(keyEvent) && _multiCursor.isMultiple())
-        {
-            copySelectionToClipboard();
-            return true;
-        }
+        if (!_multiCursor.isMultiple())
+            return false; // plain single-cursor cut: Qt's own is correct
 
-        if (isReadOnly())
-            break;
+        copySelectionToClipboard();
 
-        bool ctrl = keyEvent->modifiers().testFlag(Qt::ControlModifier);
-        bool alt = keyEvent->modifiers().testFlag(Qt::AltModifier);
-        bool shift = keyEvent->modifiers().testFlag(Qt::ShiftModifier);
+        performMultiEdit([](QTextCursor &cur) {
+            if (cur.hasSelection())
+                cur.removeSelectedText();
+        });
+        return true;
+    }
 
-        if ((keyEvent->key() == Qt::Key_Up || keyEvent->key() == Qt::Key_Down) &&
-                ((alt && shift && !ctrl) ||     // Alt+Shift+Up/Down, VS Code's default
-                 (ctrl && shift && !alt)))      // Ctrl+Shift+Up/Down, VS Code's other default
+    // ---- multi-cursor-aware undo/redo ----
+    // Keep consuming Ctrl+Z while our parallel history has entries, so several
+    // consecutive undos restore the corresponding cursor sets instead of
+    // letting QPlainTextEdit collapse back to one cursor.
+    if (ctrl && !alt && !shift && keyEvent->key() == Qt::Key_Z &&
+        !_multiUndoHistory.isEmpty())
+    {
+        const MultiEditCursorHistory entry = _multiUndoHistory.takeLast();
+        undo();
+
+        restoreCursorSnapshot(entry.pre);
+        syncToNativeCursor();
+
+        _multiRedoHistory.append(entry);
+        return true;
+    }
+
+    if (ctrl && !alt &&
+            ((keyEvent->key() == Qt::Key_Y) || (shift && keyEvent->key() == Qt::Key_Z)) &&
+            !_multiRedoHistory.isEmpty())
+    {
+        const MultiEditCursorHistory entry = _multiRedoHistory.takeLast();
+        redo();
+
+        restoreCursorSnapshot(entry.post);
+        syncToNativeCursor();
+
+        _multiUndoHistory.append(entry);
+        return true;
+    }
+
+    switch (keyEvent->key())
+    {
+    // ---- a cursor above/below, or plain vertical navigation ----
+    case Qt::Key_Up:
+    case Qt::Key_Down:
+        if ((alt && shift && !ctrl) ||   // Alt+Shift+Up/Down, VS Code's default
+            (ctrl && shift && !alt))     // Ctrl+Shift+Up/Down, VS Code's other default
         {
             addCursorOnAdjacentLine(keyEvent->key() == Qt::Key_Down);
             return true;
         }
+        return moveAllCursors(keyEvent->key(), ctrl, shift);
 
-        if (ctrl && !alt && keyEvent->key() == Qt::Key_D)
+    // ---- Ctrl(+Shift)+Left/Right: word jump, VS Code style (see wordnav.h).
+    // Taken over unconditionally, single cursor included - Qt's own version
+    // pulls the trailing space into the selection and crosses a line break in
+    // one go, both of which this replaces. ----
+    case Qt::Key_Left:
+    case Qt::Key_Right:
+        if (ctrl && !alt)
         {
-            selectNextOccurrence();
-            return true;
-        }
-
-        // ---- Cut with several cursors: same idea as copy above, but also
-        // removes each selection. ----
-        if (isCutShortcut(keyEvent) && _multiCursor.isMultiple())
-        {
-            copySelectionToClipboard();
-
-            performMultiEdit([](QTextCursor &cur) {
-                if (cur.hasSelection())
-                    cur.removeSelectedText();
-            });
-            return true;
-        }
-
-        // ---- multi-cursor-aware undo/redo ----
-        // Keep consuming Ctrl+Z while our parallel history has entries, so
-        // several consecutive undos restore the corresponding cursor sets
-        // instead of letting QPlainTextEdit collapse back to one cursor.
-        if (ctrl && !alt && !shift && keyEvent->key() == Qt::Key_Z &&
-            !_multiUndoHistory.isEmpty())
-        {
-            const MultiEditCursorHistory entry = _multiUndoHistory.takeLast();
-            undo();
-
-            restoreCursorSnapshot(entry.pre);
-            syncToNativeCursor();
-
-            _multiRedoHistory.append(entry);
-            return true;
-        }
-
-        if (ctrl && !alt &&
-                ((keyEvent->key() == Qt::Key_Y) || (shift && keyEvent->key() == Qt::Key_Z)) &&
-                !_multiRedoHistory.isEmpty())
-        {
-            const MultiEditCursorHistory entry = _multiRedoHistory.takeLast();
-            redo();
-
-            restoreCursorSnapshot(entry.post);
-            syncToNativeCursor();
-
-            _multiUndoHistory.append(entry);
-            return true;
-        }
-
-        if (keyEvent->key() == Qt::Key_Insert && keyEvent->modifiers() == Qt::NoModifier)
-        {
-            _overwriteMode = !_overwriteMode;
-            // With one cursor, hand it straight to Qt - its own overwrite
-            // handling and block-caret painting are correct and there's
-            // nothing else on screen to clash with. With several cursors
-            // the native flag stays off; see the comment by _overwriteMode.
-            setOverwriteMode(_multiCursor.isMultiple() ? false : _overwriteMode);
-            viewport()->update();
-            return true;
-        }
-
-        // ---- Ctrl(+Shift)+Left/Right: word jump, VS Code style (see
-        // nextWordBoundary/previousWordBoundary). Intercepted unconditionally,
-        // single cursor included - Qt's own Ctrl+Left/Right (which we'd
-        // otherwise fall through to for a single cursor) pulls the trailing
-        // space into the selection, which is exactly what this replaces. ----
-        if (ctrl && !alt && (keyEvent->key() == Qt::Key_Left || keyEvent->key() == Qt::Key_Right))
-        {
-            QTextCursor::MoveMode mode = shift ? QTextCursor::KeepAnchor : QTextCursor::MoveAnchor;
-            bool forward = keyEvent->key() == Qt::Key_Right;
+            const QTextCursor::MoveMode mode = shift ? QTextCursor::KeepAnchor : QTextCursor::MoveAnchor;
+            const bool forward = (keyEvent->key() == Qt::Key_Right);
             QTextDocument *doc = document();
 
             auto moveWord = [doc, forward, mode](QTextCursor &cur) {
-                int newPos = forward ? nextWordBoundary(doc, cur.position())
-                                      : previousWordBoundary(doc, cur.position());
+                int newPos = forward ? WordNav::nextBoundary(doc, cur.position())
+                                     : WordNav::previousBoundary(doc, cur.position());
                 cur.setPosition(newPos, mode);
             };
 
@@ -1204,58 +1309,87 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
             }
             return true;
         }
+        return moveAllCursors(keyEvent->key(), ctrl, shift);
 
-        // ---- navigation: only intercepted here when there is more than
-        // one cursor. A single cursor still gets native, battle-tested
-        // navigation from QPlainTextEdit further down the pipeline. ----
-        if (_multiCursor.isMultiple() && isNavigationKey(keyEvent->key()) && keyEvent->key() != Qt::Key_Home)
+    case Qt::Key_End:
+    case Qt::Key_PageUp:
+    case Qt::Key_PageDown:
+        return moveAllCursors(keyEvent->key(), ctrl, shift);
+
+    // ---- smart Home (Ctrl+Home is Qt's own "to the top", left alone) ----
+    case Qt::Key_Home:
+        if (ctrl)
+            return false;
+
+        if (_multiCursor.isMultiple())
         {
-            QTextCursor::MoveMode mode = shift ? QTextCursor::KeepAnchor : QTextCursor::MoveAnchor;
-
-            if (keyEvent->key() == Qt::Key_PageUp || keyEvent->key() == Qt::Key_PageDown)
-            {
-                int page = qMax(1, viewport()->height() / qMax(1, fontMetrics().height()));
-                QTextCursor::MoveOperation op = (keyEvent->key() == Qt::Key_PageUp) ? QTextCursor::Up : QTextCursor::Down;
-                _multiCursor.forEachCursor([mode, op, page](QTextCursor &cur) { cur.movePosition(op, mode, page); });
-            }
-            else
-            {
-                QTextCursor::MoveOperation op = moveOperationForKey(keyEvent->key(), ctrl);
-                _multiCursor.forEachCursor([op, mode](QTextCursor &cur) { cur.movePosition(op, mode); });
-            }
+            _multiCursor.forEachCursor([this, shift](QTextCursor &cur) { applyHome(cur, shift); });
             syncToNativeCursor();
             return true;
         }
-
-        // ---- smart Backspace (indent-aware) ----
-        if (keyEvent->key() == Qt::Key_Backspace)
+        else
         {
-            if (_multiCursor.isMultiple())
-            {
-                performMultiEdit([this](QTextCursor &cur) {
-                    if (cur.hasSelection())
-                        cur.removeSelectedText();
-                    else if (!applySmartBackspace(cur))
-                        cur.deletePreviousChar();
-                });
-                return true;
-            }
+            QTextCursor c = textCursor();
+            applyHome(c, shift);
+            setTextCursor(c);
+            _multiCursor.setCursors(c);
+            return true;
+        }
 
+    case Qt::Key_Insert:
+        // Ctrl+Insert (copy) was dealt with above; a bare Ins toggles
+        // overwrite. With one cursor, hand it straight to Qt - its own
+        // overwrite handling and block-caret painting are correct and there's
+        // nothing else on screen to clash with. With several cursors the
+        // native flag stays off; see the comment by _overwriteMode.
+        if (keyEvent->modifiers() == Qt::NoModifier)
+        {
+            _overwriteMode = !_overwriteMode;
+            setOverwriteMode(_multiCursor.isMultiple() ? false : _overwriteMode);
+            viewport()->update();
+            return true;
+        }
+        break;
+
+    case Qt::Key_D:
+        if (ctrl && !alt)
+        {
+            selectNextOccurrence();
+            return true;
+        }
+        break;
+
+    // ---- smart Backspace (indent-aware) ----
+    case Qt::Key_Backspace:
+        if (_multiCursor.isMultiple())
+        {
+            performMultiEdit([this](QTextCursor &cur) {
+                if (cur.hasSelection())
+                    cur.removeSelectedText();
+                else if (!applySmartBackspace(cur))
+                    cur.deletePreviousChar();
+            });
+            return true;
+        }
+        else
+        {
             QTextCursor c = textCursor();
             if (!c.hasSelection() && applySmartBackspace(c))
             {
                 applySingleCursorEdit(c);
                 return true;
             }
-            // no selection to fall back to, or a plain single-char delete
-            // is enough (lack of spaces to remove) - let the default,
-            // native Backspace handler take it from here
-            break;
         }
+        // no selection to fall back to, or a plain single-char delete is
+        // enough (lack of spaces to remove) - let the default, native
+        // Backspace handler take it from here
+        return false;
 
-        // ---- Delete: only needs custom handling with several cursors;
-        // a single cursor already gets a correct Delete from Qt. ----
-        if (keyEvent->key() == Qt::Key_Delete && _multiCursor.isMultiple())
+    // ---- Delete: Shift+Delete (cut) went above; the plain key only needs
+    // custom handling with several cursors, since a single cursor already
+    // gets a correct Delete from Qt. ----
+    case Qt::Key_Delete:
+        if (_multiCursor.isMultiple())
         {
             performMultiEdit([](QTextCursor &cur) {
                 if (cur.hasSelection())
@@ -1265,138 +1399,116 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
             });
             return true;
         }
+        return false;
 
-        // ---- Return with auto-indent ----
-        if (keyEvent->key() == Qt::Key_Return)
+    // ---- Return with auto-indent (Ctrl+Return runs the statement instead,
+    // see keyPressEvent) ----
+    case Qt::Key_Return:
+    case Qt::Key_Enter:
+        if (ctrl)
+            return false;
+
+        if (_multiCursor.isMultiple())
         {
-            if (_multiCursor.isMultiple())
-            {
-                performMultiEdit([this](QTextCursor &cur) { applyReturnWithIndent(cur); });
-                return true;
-            }
-
+            performMultiEdit([this](QTextCursor &cur) { applyReturnWithIndent(cur); });
+            return true;
+        }
+        else
+        {
             QTextCursor c = textCursor();
             applyReturnWithIndent(c);
             applySingleCursorEdit(c);
             return true;
         }
 
-        // ---- smart Home ----
-        if (keyEvent->key() == Qt::Key_Home && !ctrl)
+    // ---- Tab / Backtab indentation ----
+    case Qt::Key_Tab:
+    case Qt::Key_Backtab:
+    {
+        const bool forward = (keyEvent->key() == Qt::Key_Tab);
+        auto applyOne = [this, forward](QTextCursor &cur)
         {
-            if (_multiCursor.isMultiple())
+            if (!forward)
             {
-                _multiCursor.forEachCursor([this, shift](QTextCursor &cur) { applyHome(cur, shift); });
-                syncToNativeCursor();
-                return true;
+                // Shift+Tab always outdents by line, no matter the
+                // selection's shape - a bare caret with no selection
+                // outdents its own line, a same-line selection outdents
+                // that one line, a multi-line selection outdents every
+                // line it touches. Unlike Tab, there's no separate
+                // "replace the selection" behavior to special-case.
+                applyMultiLineIndent(cur, false);
+                return;
             }
 
-            QTextCursor c = textCursor();
-            applyHome(c, shift);
-            setTextCursor(c);
-            _multiCursor.setCursors(c);
-            return true;
-        }
+            int start = cur.selectionStart();
+            int end = cur.selectionEnd();
+            cur.setPosition(end);
+            int lastBlock = cur.blockNumber();
+            cur.setPosition(start);
+            bool multiLine = (cur.blockNumber() != lastBlock);
+            cur.setPosition(start);
+            cur.setPosition(end, QTextCursor::KeepAnchor);
 
-        // ---- Tab / Backtab indentation ----
-        if (keyEvent->key() == Qt::Key_Tab || keyEvent->key() == Qt::Key_Backtab)
-        {
-            bool forward = (keyEvent->key() == Qt::Key_Tab);
-            auto applyOne = [this, forward](QTextCursor &cur)
-            {
-                if (!forward)
-                {
-                    // Shift+Tab always outdents by line, no matter the
-                    // selection's shape - a bare caret with no selection
-                    // outdents its own line, a same-line selection outdents
-                    // that one line, a multi-line selection outdents every
-                    // line it touches. Unlike Tab, there's no separate
-                    // "replace the selection" behavior to special-case.
-                    applyMultiLineIndent(cur, false);
-                    return;
-                }
-
-                int start = cur.selectionStart();
-                int end = cur.selectionEnd();
-                cur.setPosition(end);
-                int lastBlock = cur.blockNumber();
-                cur.setPosition(start);
-                bool multiLine = (cur.blockNumber() != lastBlock);
-                cur.setPosition(start);
-                cur.setPosition(end, QTextCursor::KeepAnchor);
-
-                if (multiLine)
-                    applyMultiLineIndent(cur, forward);
-                else
-                    applySingleLineTab(cur);
-            };
-
-            if (_multiCursor.isMultiple())
-            {
-                performMultiEdit([&applyOne](QTextCursor &cur) { applyOne(cur); });
-                return true;
-            }
-
-            QTextCursor c = textCursor();
-            applyOne(c);
-            applySingleCursorEdit(c);
-            return true;
-        }
-
-        // ---- plain typed text: only needs custom handling with several
-        // cursors - a single cursor is typed into natively below. ----
-        if (_multiCursor.isMultiple() && !ctrl && !alt && !keyEvent->modifiers().testFlag(Qt::MetaModifier))
-        {
-            QString t = keyEvent->text();
-            if (!t.isEmpty() && t.at(0).isPrint())
-            {
-                performMultiEdit([t, this](QTextCursor &cur) {
-                    if (cur.hasSelection())
-                        cur.removeSelectedText();
-                    else if (_overwriteMode && !cur.atBlockEnd())
-                        cur.deleteChar();
-                    cur.insertText(t);
-                });
-                return true;
-            }
-        }
+            if (multiLine)
+                applyMultiLineIndent(cur, forward);
+            else
+                applySingleLineTab(cur);
+        };
 
         if (_multiCursor.isMultiple())
-            break; // any other key: let it fall through, acting on the main cursor only
+        {
+            performMultiEdit([&applyOne](QTextCursor &cur) { applyOne(cur); });
+            return true;
+        }
 
         QTextCursor c = textCursor();
-        if (!c.hasSelection())
-            break;
+        applyOne(c);
+        applySingleCursorEdit(c);
+        return true;
+    }
 
-        int start = c.selectionStart();
-        int end = c.selectionEnd();
-
-        if (keyEvent->key() == Qt::Key_U)
+    // ---- Ctrl+U / Ctrl+Shift+U: case of the selection ----
+    case Qt::Key_U:
+        if (ctrl && !_multiCursor.isMultiple() && textCursor().hasSelection())
         {
-            if (ctrl)
-            {
-                if (shift ||
-                        // Ubuntu uses Ctrl+Shift+U to enter character by unicode character number,
-                        // so we may use Ctrl+Win+U to lowercase selection
-                        keyEvent->modifiers().testFlag(Qt::MetaModifier))
-                    c.insertText(c.selectedText().toLower());
-                else
-                    c.insertText(c.selectedText().toUpper());
-            }
-            else
-                break;
+            QTextCursor c = textCursor();
+            const int start = c.selectionStart();
+            const int end = c.selectionEnd();
+            // Ubuntu uses Ctrl+Shift+U to enter a character by its unicode
+            // number, so Ctrl+Win+U lowercases the selection as well.
+            c.insertText(shift || meta ? c.selectedText().toLower()
+                                       : c.selectedText().toUpper());
             c.setPosition(start);
             c.setPosition(end, QTextCursor::KeepAnchor);
             applySingleCursorEdit(c);
             return true;
         }
-        break;
-    }
+        break; // plain 'u' with several cursors is typed text, see below
+
     default:
         break;
     }
 
-    return QObject::eventFilter(object, event);
+    // ---- plain typed text: only needs handling with several cursors - a
+    // single cursor is typed into natively. Also the tail every case above
+    // that decided the key was not its own falls onto. ----
+    if (_multiCursor.isMultiple() && !ctrl && !alt && !meta)
+    {
+        const QString t = keyEvent->text();
+        if (!t.isEmpty() && t.at(0).isPrint())
+        {
+            performMultiEdit([t, this](QTextCursor &cur) {
+                if (cur.hasSelection())
+                    cur.removeSelectedText();
+                else if (_overwriteMode && !cur.atBlockEnd())
+                    cur.deleteChar();
+                cur.insertText(t);
+            });
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void CodeEditor::keyPressEvent(QKeyEvent *e)
@@ -1446,6 +1558,24 @@ void CodeEditor::keyPressEvent(QKeyEvent *e)
         else if (e->key() == Qt::Key_F4 && !e->modifiers().testFlag(Qt::AltModifier))
         {
             emit scriptObjectRequest();
+            return;
+        }
+        else if ((e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) &&
+                 e->modifiers().testFlag(Qt::ControlModifier))
+        {
+            // whether there is a selection or not is for the slot to decide
+            // (same "selection, if any, else something derived from the
+            // caret" rule the Execute action already follows)
+            emit executeStatementRequest();
+            return;
+        }
+        else if (e->key() == Qt::Key_A &&
+                 e->modifiers().testFlag(Qt::ControlModifier) &&
+                 e->modifiers().testFlag(Qt::ShiftModifier))
+        {
+            // both flags checked explicitly - testFlag(ControlModifier) alone
+            // would also match plain Ctrl+A (select all)
+            emit selectStatementRequest();
             return;
         }
     }

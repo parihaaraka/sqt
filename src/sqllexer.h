@@ -4,6 +4,7 @@
 #include <QHash>
 #include <QSet>
 #include <QString>
+#include <QPair>
 #include <functional>
 #include <memory>
 
@@ -86,6 +87,30 @@ public:
      * text length stays intact, so the worst case is a keyword left as is.
      */
     QString foldKeywords(const QString &script) const;
+
+    /*!
+     * \brief Bounds of the "current" top-level statement.
+     * \param text  the whole script
+     * \param pos   caret position within `text`
+     * \return [start, end) of the statement at/after `pos`, trimmed of
+     *         surrounding whitespace. If `pos` sits in the trailing part of
+     *         the script with no more separators ahead, the range reaches
+     *         text.length().
+     *
+     * A "top-level" separator is a ';' that scanLine() would leave
+     * unclaimed: not part of a '...'/"..." literal, a [bracketed] or
+     * $tag$...$tag$ quoted body, or a comment. Dollar quoting is always
+     * engaged here (regardless of dbms), because a bare '$' pair never
+     * legitimately occurs in any dialect's plain SQL - so this is exactly
+     * what lets a `DO $$ ... $$;` block, including any nested single-quoted
+     * strings or differently-tagged $sub$...$sub$ literals inside its
+     * plpgsql body, be treated as one statement, without a dbms check.
+     *
+     * Same limitations as scanLine()'s dollar-tag search: the closing tag is
+     * matched by plain substring, exactly as the server does, so it is
+     * fooled only by the same edge cases the server itself would reject.
+     */
+    QPair<int, int> statementBounds(const QString &text, int pos) const;
 
     /// lexer built with the connection's hl.conf (nullptr if unavailable)
     static std::shared_ptr<const SqlLexer> sharedFor(DbConnection *con);

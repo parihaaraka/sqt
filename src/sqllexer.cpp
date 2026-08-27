@@ -369,6 +369,67 @@ int SqlLexer::scanLine(const QString &text,
     return mode;
 }
 
+QPair<int, int> SqlLexer::statementBounds(const QString &text, int pos) const
+{
+    QString dollarTag;
+    int state = InitialState;
+    int lineStart = 0;
+    int stmtStart = 0;
+
+    auto trimmed = [&text](int from, int to) -> QPair<int, int>
+    {
+        while (from < to && text.at(from).isSpace())
+            ++from;
+        while (to > from && text.at(to - 1).isSpace())
+            --to;
+        return {from, to};
+    };
+
+    while (true)
+    {
+        const int nl = text.indexOf('\n', lineStart);
+        const int lineEnd = (nl < 0 ? text.length() : nl);
+        const QString line = text.mid(lineStart, lineEnd - lineStart);
+
+        // spans scanLine() claims on this line: a ';' inside any of them is
+        // part of a literal/comment/quoted body, not a statement separator
+        QVector<QPair<int, int>> claimed;
+        state = scanLine(line, state, [&claimed](const Span &s)
+        {
+            claimed.append({s.start, s.start + s.length});
+        }, &dollarTag);
+
+        for (int i = 0; i < line.length(); ++i)
+        {
+            if (line.at(i) != ';')
+                continue;
+            bool isClaimed = false;
+            for (const auto &s: claimed)
+            {
+                if (i >= s.first && i < s.second)
+                {
+                    isClaimed = true;
+                    break;
+                }
+            }
+            if (isClaimed)
+                continue;
+
+            const int abs = lineStart + i;
+            if (abs >= pos)
+                return trimmed(stmtStart, abs + 1);
+            stmtStart = abs + 1;
+        }
+
+        if (nl < 0)
+            break;
+        lineStart = nl + 1;
+    }
+
+    return trimmed(stmtStart, text.length());
+}
+
+
 QString SqlLexer::foldKeywords(const QString &script) const
 {
     QString res = script;

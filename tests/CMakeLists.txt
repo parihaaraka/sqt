@@ -31,6 +31,10 @@ sqt_add_test(queryoptions "${SQT_SRC_DIR}/queryoptions.cpp")
 sqt_add_test(sqlparser "${SQT_SRC_DIR}/sqlparser.cpp")
 sqt_add_test(textcodec "${SQT_SRC_DIR}/textcodec.cpp")
 sqt_add_test(pgtypmod "${SQT_SRC_DIR}/pgtypmod.cpp")
+# word-wise caret movement: free functions over a QTextDocument (QtGui, but no
+# widget and no event loop), so the Ctrl+Left/Right rules are testable on their own
+sqt_add_test(wordnav "${SQT_SRC_DIR}/wordnav.cpp")
+target_link_libraries(tst_wordnav PRIVATE Qt6::Gui)
 # the file search engine carries no gui/db dependency on purpose, so its mask
 # and matching rules are testable; textcodec comes along as it decodes the files
 sqt_add_test(filesearch "${SQT_SRC_DIR}/filesearch.cpp" "${SQT_SRC_DIR}/textcodec.cpp")

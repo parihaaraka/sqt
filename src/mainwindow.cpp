@@ -786,8 +786,6 @@ void MainWindow::viewModeActionTriggered(QAction *action)
 
 void MainWindow::on_actionExecute_query_triggered()
 {
-    // TODO refactor this mash :/  (get db actions in QueryWidget ?)
-
     QueryWidget *q = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
     DbConnection *con = q->dbConnection();
     if (!con)
@@ -805,32 +803,54 @@ void MainWindow::on_actionExecute_query_triggered()
         con->cancel();
     }
     else if (qState == QueryState::Inactive)
-    {
-        q->clearResult();
-        QString query = (q->textCursor().hasSelection() ?
-                             q->textCursor().selection().toPlainText() :
-                             q->toPlainText());
-        if (query.isEmpty())
-            return;
+        executeQuery(q, false);
+}
 
-        QJsonObject qSettings;
-        // do not extract commented instructions from huge sql script
-        if (query.size() < 1024 * 32)
-        {
-            qSettings = QueryOptions::Extract(query);
-            int graphInterval = qSettings.contains("charts") ?
-                        qSettings["interval"].toInt(-1) : -1;
-            q->setQuerySettings(qSettings); // swap inside
-            if (graphInterval > 0)
-            {
-                q->executeOnTimer(query, graphInterval);
-                return;
-            }
-        }
-        // through the widget, so that the connection's output is recognized as
-        // this query's result and lands in the tab's messages pane
-        q->execute(query);
+void MainWindow::executeQuery(QueryWidget *q, bool currentStatementOnly)
+{
+    DbConnection *con = q->dbConnection();
+    if (!con || con->queryState() != QueryState::Inactive || q->isTimerActive())
+        return;
+
+    q->clearResult();
+    QString query;
+    QTextCursor cursor = q->textCursor();
+    if (cursor.hasSelection())
+        query = cursor.selection().toPlainText();
+    else if (currentStatementOnly)
+    {
+        // Falls back to the whole text where no dictionary-driven lexer is
+        // available for this connection (currentStatementBounds() returns
+        // {-1, -1}, e.g. no hl.conf shipped for this dbms yet) - same
+        // behaviour Ctrl+Return would otherwise have without this feature.
+        const QPair<int, int> bounds = q->currentStatementBounds();
+        query = q->toPlainText();
+        if (bounds.first >= 0)
+            query = query.mid(bounds.first, bounds.second - bounds.first);
     }
+    else
+        query = q->toPlainText();
+
+    if (query.isEmpty())
+        return;
+
+    QJsonObject qSettings;
+    // do not extract commented instructions from huge sql script
+    if (query.size() < 1024 * 32)
+    {
+        qSettings = QueryOptions::Extract(query);
+        int graphInterval = qSettings.contains("charts") ?
+                    qSettings["interval"].toInt(-1) : -1;
+        q->setQuerySettings(qSettings); // swap inside
+        if (graphInterval > 0)
+        {
+            q->executeOnTimer(query, graphInterval);
+            return;
+        }
+    }
+    // through the widget, so that the connection's output is recognized as
+    // this query's result and lands in the tab's messages pane
+    q->execute(query);
 }
 
 bool MainWindow::eventFilter(QObject *object, QEvent *event)

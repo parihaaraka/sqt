@@ -31,6 +31,7 @@
 #include <QToolTip>
 #include <QTimer>
 #include "sqlparser.h"
+#include "sqllexer.h"
 #include "datatable.h"
 #include "timechart.h"
 #include <QStatusBar>
@@ -468,6 +469,16 @@ QTextCursor QueryWidget::textCursor() const
     return QTextCursor();
 }
 
+QPair<int, int> QueryWidget::currentStatementBounds()
+{
+    if (!_connection)
+        return {-1, -1};
+    auto lexer = SqlLexer::sharedFor(_connection.get());
+    if (!lexer)
+        return {-1, -1};
+    return lexer->statementBounds(toPlainText(), textCursor().position());
+}
+
 QTextDocument* QueryWidget::document() const
 {
     if (!_editor)
@@ -517,6 +528,8 @@ void QueryWidget::setPlainText(const QString &text)
     CodeEditor *editor = initEditor<CodeEditor>(&_editor, this);
     connect(editor, &CodeEditor::completerRequest, this, &QueryWidget::onCompleterRequest, Qt::UniqueConnection);
     connect(editor, &CodeEditor::scriptObjectRequest, this, &QueryWidget::onScriptObjectRequest, Qt::UniqueConnection);
+    connect(editor, &CodeEditor::executeStatementRequest, this, &QueryWidget::onExecuteStatementRequest, Qt::UniqueConnection);
+    connect(editor, &CodeEditor::selectStatementRequest, this, &QueryWidget::onSelectStatementRequest, Qt::UniqueConnection);
     editor->setPlainText(text);
 }
 
@@ -1089,6 +1102,24 @@ void QueryWidget::onCompleterRequest()
                                        QItemSelectionModel::SelectCurrent);
         });
     }
+}
+
+void QueryWidget::onExecuteStatementRequest()
+{
+    if (MainWindow *mainWindow = qobject_cast<MainWindow*>(window()))
+        mainWindow->executeQuery(this, true);
+}
+
+void QueryWidget::onSelectStatementRequest()
+{
+    const QPair<int, int> bounds = currentStatementBounds();
+    if (bounds.first < 0)
+        return;
+
+    QTextCursor c = textCursor();
+    c.setPosition(bounds.first);
+    c.setPosition(bounds.second, QTextCursor::KeepAnchor);
+    setTextCursor(c);
 }
 
 void QueryWidget::onScriptObjectRequest()
