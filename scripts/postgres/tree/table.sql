@@ -1,3 +1,26 @@
+with col as
+(
+	select
+		'columns' node_type,
+		'<i>Columns</i>' as ui_name,
+		null::int id,
+		null::text "name",
+		true allow_multiselect,
+		'table-select-column.png' icon,
+		0::int sort1,
+		'0' sort2
+	from pg_catalog.pg_class c
+	where c.oid = $table.id$ and
+		-- relnatts counts dropped columns as well, so the folder appears (or
+		-- not) according to what the tree is actually about to show
+		(
+			select count(*)
+			from pg_catalog.pg_attribute a
+			where a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+		) > 15
+)
+select * from col
+union all
 select
 	'column' node_type,
 	a.attname ||
@@ -8,6 +31,7 @@ select
 		'</span>' as ui_name,
 	a.attnum id,
 	a.attname "name",
+	null,
 	--case when x.indexrelid is null then 'transparent.png' else 'key.png' end icon,
 	null icon,
 	attnum sort1,
@@ -18,12 +42,13 @@ from pg_catalog.pg_attribute a
 		x.indisprimary and
 		a.attnum = any(x.indkey) and
 		x.indislive
-where a.attnum > 0 and not a.attisdropped and a.attrelid = $table.id$
+where not exists (select 1 from col) and a.attnum > 0 and not a.attisdropped and a.attrelid = $table.id$
 union all
 select
 	'tables',
 	'<i>Partitions</i>',
 	$table.id$,
+	null,
 	null,
 	'tables.png',
 	x'7FFFFFF0'::int,
@@ -33,6 +58,7 @@ union all
 select
 	'triggers',
 	'<i>Triggers</i>',
+	null,
 	null,
 	null,
 	'arrow-transition.png',
@@ -45,6 +71,7 @@ select
 	'<i>Indexes</i>',
 	null,
 	null,
+	null,
 	'paper-plane.png',
 	x'7FFFFFF2'::int,
 	'2'
@@ -53,6 +80,7 @@ union all
 select
 	'constraints',
 	'<i>Constraints</i>',
+	null,
 	null,
 	null,
 	'traffic-cone.png',
@@ -65,6 +93,7 @@ select
 	'<i>Dependent constraints</i>',
 	null,
 	null,
+	null,
 	'traffic-cone.png',
 	x'7FFFFFF3'::int,
 	'4'
@@ -73,6 +102,7 @@ union all
 select
 	'rules',
 	'<i>Rules</i>',
+	null,
 	null,
 	null,
 	'image-saturation-up.png',
@@ -86,12 +116,14 @@ select
 	null,
 	null,
 	null,
+	null,
 	x'7FFFFFF5'::int,
 	'6'
 union all
 select
 	'table_stats',
 	'<i>Per-column statistics</i>',
+	null,
 	null,
 	null,
 	null,

@@ -964,8 +964,8 @@ bool PgConnection::linkLostMidQuery(const QString &libpqError)
     // query reopens the link.
     if (!libpqError.isEmpty())
         emit error(libpqError);
-    emit error(tr("The query had been sent when the connection dropped, so it is "
-                  "unknown whether the server executed it. If it modifies data, "
+    emit error(tr("The query had been sent when the connection dropped, so it is\n"
+                  "unknown whether the server executed it. If it modifies data,\n"
                   "check the effect of this run before repeating it."));
     // tells the widget to report the run as interrupted rather than done
     emit outcomeUnknown();

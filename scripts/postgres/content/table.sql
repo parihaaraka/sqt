@@ -386,10 +386,12 @@ begin
 		using hint = 'script';
 
 	else
-		_create_object := _create_object ||
-				format(E'COMMENT ON %s %s IS %s;\n\n', _obj_type, _obj_name, coalesce(E'\n' || quote_literal(_comment), 'NULL'));
+		-- The comment of the relation itself is deliberately absent here: a
+		-- selection of columns is made to get hold of those columns, and the
+		-- table's own description belongs to the script of the table node.
 
 		-- explicit column comments are in object tree only
+
 		with tmp as
 		(
 			select

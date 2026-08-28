@@ -1361,8 +1361,26 @@ void MainWindow::scriptSelectedObjects()
 
     try
     {
-        // process parent node in case of multiple selection, else process selected node
-        QModelIndex parent = (si.count() > 1 ? srcIndex.parent() : srcIndex);
+        // Process parent node in case of multiple selection, else process
+        // selected node. A node collecting children of a single kind may have
+        // no content script of its own (the "Columns" node a wide table hides
+        // its columns behind), so the nearest ancestor that has one is scripted
+        // instead - with $children.ids$ still naming the selected nodes. This
+        // keeps such a folder free of a script duplicating the owner's one.
+        QModelIndex parent = srcIndex;
+        if (si.count() > 1)
+        {
+            parent = srcIndex.parent();
+            for (QModelIndex i = parent; i.isValid(); i = i.parent())
+            {
+                if (Scripting::getScript(con.get(), Scripting::Context::Content,
+                                         i.data(DbObject::TypeRole).toString()))
+                {
+                    parent = i;
+                    break;
+                }
+            }
+        }
         QString type = parent.data(DbObject::TypeRole).toString();
 
         // callback to provide values for macroses

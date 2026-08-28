@@ -51,15 +51,16 @@ Script must return one of the following resultset:
 - 1 row 1 column named `html`;
 - any other resultset.
 
-Sql script for PostgreSQL may contain [plpgsql anonymous code block](https://github.com/parihaaraka/sqt/blob/master/scripts/postgres/content/table.sql) and return textual data in the following ways: 
+Sql script for PostgreSQL may contain [plpgsql anonymous code block](https://github.com/parihaaraka/sqt/blob/master/scripts/postgres/content/table.sql) and return textual data in the following ways:
 - `raise notice '<db object related sql script content>' using hint='script'`;
 - `raise notice '<html content>' using hint='html'`.
 
 Besides described macroses the script may contain:
 * `$dbms.version$` - comparable dbms version (integer value);
 * `$children.ids$` - ids of selected nodes (comma separated);
-* `$children.names$` - names of selected nodes (comma separated, enclosed in single quotes if not yet). 
-`$children.<ids|names>` macro is actual in case of multiple nodes selection and works within parent node content script. When there is no multiple selected children of the node being scripted, the first macro is replaced by -1, the second one - by `''` (empty quoted string).
+* `$children.names$` - names of selected nodes (comma separated, enclosed in single quotes if not yet).
+`$children.<ids|names>` macro is actual in case of multiple nodes selection. Such a selection is scripted by the closest ancestor of the selected nodes having a content script - usually their immediate parent. A node collecting children of a single kind (say, a `Columns` node keeping the columns of a wide table out of the way) needs no content script of its own then: the selection is passed to the script of the object owning it, so there is nothing to duplicate. When there is no multiple selected children of the node being scripted, the first macro is replaced by -1, the second one - by `''` (empty quoted string).
+
 * `$gui.context$` - what invoked the script: `'F4'` (a quoted literal) when the object was resolved from the identifier under the cursor of a query editor, `NULL` when the node was selected in the objects tree.
 
 ### Keyword case
