@@ -60,6 +60,12 @@ public:
     int keywordGroupCount() const { return _keywordGroupCount; }
     bool isKeyword(const QString &word) const;
 
+    /// Whether this dbms allows the script to be cut into statements (hl.conf's
+    /// `statement_split`), i.e. whether statementBounds() can answer at all.
+    /// Worth asking before offering the user a "run the statement under the
+    /// caret" command.
+    bool canSplitStatements() const { return _statementSplit; }
+
     /*!
      * \brief Scan single line of text.
      * \param text line to scan (must not contain line breaks)
@@ -93,24 +99,37 @@ public:
      * \param text  the whole script
      * \param pos   caret position within `text`
      * \return [start, end) of the statement at/after `pos`, trimmed of
-     *         surrounding whitespace. If `pos` sits in the trailing part of
-     *         the script with no more separators ahead, the range reaches
-     *         text.length().
+     *         surrounding whitespace, or {-1, -1} where the split is not
+     *         enabled for this dbms (\see canSplitStatements).
+     *         If `pos` sits in the trailing part of the script with no more
+     *         separators ahead, the range reaches text.length().
      *
-     * A "top-level" separator is a ';' that scanLine() would leave
-     * unclaimed: not part of a '...'/"..." literal, a [bracketed] or
-     * $tag$...$tag$ quoted body, or a comment. Dollar quoting is always
-     * engaged here (regardless of dbms), because a bare '$' pair never
-     * legitimately occurs in any dialect's plain SQL - so this is exactly
-     * what lets a `DO $$ ... $$;` block, including any nested single-quoted
-     * strings or differently-tagged $sub$...$sub$ literals inside its
-     * plpgsql body, be treated as one statement, without a dbms check.
+     * The separator is ';' - the only one any server actually understands
+     * (`GO`, `/`, `DELIMITER //` and the like are inventions of the various
+     * command line clients). A "top-level" one is an occurrence which
+     * scanLine() would leave unclaimed: not part of a '...'/"..." literal, a
+     * [bracketed] or $tag$...$tag$ quoted body, or a comment. Dollar quoting
+     * is always engaged here (regardless of dbms), because a bare '$' pair
+     * never legitimately occurs in any dialect's plain SQL - so this is
+     * exactly what lets a `DO $$ ... $$;` block, including any nested
+     * single-quoted strings or differently-tagged $sub$...$sub$ literals
+     * inside its plpgsql body, be treated as one statement, without a dbms
+     * check.
+     *
+     * Whether the split is allowed at all is a dbms property, because ';' is
+     * not a statement boundary everywhere: in T-SQL the one inside a
+     * `CREATE PROCEDURE ... BEGIN ... END` body merely separates the
+     * statements of the *body*, and cutting there would send the server a
+     * fragment - or, worse, a fragment that is valid on its own and silently
+     * runs. Such a dbms leaves `statement_split` out and gets {-1, -1}, so
+     * the feature offers itself only where it can be trusted.
      *
      * Same limitations as scanLine()'s dollar-tag search: the closing tag is
      * matched by plain substring, exactly as the server does, so it is
      * fooled only by the same edge cases the server itself would reject.
      */
     QPair<int, int> statementBounds(const QString &text, int pos) const;
+
 
     /// lexer built with the connection's hl.conf (nullptr if unavailable)
     static std::shared_ptr<const SqlLexer> sharedFor(DbConnection *con);
@@ -132,8 +151,11 @@ private:
     QHash<QString, WordInfo> _keywords;
     QSet<QString> _functions;
     QString _delimiters;
+    /// hl.conf's `statement_split`: may the script be cut on top-level ';'
+    bool _statementSplit = false;
     bool _tsqlBrackets = false;
     int _keywordGroupCount = 0;
+
 };
 
 #endif // SQLLEXER_H

@@ -11,13 +11,17 @@ The main target audience are db programmers.
 * alternative sorting (e.g., sort table columns in original/alphabetical order);
 * multiple selection to generate appropriate SQL code (e.g., select/insert/update commands with selected columns only);
 * convenient (Qt Creator-like) search/replace panel;
-* search through a folder of sql scripts (`Ctrl+Shift+F`, `Ctrl+Shift+O` - get back to the objects tree);
 * multiple resultsets support;
 * multicursor;
+* search through a folder of sql scripts (`Ctrl+Shift+F`, `Ctrl+Shift+O` - get back to the objects tree);
+* getting into an object script under the cursor (`F4`);
+* running the statement at the caret only (`Ctrl+Enter`), selecting it to see its
+  bounds (`Ctrl+Shift+A`) - where the dialect allows the script to be cut on
+  top-level `;` (`statement_split` flag in `hl.conf`), otherwise `Ctrl+Enter`
+  runs the whole tab;
 * bookmarks (mark: `Ctrl+M`, previous: `Ctrl+,`, next: `Ctrl+.`, last: `Ctrl+L`);
 * uppercase (`Ctrl+U`), lowercase (`Ctrl+Shift+U`, `Ctrl+Win+U`)
 * code completion support (`Ctrl+Space`);
-* getting into an object script under the cursor (`F4`);
 * json viewer with highlighting and extracting json from it's nested text value (`Ctrl+J`);
 * totalling selected cells (`F6`);
 * customizable time charts to display [current](https://github.com/parihaaraka/sqt/blob/master/scripts/postgres/statistics.sql) or [recorded](https://github.com/parihaaraka/sqt/blob/master/scripts/postgres/recorded_statistics.sql) statistics;

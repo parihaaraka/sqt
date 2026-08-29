@@ -814,9 +814,15 @@ void MainWindow::executeQuery(QueryWidget *q, bool currentStatementOnly)
 
     q->clearResult();
     QString query;
+    // What the empty case is about, so that it can be said out loud below.
+    // Which of the three applies is decided here and nowhere else.
+    QString nothingToRun;
     QTextCursor cursor = q->textCursor();
     if (cursor.hasSelection())
+    {
         query = cursor.selection().toPlainText();
+        nothingToRun = tr("the selection holds no statement to run");
+    }
     else if (currentStatementOnly)
     {
         // Falls back to the whole text where no dictionary-driven lexer is
@@ -826,13 +832,30 @@ void MainWindow::executeQuery(QueryWidget *q, bool currentStatementOnly)
         const QPair<int, int> bounds = q->currentStatementBounds();
         query = q->toPlainText();
         if (bounds.first >= 0)
+        {
             query = query.mid(bounds.first, bounds.second - bounds.first);
+            // Between two statements, or past the last separator: there is text
+            // in the tab, just none of it at the caret.
+            nothingToRun = tr("no statement at the caret");
+        }
+        else
+            nothingToRun = tr("the tab is empty");
     }
     else
+    {
         query = q->toPlainText();
+        nothingToRun = tr("the tab is empty");
+    }
 
-    if (query.isEmpty())
+    // Whitespace and nothing else is not worth sending, and libpq answers an
+    // empty query with an empty result - which looks exactly like the
+    // application having ignored the key. Said in the messages pane: the user
+    // asked for a run, and this is that run's outcome.
+    if (query.trimmed().isEmpty())
+    {
+        q->note(nothingToRun);
         return;
+    }
 
     QJsonObject qSettings;
     // do not extract commented instructions from huge sql script

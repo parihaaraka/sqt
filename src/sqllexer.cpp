@@ -9,6 +9,7 @@
 SqlLexer::SqlLexer(const QJsonDocument &settings)
 {
     _delimiters = " \t\r\n``'\";:()[]<>{}/\\^&$|!?~,.-+*%=" + settings["add_separators"].toString();
+    _statementSplit = settings["statement_split"].toBool(false);
     _tsqlBrackets = settings["identifier"].toObject()["brackets"].toBool(false);
 
     const QJsonArray fnDict = settings["function"].toObject()["dict"].toArray();
@@ -371,6 +372,10 @@ int SqlLexer::scanLine(const QString &text,
 
 QPair<int, int> SqlLexer::statementBounds(const QString &text, int pos) const
 {
+    // ';' is not a statement boundary in this dialect - see canSplitStatements()
+    if (!_statementSplit)
+        return {-1, -1};
+
     QString dollarTag;
     int state = InitialState;
     int lineStart = 0;
@@ -391,18 +396,16 @@ QPair<int, int> SqlLexer::statementBounds(const QString &text, int pos) const
         const int lineEnd = (nl < 0 ? text.length() : nl);
         const QString line = text.mid(lineStart, lineEnd - lineStart);
 
-        // spans scanLine() claims on this line: a ';' inside any of them is
-        // part of a literal/comment/quoted body, not a statement separator
+        // spans scanLine() claims on this line: a separator inside any of them
+        // is part of a literal/comment/quoted body, not a statement separator
         QVector<QPair<int, int>> claimed;
         state = scanLine(line, state, [&claimed](const Span &s)
         {
             claimed.append({s.start, s.start + s.length});
         }, &dollarTag);
 
-        for (int i = 0; i < line.length(); ++i)
+        for (int i = line.indexOf(';'); i >= 0; i = line.indexOf(';', i + 1))
         {
-            if (line.at(i) != ';')
-                continue;
             bool isClaimed = false;
             for (const auto &s: claimed)
             {
@@ -415,6 +418,8 @@ QPair<int, int> SqlLexer::statementBounds(const QString &text, int pos) const
             if (isClaimed)
                 continue;
 
+            // The caret right before the ';' still belongs to this statement,
+            // right after it to the next one.
             const int abs = lineStart + i;
             if (abs >= pos)
                 return trimmed(stmtStart, abs + 1);

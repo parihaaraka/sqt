@@ -7,6 +7,7 @@
 #include "codeeditor.h"
 #include <QPainter>
 #include <QTextBlock>
+#include <QMenu>
 #include <QMimeData>
 #include <QRegularExpression>
 #include <QTimer>
@@ -797,6 +798,54 @@ void CodeEditor::applySingleLineTab(QTextCursor &c)
     c.insertText(insertText);
 }
 
+bool CodeEditor::hasSelectedText() const
+{
+    // Not textCursor().hasSelection() alone: with several cursors the native
+    // one is only the main cursor, and the case commands act on them all.
+    for (const QTextCursor &c: _multiCursor.cursors())
+    {
+        if (c.hasSelection())
+            return true;
+    }
+    return textCursor().hasSelection();
+}
+
+void CodeEditor::changeSelectedTextCase(bool upper)
+{
+    if (isReadOnly() || !hasSelectedText())
+        return;
+
+    auto fold = [upper](const QString &text) {
+        return upper ? text.toUpper() : text.toLower();
+    };
+
+    if (_multiCursor.isMultiple())
+    {
+        // Keep every selection selected across the replacement: insertText()
+        // leaves the cursor collapsed at the end of what it inserted, and the
+        // set is the thing the user would go on working with (another fold, a
+        // Ctrl+C). Same reasoning as the single-cursor path below.
+        performMultiEdit([&fold](QTextCursor &cur) {
+            if (!cur.hasSelection())
+                return;
+            const int start = cur.selectionStart();
+            const int end = cur.selectionEnd();
+            cur.insertText(fold(cur.selectedText()));
+            cur.setPosition(start);
+            cur.setPosition(end, QTextCursor::KeepAnchor);
+        });
+        return;
+    }
+
+    QTextCursor c = textCursor();
+    const int start = c.selectionStart();
+    const int end = c.selectionEnd();
+    c.insertText(fold(c.selectedText()));
+    c.setPosition(start);
+    c.setPosition(end, QTextCursor::KeepAnchor);
+    applySingleCursorEdit(c);
+}
+
 // ---- multi-cursor-aware undo/redo -------------------------------------
 
 QVector<QPair<int,int>> CodeEditor::snapshotCursors(const MultiTextCursor &mc)
@@ -1469,18 +1518,11 @@ bool CodeEditor::handleKeyPress(QKeyEvent *keyEvent)
 
     // ---- Ctrl+U / Ctrl+Shift+U: case of the selection ----
     case Qt::Key_U:
-        if (ctrl && !_multiCursor.isMultiple() && textCursor().hasSelection())
+        if (ctrl && hasSelectedText())
         {
-            QTextCursor c = textCursor();
-            const int start = c.selectionStart();
-            const int end = c.selectionEnd();
             // Ubuntu uses Ctrl+Shift+U to enter a character by its unicode
             // number, so Ctrl+Win+U lowercases the selection as well.
-            c.insertText(shift || meta ? c.selectedText().toLower()
-                                       : c.selectedText().toUpper());
-            c.setPosition(start);
-            c.setPosition(end, QTextCursor::KeepAnchor);
-            applySingleCursorEdit(c);
+            changeSelectedTextCase(!(shift || meta));
             return true;
         }
         break; // plain 'u' with several cursors is typed text, see below
@@ -1509,6 +1551,56 @@ bool CodeEditor::handleKeyPress(QKeyEvent *keyEvent)
     }
 
     return false;
+}
+
+void CodeEditor::contextMenuEvent(QContextMenuEvent *event)
+{
+    // Qt's own menu (undo/redo/cut/copy/paste/select all), already enabled and
+    // disabled to match the current state, plus whatever the owner appends -
+    // the point being that the keyboard-only commands (run the statement under
+    // the caret, select it, script the object under the caret) are otherwise
+    // undiscoverable: nothing in the interface mentions them.
+    std::unique_ptr<QMenu> menu(createStandardContextMenu(event->pos()));
+    if (!menu)
+        return;
+
+    // Qt hides the shortcut of a menu action by default (the platform menu bar
+    // shows it, a context menu does not), so ask for it explicitly instead of
+    // spelling the keys into the text with a '\t' - this way the sequence is
+    // rendered by the style, in the platform's own notation.
+    const QList<QAction*> standardActions = menu->actions();
+    for (QAction *a: standardActions)
+        a->setShortcutVisibleInContextMenu(true);
+
+    // Case folding of the selection - the other pair of keyboard-only commands
+    // worth advertising. Left out entirely in a read-only editor (the object
+    // script pane, a preview): unlike the standard items, which are all shown
+    // and greyed out there by Qt itself, an editing command that can never
+    // apply is just noise. With something selected they are enabled, without a
+    // selection they are shown disabled, so the menu keeps its shape and says
+    // what the keys need.
+    if (!isReadOnly())
+    {
+        const bool hasSelection = hasSelectedText();
+        menu->addSeparator();
+
+        QAction *toUpper = menu->addAction(tr("UPPERCASE"));
+        toUpper->setShortcut(QKeySequence("Ctrl+U"));
+        toUpper->setShortcutVisibleInContextMenu(true);
+        toUpper->setEnabled(hasSelection);
+        connect(toUpper, &QAction::triggered, this, [this]{ changeSelectedTextCase(true); });
+
+        QAction *toLower = menu->addAction(tr("lowercase"));
+        toLower->setShortcut(QKeySequence("Ctrl+Shift+U"));
+        toLower->setShortcutVisibleInContextMenu(true);
+        toLower->setEnabled(hasSelection);
+        connect(toLower, &QAction::triggered, this, [this]{ changeSelectedTextCase(false); });
+    }
+
+    emit contextMenuRequest(menu.get());
+    // exec() runs a nested event loop; nothing of ours is touched afterwards,
+    // and the menu is destroyed by the unique_ptr on the way out
+    menu->exec(event->globalPos());
 }
 
 void CodeEditor::keyPressEvent(QKeyEvent *e)

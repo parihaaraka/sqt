@@ -10,6 +10,7 @@
 class CodeBlockProperties;
 class QCompleter;
 class QTimer;
+class QMenu;
 class CodeEditor;
 
 namespace Bookmarks
@@ -67,6 +68,7 @@ protected:
     void insertFromMimeData(const QMimeData *source) override;
     QMimeData *createMimeDataFromSelection() const override;
     void paintEvent(QPaintEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
@@ -129,6 +131,15 @@ private:
     // range covering them whole (leading '\n' included where there is one) -
     // what cutCurrentLines() removes and puts on the clipboard.
     QTextCursor lineRangeForCut(const QTextCursor &c) const;
+
+    // Is there any text to act on - the native selection, or that of any of
+    // the several cursors? Also what decides whether the case items of the
+    // context menu are enabled.
+    bool hasSelectedText() const;
+
+    // Ctrl+U / Ctrl+Shift+U and the matching context menu items: fold every
+    // selection to \a upper case (or to lower), keeping it selected.
+    void changeSelectedTextCase(bool upper);
 
 
     // ---- per-cursor editing primitives ----
@@ -211,6 +222,11 @@ signals:
     /// it - a dry-run preview of what Ctrl+Return would send with no
     /// selection.
     void selectStatementRequest();
+    /// The standard context menu, for the owner to append its own commands to
+    /// before it is shown. Only the owner knows whether they apply (a
+    /// connection, a dbms with a statement separator), so the editor builds
+    /// the menu and hands it over rather than deciding anything itself.
+    void contextMenuRequest(QMenu *menu);
 };
 
 #endif // CODEEDITOR_H

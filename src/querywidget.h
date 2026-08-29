@@ -90,6 +90,17 @@ public:
     // method rather than through dbConnection() directly: it raises the flag
     // that makes the connection's output count as this query's result.
     void execute(const QString &query);
+    /// An aside about the run the user has just asked for, in the messages pane
+    /// where the answer was expected ("empty query", and the like). A run that
+    /// produces nothing at all reads as a broken application, so the absence of
+    /// a result is itself a result and belongs next to the real ones - unlike
+    /// everything the connection says on its own, which goes to the log.
+    void note(const QString &text);
+    /// A transient aside about something that is not a query run at all (no
+    /// statement to select, no object to script): the status bar, never the
+    /// messages pane, where it would read as the output of the query shown
+    /// there. Falls back to the pane only where there is no status bar.
+    void status(const QString &text);
 
 signals:
     void sqlChanged();
@@ -108,6 +119,9 @@ public slots:
     void onScriptObjectRequest();
     void onExecuteStatementRequest();
     void onSelectStatementRequest();
+    /// Appends the editor's own commands to the standard context menu it just
+    /// built (CodeEditor::contextMenuRequest).
+    void onEditorContextMenu(QMenu *menu);
     //void onCustomGridContextMenuRequested(const QPoint & pos);
     //void on_customEditorContextMenuRequested(const QPoint & pos);
 

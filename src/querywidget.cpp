@@ -530,6 +530,7 @@ void QueryWidget::setPlainText(const QString &text)
     connect(editor, &CodeEditor::scriptObjectRequest, this, &QueryWidget::onScriptObjectRequest, Qt::UniqueConnection);
     connect(editor, &CodeEditor::executeStatementRequest, this, &QueryWidget::onExecuteStatementRequest, Qt::UniqueConnection);
     connect(editor, &CodeEditor::selectStatementRequest, this, &QueryWidget::onSelectStatementRequest, Qt::UniqueConnection);
+    connect(editor, &CodeEditor::contextMenuRequest, this, &QueryWidget::onEditorContextMenu, Qt::UniqueConnection);
     editor->setPlainText(text);
 }
 
@@ -598,6 +599,37 @@ void QueryWidget::log(const QString &text, QColor color)
     _messages->appendPlainText(text.trimmed());
     if (!text.isEmpty() && widget(1)->height() == 0)
         setSizes(QList<int>() << 400 << 100);
+}
+
+void QueryWidget::note(const QString &text)
+{
+    // The pane must show one run's output only, so an aside about this very run
+    // starts it: whatever the previous one left behind would read as part of
+    // the answer to what the user has just asked.
+    clearResult();
+    // Same colour as everything else the run has to say: this *is* its result,
+    // the whole point being that a run which produces nothing at all otherwise
+    // looks like the application having failed to react.
+    const QPalette defaultPalette;
+    log(text, defaultPalette.color(QPalette::Text));
+}
+
+void QueryWidget::status(const QString &text)
+{
+    // A passing remark about something that is not a query run (no statement to
+    // select, no object to script): transient, and never in the messages pane,
+    // where it would be read as the output of the query displayed there. The
+    // preview pane has no messages pane at all, and no modal popup either way.
+    if (QMainWindow *mw = qobject_cast<QMainWindow*>(window()))
+    {
+        if (mw->statusBar())
+        {
+            mw->statusBar()->showMessage(text, 1000 * 5);
+            return;
+        }
+    }
+    // no status bar to notify through
+    log(text, QPalette().color(QPalette::Text));
 }
 
 QCompleter* QueryWidget::completer()
@@ -1106,6 +1138,13 @@ void QueryWidget::onCompleterRequest()
 
 void QueryWidget::onExecuteStatementRequest()
 {
+    // A widget without a messages pane cannot show what a query returns (the
+    // object tree's preview pane has none, yet it does hold the tree's
+    // connection, lent to it by highlight()) - so running one there would send
+    // a query whose every notice and error is dropped on the floor by log().
+    if (!_messages)
+        return;
+
     if (MainWindow *mainWindow = qobject_cast<MainWindow*>(window()))
         mainWindow->executeQuery(this, true);
 }
@@ -1114,12 +1153,63 @@ void QueryWidget::onSelectStatementRequest()
 {
     const QPair<int, int> bounds = currentStatementBounds();
     if (bounds.first < 0)
+    {
+        // The split is not enabled for this dialect, so the editor cannot tell
+        // where one statement ends and the next begins. Said out loud, or the
+        // key looks broken; the status bar, since selecting is not a query run.
+        status(tr("this dbms does not support running a single statement "
+                  "(see `statement_split` in hl.conf)"));
         return;
+    }
+
+    if (bounds.first == bounds.second)
+    {
+        // Between statements, or past the last separator: the bounds are valid
+        // but enclose nothing but whitespace, which statementBounds() trims.
+        status(tr("no statement at the caret"));
+        return;
+    }
 
     QTextCursor c = textCursor();
     c.setPosition(bounds.first);
     c.setPosition(bounds.second, QTextCursor::KeepAnchor);
     setTextCursor(c);
+}
+
+void QueryWidget::onEditorContextMenu(QMenu *menu)
+{
+    if (!menu)
+        return;
+
+    // The one place where Ctrl+Shift+A - and with it the whole notion of "the
+    // statement under the caret" that Ctrl+Return relies on - can be found by
+    // someone who does not already know it is there.
+    //
+    // Ctrl+Return itself is deliberately not offered as an item: with a
+    // selection in place it runs the selection, not the statement at the caret,
+    // and a right click does not clear the selection - so the entry would
+    // sometimes execute something other than its own wording. Selecting has no
+    // such stakes, and once the statement is selected, running it is the
+    // familiar Execute query.
+    //
+    // F4 is left out for the same reason: a right click does not move the
+    // caret, so an item scripting "the object under the caret" would act on the
+    // caret while the user is pointing at another word.
+    auto lexer = (_connection ? SqlLexer::sharedFor(_connection.get()) : nullptr);
+
+    menu->addSeparator();
+    QAction *select = menu->addAction(tr("Select statement at the caret"));
+    // A menu action hides its shortcut by default - hence the explicit request,
+    // so that the style renders the sequence in the platform's own notation
+    // instead of it being spelled into the text by hand.
+    select->setShortcut(QKeySequence("Ctrl+Shift+A"));
+    select->setShortcutVisibleInContextMenu(true);
+    // Where the split is not available (no hl.conf, or not enabled for this
+    // dialect - see SqlLexer::canSplitStatements) there is no statement to speak
+    // of. Shown disabled rather than left out: a menu that changes shape from
+    // one connection to the next is no way to learn what the editor can do.
+    select->setEnabled(lexer && lexer->canSplitStatements());
+    connect(select, &QAction::triggered, this, &QueryWidget::onSelectStatementRequest);
 }
 
 void QueryWidget::onScriptObjectRequest()
@@ -1186,21 +1276,6 @@ void QueryWidget::onScriptObjectRequest()
     QString name = fold(parts[cur]);
     QString qualifier = (parts[cur].dotted ? fold(parts[cur - 1]) : QString());
 
-    // Transient notification: neither a modal popup nor a permanent record in the
-    // messages pane (the preview pane has no messages pane at all anyway).
-    auto note = [this](const QString &text) {
-        if (QMainWindow *mw = qobject_cast<QMainWindow*>(window()))
-        {
-            if (mw->statusBar())
-            {
-                mw->statusBar()->showMessage(text, 1000 * 5);
-                return;
-            }
-        }
-        // no status bar to notify through
-        log(text, QPalette().color(QPalette::Text));
-    };
-
     // The editor's own connection is preferred: same session, hence the same
     // search_path and visibility of the objects created within its uncommitted
     // transaction. It is unusable while busy, and running the service queries
@@ -1215,8 +1290,8 @@ void QueryWidget::onScriptObjectRequest()
         tmpConnection.reset(_connection->clone());
         if (!tmpConnection->open())
         {
-            note(tr("unable to open a service connection to script %1").
-                 arg(qualifier.isEmpty() ? name : qualifier + '.' + name));
+            status(tr("unable to open a service connection to script %1").
+                   arg(qualifier.isEmpty() ? name : qualifier + '.' + name));
             return;
         }
         cn = tmpConnection.get();
@@ -1312,7 +1387,7 @@ void QueryWidget::onScriptObjectRequest()
 
     if (script.isEmpty())
     {
-        note(tr("%1 not found").arg(qualifier.isEmpty() ? name : qualifier + '.' + name));
+        status(tr("%1 not found").arg(qualifier.isEmpty() ? name : qualifier + '.' + name));
         return;
     }
 
