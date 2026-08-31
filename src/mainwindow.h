@@ -24,6 +24,7 @@ class QueryWidget;
 class TableModel;
 class FindAndReplacePanel;
 class DbObjectsModel;
+class DbObject;
 class CodeBlockProperties;
 class MyProxyStyle;
 class FileSearchPanel;
@@ -137,7 +138,20 @@ private:
     /// closed by the user explicitly.
     void releaseIdleDatabaseConnection(const QModelIndex &srcIndex);
 
+    /// The source-model index behind a view (proxy) index, or an invalid one
+    /// when the view has no proxy or the index itself is invalid. Preferred over
+    /// a bare `static_cast<QSortFilterProxyModel*>(...)->mapToSource(...)`,
+    /// which assumes both.
+    QModelIndex sourceIndex(const QModelIndex &viewIndex) const;
+    /// The tree node behind a view index, or nullptr.
+    DbObject *nodeAt(const QModelIndex &viewIndex) const;
+
     bool closeTab(int index);
+    /// Whether the tab at \a index would let itself be closed - the save prompt
+    /// and the busy-connection check, without destroying anything. closeEvent()
+    /// asks every tab this before it closes any, so a Cancel halfway through
+    /// leaves the session as it was.
+    bool mayCloseTab(int index);
     bool ensureSaved(int index, bool ask_name = false, bool forceWarning = false);
     FindAndReplacePanel *_frPanel;
     // Created in the constructor, but the Ctrl+E lambda above is installed
@@ -186,7 +200,11 @@ private:
     QTimer *_durationRefreshTimer;
     void log(const QString &msg);
     void adjustMru();
-    void addMruFile();
+    /// Records \a fileName in the "Open recent" list. Both arguments default to
+    /// empty, in which case the file dialog's own selection is used - which only
+    /// holds after the dialog has been executed.
+    void addMruFile(const QString &fileName = QString(),
+                    const QString &fileEncoding = QString());
 
 public slots:
     QVariant current(const QString &nodeType, const QString &field);

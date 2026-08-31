@@ -162,7 +162,10 @@ void TimeChart::wheelEvent(QWheelEvent *event)
 
     if (!event->angleDelta().isNull())
     {
-        qreal degrees = event->angleDelta().y() / 8;
+        // 8.0, not 8: angleDelta() is in eighths of a degree and a
+        // high-resolution wheel or trackpad reports sub-detent steps, which
+        // integer division rounded to zero - no zoom at all from such a device.
+        qreal degrees = event->angleDelta().y() / 8.0;
         qreal k = 1 + degrees / 90.0;
         qreal newScale = _scaleX * k;
         if (newScale <= 1000 && newScale > 0.005)

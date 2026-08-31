@@ -876,12 +876,26 @@ void QueryWidget::fetched(DataTable *table)
                     chartWidgets.append(chart);
         }
 
+        // The rows are taken out under the producer's own lock and consumed from
+        // a local table afterwards. Walking the live one was a race: the worker
+        // emits fetched() every FETCH_COUNT_NOTIFY rows from inside its append
+        // loop and keeps appending (each append under table->mutex), while this
+        // branch read rowCount()/getRow() and then clearRows() - which frees the
+        // row objects and reallocates the vector - with no lock at all. The
+        // non-chart branch below already does this correctly, through
+        // TableModel::take().
+        DataTable rows;
+        {
+            QMutexLocker lk(&table->mutex);
+            rows.takeRows(table);
+        }
+
         for (auto c: chartWidgets)
         {
             QString xSourceField = c->xSourceField();
             for (auto &n: c->pathNames())
             {
-                int ind = table->getColumnOrd(n);
+                int ind = rows.getColumnOrd(n);
                 if (ind != -1)
                 {
                     int sfInd = -1;
@@ -889,21 +903,21 @@ void QueryWidget::fetched(DataTable *table)
                     {
                         // if x-source field is specified but not found then skip current chart
                         // (path by path, because I'm too lazy to skip paths too)
-                        sfInd = table->getColumnOrd(xSourceField);
+                        sfInd = rows.getColumnOrd(xSourceField);
                         if (sfInd == -1)
                             continue;
                     }
-                    for (int r = 0; r < table->rowCount(); ++r)
+                    for (int r = 0; r < rows.rowCount(); ++r)
                     {
                         bool ok;
-                        qreal v = table->getRow(r)[n].toDouble(&ok);
+                        qreal v = rows.getRow(r)[n].toDouble(&ok);
                         if (ok)
                         {
                             if (sfInd == -1)
                                 c->appendValue(n, v, QDateTime::currentDateTime());
                             else
                             {
-                                QString tsStr = table->getRow(r)[sfInd].toString();
+                                QString tsStr = rows.getRow(r)[sfInd].toString();
                                 // TODO implement pg/odbc-specific time/datetime values conversion
                                 QDateTime ts = QDateTime::fromString(tsStr, Qt::ISODateWithMs);
                                 if (ts.isValid())
@@ -915,7 +929,6 @@ void QueryWidget::fetched(DataTable *table)
             }
             c->applyNewValues();
         }
-        table->clearRows();
 
     }
     else

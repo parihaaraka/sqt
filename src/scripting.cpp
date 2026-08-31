@@ -166,7 +166,7 @@ void refresh(DbConnection *connection, Context context)
     }
     // done reading - now the cache may be touched
     _scripts.insert(connection->dbmsScriptingID() + context2str(context),
-                    std::move(bunch));
+                    bunch);
 }
 
 void clearCache()

@@ -58,7 +58,13 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                          (keyCode == Qt::Key_Period ?
                               Bookmarks::next() :
                               Bookmarks::last()));
+            // The filter is application-wide, so the active window is not
+            // necessarily the main one: the json viewer is a plain QDialog. A
+            // key that means nothing outside the main window is left to its
+            // receiver rather than swallowed here.
             MainWindow *w = qobject_cast<MainWindow*>(QApplication::activeWindow());
+            if (!w)
+                return QObject::eventFilter(obj, event);
             w->activateEditorBlock(p);
             return true;
         }
@@ -351,7 +357,10 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
             if (edit->objectName() != "editCS" && edit->objectName() != "_def_wrap_")
                 textOption.setWrapMode(QTextOption::NoWrap);
 
-            auto *p = edit->parent()->parent();
+            // Both levels checked: an editor reparented (or not yet parented)
+            // would otherwise dereference a null first parent().
+            QObject *parent = edit->parent();
+            auto *p = (parent ? parent->parent() : nullptr);
             auto *qw = p ? qobject_cast<QueryWidget*>(p) : nullptr;
             bool flagsChanged = false;
             if (qw && qw->is_sql_hl(edit))

@@ -2186,7 +2186,18 @@ void CodeEditor::paintEvent(QPaintEvent *event)
 
 void CodeEditor::mousePressEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::LeftButton && event->modifiers().testFlag(Qt::AltModifier))
+    // The classification is latched here for the whole gesture. Keyboard and
+    // mouse state are independent, so asking `modifiers()` again in the move and
+    // release handlers could answer differently in the middle of one drag - and
+    // both mismatches did damage. Letting go of Alt a fraction before the button
+    // sent the release to QPlainTextEdit for a press it had never seen, and the
+    // syncFromNativeCursor() after it collapsed the whole set to one cursor:
+    // every extra caret vanished, seemingly at random, depending on which finger
+    // lifted first. Pressing Alt mid-drag did the reverse, swallowing the release
+    // Qt was waiting for and leaving its mousePressed flag set.
+    _altGesture = (event->button() == Qt::LeftButton &&
+                   event->modifiers().testFlag(Qt::AltModifier));
+    if (_altGesture)
     {
         _multiCursor.addCursor(cursorForPosition(event->pos()));
         // Not optional, and not just bookkeeping. Adding a cursor flips
@@ -2210,7 +2221,9 @@ void CodeEditor::mousePressEvent(QMouseEvent *event)
 
 void CodeEditor::mouseMoveEvent(QMouseEvent *event)
 {
-    if (event->buttons().testFlag(Qt::LeftButton) && event->modifiers().testFlag(Qt::AltModifier))
+    // _altGesture, not the live modifiers - see mousePressEvent(). The button
+    // still has to be down: a move with no button pressed is not this gesture.
+    if (_altGesture && event->buttons().testFlag(Qt::LeftButton))
     {
         // An Alt+Click that starts a drag is meant to give the *new* cursor
         // a real selection, not just a caret. mousePressEvent skipped the
@@ -2233,7 +2246,12 @@ void CodeEditor::mouseMoveEvent(QMouseEvent *event)
 
 void CodeEditor::mouseReleaseEvent(QMouseEvent *event)
 {
-    if (event->modifiers().testFlag(Qt::AltModifier))
+    // Whether this release belongs to an Alt gesture is decided by how the
+    // *press* was classified, not by what the modifiers say now - see
+    // mousePressEvent(). The latch is cleared here, where the gesture ends.
+    const bool wasAltGesture = _altGesture;
+    _altGesture = false;
+    if (wasAltGesture)
     {
         // mousePressEvent skipped the base class entirely for an Alt+Click
         // (no drag/press state was ever registered there), so skip the

@@ -98,6 +98,10 @@ private:
 
     /// close() itself; the caller must hold _connectionGuard.
     void closeLocked() noexcept;
+    /// Stops the query worker and waits for it, re-issuing the cancel on every
+    /// round and reporting when the driver will not let go. The wait cannot be
+    /// abandoned - the caller is about to touch _hdbc/_henv.
+    void waitForQueryThread(QThread *thread) noexcept;
 };
 
 #endif // ODBCCONNECTION_H

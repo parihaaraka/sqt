@@ -66,8 +66,15 @@ struct FileSearchHit
     /// What the text was decoded with. Carried along so that opening the file
     /// in an editor reproduces the very text the search read - any other
     /// encoding would show different characters, and line/column would point
-    /// somewhere else. Empty when the hit came from an editor's buffer.
+    /// somewhere else. Empty when the hit came from an editor's buffer, which
+    /// \a fromBuffer tells apart from "not known".
     QString encoding;
+    /// The hit was found in an open editor's buffer rather than on disk, so
+    /// there was no encoding to record. Without this, an empty \a encoding was
+    /// ambiguous and a consumer re-reading the file after that tab had been
+    /// saved or closed silently fell back to guessing - by a different rule than
+    /// the search itself uses.
+    bool fromBuffer = false;
 };
 Q_DECLARE_METATYPE(FileSearchHit)
 Q_DECLARE_METATYPE(QVector<FileSearchHit>)

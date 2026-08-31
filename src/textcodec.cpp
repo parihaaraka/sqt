@@ -274,6 +274,18 @@ QString canonicalName(const QString &name)
     return dec.isValid() ? QString::fromLatin1(dec.name()) : QString();
 }
 
+QString fallbackEncoding(const QString &configuredEncodings)
+{
+    const QStringList encodings = configuredEncodings.split(',', Qt::SkipEmptyParts);
+    for (const QString &e: encodings)
+    {
+        const QString canonical = canonicalName(e.trimmed());
+        if (!canonical.isEmpty() && canonical.compare("UTF-8", Qt::CaseInsensitive))
+            return canonical;
+    }
+    return QString();
+}
+
 QString bomEncoding(const QByteArray &data)
 {
     // The 4-byte marks are tested first: the utf-32 ones begin with a valid

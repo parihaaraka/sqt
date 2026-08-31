@@ -88,14 +88,23 @@ void load()
         f.setFamily(f.defaultFamily()); // restore system font if font-family is not specified
 
         // QApplication does not support font styling via setStyleSheet(),
-        // so lets do it manually
-        static QRegularExpression re(R"(QApplication\s*{([^}]+))");
-        QRegularExpressionMatch match = re.match(appStyle);
+        // so lets do it manually.
+        //
+        // Two separate expressions, both const: a single static one whose
+        // pattern was replaced by setPattern() below kept the *property* pattern
+        // for every later call, and load() runs more than once (main(), the
+        // MainWindow constructor, the settings dialog's OK). The second call
+        // then matched the first "name: value" pair anywhere in the sheet
+        // instead of the QApplication block, found no properties inside that
+        // fragment, and still reached setFont() - with a default QFont, undoing
+        // the font-family the block had asked for.
+        static const QRegularExpression blockRe(R"(QApplication\s*{([^}]+))");
+        QRegularExpressionMatch match = blockRe.match(appStyle);
         if (match.hasMatch())
         {
             QString qAppStyle = match.captured(1);
-            re.setPattern(R"(([\w-]+)\s*:\s*([^;}]+))");
-            QRegularExpressionMatchIterator i = re.globalMatch(qAppStyle);
+            static const QRegularExpression propRe(R"(([\w-]+)\s*:\s*([^;}]+))");
+            QRegularExpressionMatchIterator i = propRe.globalMatch(qAppStyle);
             while (i.hasNext())
             {
                 QRegularExpressionMatch match2 = i.next();

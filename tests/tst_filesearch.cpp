@@ -177,6 +177,39 @@ private slots:
         QCOMPARE(hits("f(x) + g(x)", p).size(), 2);
     }
 
+    void findWholeWordRegexpAlternation()
+    {
+        // The boundary must bind to the whole pattern, not to one alternative.
+        // Without grouping "foo|bar" reads as "(\bfoo)|(bar\b)", and the "bar"
+        // inside "foobar" then matches - the very thing whole-word excludes.
+        FileSearchParams p = plain("foo|bar");
+        p.regexp = true;
+        p.wholeWord = true;
+        QCOMPARE(hits("foobar", p).size(), 0);
+        QCOMPARE(hits("a bar b", p).size(), 1);
+        QCOMPARE(hits("foo bar", p).size(), 2);
+    }
+
+    void findWholeWordRegexpIsNotDecidedBySourceText()
+    {
+        // The pattern *source* says nothing about what the pattern can match:
+        // "\w+" begins with '\' and ends with '+', neither a word character, yet
+        // it matches words. Deciding the boundary from those characters would
+        // make the option a no-op here.
+        FileSearchParams p = plain("\\w+");
+        p.regexp = true;
+        p.wholeWord = true;
+        const auto res = hits("id, oid", p);
+        QCOMPARE(res.size(), 2);
+        // and it still finds whole words rather than nothing
+        QCOMPARE(res[0].column, 1);
+
+        FileSearchParams cls = plain("[a-z]+");
+        cls.regexp = true;
+        cls.wholeWord = true;
+        QCOMPARE(hits("abc", cls).size(), 1);
+    }
+
     void findRegexpMultiline()
     {
         // the file is matched as a whole, so a pattern may span lines
@@ -327,6 +360,55 @@ private slots:
         const auto res = FileSearch::decode(data, p);
         QCOMPARE(res.encoding, QString("UTF-8"));
         QCOMPARE(res.text, QString::fromUtf8("\xd1\x82\xd0\xb0\xd0\xb1"));
+    }
+
+    void decodeReadsBomMarkedUtf16()
+    {
+        // Every ascii character in utf-16 is a byte pair holding a NUL, so a
+        // binary check applied to the raw bytes would reject the whole family -
+        // and these are the files SSMS writes by default.
+        FileSearchParams p = plain("select");
+        QByteArray data = QByteArray("\xFF\xFE", 2);
+        for (char c: QByteArray("select 1"))
+        {
+            data.append(c);
+            data.append('\0');
+        }
+        const auto res = FileSearch::decode(data, p);
+        QVERIFY(!res.binary);
+        QCOMPARE(res.encoding, QString("UTF-16LE"));
+        QCOMPARE(res.text, QString("select 1"));
+        QCOMPARE(hits(res.text, p).size(), 1);
+    }
+
+    void decodeReadsUtf16WhenNamedExplicitly()
+    {
+        // Also without a BOM to go by: the encoding is named, so the binary
+        // check must respect it.
+        FileSearchParams p = plain("select");
+        p.encoding = "UTF-16LE";
+        QByteArray data;
+        for (char c: QByteArray("select 1"))
+        {
+            data.append(c);
+            data.append('\0');
+        }
+        const auto res = FileSearch::decode(data, p);
+        QVERIFY(!res.binary);
+        QCOMPARE(res.text, QString("select 1"));
+    }
+
+    void decodeStillSkipsBinaryNamedAsUtf16()
+    {
+        // The heuristic is not simply dropped for wide encodings: it applies to
+        // the decoded text, where a real NUL *character* still means binary.
+        FileSearchParams p = plain("x");
+        p.encoding = "UTF-16LE";
+        // one 'a', then a NUL code unit
+        const QByteArray data = QByteArray("\x61\x00\x00\x00", 4);
+        const auto res = FileSearch::decode(data, p);
+        QVERIFY(res.binary);
+        QVERIFY(res.text.isEmpty());
     }
 
     // ---------------- the walk ----------------

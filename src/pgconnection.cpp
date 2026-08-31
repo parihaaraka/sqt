@@ -810,9 +810,18 @@ QString PgConnection::escapeIdentifier(const QString &identifier)
 
 QPair<QString,int> PgConnection::typeInfo(int sqlType)
 {
-    auto it = _data_types.constFind(sqlType);
-    if (it != _data_types.constEnd())
-        return it.value();
+    // _data_types is read and written from both the query worker (the
+    // queryStateChanged lambda clarifies the connection's own tables) and the
+    // gui thread (QueryWidget clarifies its model's copy after queryFinished),
+    // and a QHash insert rehashes under a concurrent lookup. The guard is
+    // released for the round trip below - it must not be held across a query -
+    // and re-taken to publish, which is also why the cache is consulted twice.
+    {
+        QMutexLocker lk(&_dataTypesGuard);
+        auto it = _data_types.constFind(sqlType);
+        if (it != _data_types.constEnd())
+            return it.value();
+    }
 
     QPair<QString,int> tInfo("unknown", -1);
     std::unique_ptr<DbConnection> cn{clone()};
@@ -821,23 +830,34 @@ QPair<QString,int> PgConnection::typeInfo(int sqlType)
             "select t.oid, t.typname, el.oid "
             "from pg_type t "
             "   left join pg_type el on t.typelem = el.oid ";
-    if (!_data_types.empty())
     {
-        query += "where t.oid = $1::oid";
-        params.append(QVariant(sqlType));
+        QMutexLocker lk(&_dataTypesGuard);
+        if (!_data_types.empty())
+        {
+            query += "where t.oid = $1::oid";
+            params.append(QVariant(sqlType));
+        }
     }
 
-    if (DataTable *res = cn->execute(query, params))
+    // Owning, because this overload of execute() hands ownership over: it returns
+    // _resultsets.takeLast(), so the clone's own teardown does not free the table
+    // and the caller must. A miss on the first call fetches the whole pg_type
+    // catalogue, so this is not a small leak to overlook.
+    std::unique_ptr<DataTable> res{cn->execute(query, params)};
+    if (res)
     {
+        QMutexLocker lk(&_dataTypesGuard);
         for (int i = 0; i < res->rowCount(); ++i)
         {
             auto r = res->getRow(i);
-            _data_types[r[0].toInt()] = {
-                    r[1].toString(),
-                    r[2].isValid() ? r[2].toInt() : -1
-                };
-            if (sqlType == r[0].toInt())
-                tInfo = _data_types[sqlType];
+            const int oid = r[0].toInt();
+            const QPair<QString,int> info {
+                r[1].toString(),
+                r[2].isValid() ? r[2].toInt() : -1
+            };
+            _data_types[oid] = info;
+            if (sqlType == oid)
+                tInfo = info;
         }
     }
     return tInfo;

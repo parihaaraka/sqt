@@ -1,8 +1,21 @@
 #include "dbobject.h"
 #include "dbconnectionfactory.h"
 #include "odbcconnection.h"
+#include <QUuid>
 
-DbObject::DbObject(DbObject *parent)
+namespace
+{
+
+/// A key no other node can ever hold, minted once per object. See
+/// DbObject::connectionKey() for why the node's address would not do.
+QString newConnectionKey()
+{
+    return QUuid::createUuid().toString(QUuid::WithoutBraces);
+}
+
+} // namespace
+
+DbObject::DbObject(DbObject *parent) : _connectionKey(newConnectionKey())
 {
     _parent = parent;
     //setData(true, DbObject::ParentRole);
@@ -10,7 +23,8 @@ DbObject::DbObject(DbObject *parent)
     setData(false, DbObject::MultiselectRole);
 }
 
-DbObject::DbObject(DbObject *parent, QString text, QString type, QFont font) : _parent(parent)
+DbObject::DbObject(DbObject *parent, QString text, QString type, QFont font) :
+    _parent(parent), _connectionKey(newConnectionKey())
 {
     setData(text);
     setData(type, DbObject::TypeRole);
@@ -26,12 +40,12 @@ DbObject::~DbObject()
     _conceived.clear();
     qDeleteAll(_children);
     _children.clear();
-    QString type = data(DbObject::TypeRole).toString();
-    if (type == "connection" || type == "database")
-    {
-        QString id = QString::number(std::intptr_t(this));
-        DbConnectionFactory::removeConnection(id);
-    }
+    // Unconditional, rather than only for a node whose TypeRole reads
+    // connection/database: that role is ordinary node data which a refresh may
+    // overwrite, so it cannot be trusted to decide whether there is an entry to
+    // drop. Removing a key that was never registered is a no-op, and doing it
+    // here keeps the registry from growing for the whole session.
+    DbConnectionFactory::removeConnection(_connectionKey);
 }
 
 void DbObject::setData(const QVariant &value, int role)

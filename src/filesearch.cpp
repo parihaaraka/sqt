@@ -160,17 +160,23 @@ QRegularExpression buildPattern(const FileSearchParams &params, QString *error)
 
     if (params.wholeWord && !pattern.isEmpty())
     {
-        // \b around a pattern that itself starts/ends with a non-word character
-        // would never match; the boundary is only asked for where a word
-        // character actually sits, which is what the editors do as well.
-        static const QRegularExpression wordChar("\\w");
-        const QString &plain = params.text;
-        const bool wordStart = !plain.isEmpty() && wordChar.match(plain.left(1)).hasMatch();
-        const bool wordEnd = !plain.isEmpty() && wordChar.match(plain.right(1)).hasMatch();
-        if (wordStart)
-            pattern.prepend("\\b");
-        if (wordEnd)
-            pattern.append("\\b");
+        // Lookarounds around the *grouped* pattern. Grouping is what makes this
+        // hold for a regexp: `|` has the lowest precedence in pcre, so a bare
+        // boundary glued to the pattern text would bind to one alternative only
+        // and "foo|bar" would match the "bar" inside "foobar".
+        //
+        // Each guard is an alternation, because the requirement is conditional -
+        // the case findWholeWordWithNonWordEdges() pins down: a match whose own
+        // edge is a non-word character must not demand a word boundary there, or
+        // "(x)" would never be found inside "f(x)". So:
+        //   left  - nothing word-like immediately before, or the match itself
+        //           begins with a non-word character;
+        //   right - nothing word-like immediately after, or the match itself
+        //           ended with a non-word character.
+        // The lookarounds inspect the *matched text*, which is why they hold for
+        // a plain string and a regexp alike - the pattern source says nothing
+        // about what the pattern can match ("\w+" starts with a backslash).
+        pattern = "(?:(?<!\\w)|(?=\\W))(?:" + pattern + ")(?:(?!\\w)|(?<=\\W))";
     }
 
     QRegularExpression::PatternOptions options = QRegularExpression::NoPatternOption;
@@ -193,18 +199,21 @@ FileText decode(const QByteArray &data, const FileSearchParams &params)
 {
     FileText res;
 
-    if (params.skipBinary)
-    {
-        // A NUL byte is what every editor uses to tell a binary file apart, and
-        // it cannot occur in any of the text encodings we handle. Only the head
-        // is examined, so a big file costs nothing here.
+    // Whether the NUL-byte heuristic below applies at all. It does not for
+    // utf-16/utf-32, where every ascii character *is* a byte pair (or quad)
+    // holding a NUL - 'a' is "61 00" - so applying it to the raw bytes would
+    // reject every such file. Both encodings are offered by TextCodec and both
+    // have their BOMs recognised, so they have to reach the decoder.
+    auto nulMeansBinary = [](const QString &enc) {
+        return !enc.startsWith("UTF-16", Qt::CaseInsensitive) &&
+               !enc.startsWith("UTF-32", Qt::CaseInsensitive);
+    };
+    // A NUL byte is what every editor uses to tell a binary file apart. Only the
+    // head is examined, so a big file costs nothing here.
+    auto hasNul = [&data]() {
         const int probe = int(qMin<qsizetype>(data.size(), 8192));
-        if (data.left(probe).contains('\0'))
-        {
-            res.binary = true;
-            return res;
-        }
-    }
+        return data.left(probe).contains('\0');
+    };
 
     QString encoding = params.encoding;
     if (encoding.isEmpty() || !encoding.compare("auto", Qt::CaseInsensitive))
@@ -214,6 +223,14 @@ FileText decode(const QByteArray &data, const FileSearchParams &params)
         encoding = TextCodec::bomEncoding(data);
         if (encoding.isEmpty())
         {
+            // No BOM, so a NUL here does mean binary: what is left to try is
+            // utf-8 and the single-byte fallback, and neither can contain one.
+            if (params.skipBinary && hasNul())
+            {
+                res.binary = true;
+                return res;
+            }
+
             bool ok = false;
             res.text = TextCodec::decode(data, "UTF-8", &ok);
             if (ok)
@@ -230,6 +247,12 @@ FileText decode(const QByteArray &data, const FileSearchParams &params)
         }
     }
 
+    if (params.skipBinary && nulMeansBinary(encoding) && hasNul())
+    {
+        res.binary = true;
+        return res;
+    }
+
     if (TextCodec::canonicalName(encoding).isEmpty())
     {
         res.error = QObject::tr("unknown encoding: %1").arg(encoding);
@@ -237,6 +260,17 @@ FileText decode(const QByteArray &data, const FileSearchParams &params)
     }
     res.text = TextCodec::decode(data, encoding);
     res.encoding = encoding;
+
+    // A wide-encoding file still has to be told from a binary one, and its
+    // decoded text is where that can be asked: a real NUL *character* has no
+    // place in text, while the NUL bytes of its ascii range do.
+    if (params.skipBinary && !nulMeansBinary(encoding) &&
+        QStringView{res.text}.left(8192).contains(QChar(u'\0')))
+    {
+        res.text.clear();
+        res.encoding.clear();
+        res.binary = true;
+    }
     return res;
 }
 
@@ -415,6 +449,8 @@ void FileSearchWorker::search(FileSearchParams params, quint64 generation)
     QVector<FileSearchHit> pending;
     QElapsedTimer sinceEmit;
     sinceEmit.start();
+    QElapsedTimer sinceProgress;
+    sinceProgress.start();
 
     // Results go out in batches: a hit at a time would flood the event loop of
     // the gui thread, and a single list at the end would show nothing until the
@@ -427,6 +463,17 @@ void FileSearchWorker::search(FileSearchParams params, quint64 generation)
         emit batch(generation, pending);
         pending.clear();
         sinceEmit.restart();
+    };
+
+    // Throttled for the same reason as the batches above, and reported for every
+    // file rather than only the matching ones: filesScanned is the number that
+    // grows on every file, and emitting it only next to a hit left the panel
+    // showing nothing at all while a rare string was hunted through a big tree.
+    auto reportProgress = [&](bool force) {
+        if (!force && sinceProgress.elapsed() < 100)
+            return;
+        emit progress(generation, summary.filesScanned, summary.filesMatched, summary.hits);
+        sinceProgress.restart();
     };
 
     QDirIterator::IteratorFlags flags = QDirIterator::NoIteratorFlags;
@@ -490,17 +537,20 @@ void FileSearchWorker::search(FileSearchParams params, quint64 generation)
             continue;
 
         ++summary.filesScanned;
+        reportProgress(false);
 
         QString text;
         // Left empty for a buffer: the tab already holds the file and knows
-        // what it was read with.
+        // what it was read with. fromBuffer records *why* it is empty.
         QString encoding;
+        bool fromBuffer = false;
         const auto buffer = params.bufferTexts.constFind(fi.absoluteFilePath());
         if (buffer != params.bufferTexts.constEnd())
         {
             // an editor tab holds this file; what the user sees is what gets
             // searched, saved or not
             text = buffer.value();
+            fromBuffer = true;
         }
         else
         {
@@ -521,13 +571,18 @@ void FileSearchWorker::search(FileSearchParams params, quint64 generation)
         // So that whoever opens the file reproduces this very text rather than
         // guessing an encoding of their own.
         for (FileSearchHit &hit: hits)
+        {
             hit.encoding = encoding;
+            hit.fromBuffer = fromBuffer;
+        }
 
         ++summary.filesMatched;
         summary.hits += hits.size();
         pending += hits;
         flush(false);
-        emit progress(generation, summary.filesScanned, summary.filesMatched, summary.hits);
+        // Forced: a new match is worth showing at once, and matches are far
+        // rarer than files.
+        reportProgress(true);
 
         if (params.maxHits > 0 && summary.hits >= params.maxHits)
         {
@@ -537,5 +592,6 @@ void FileSearchWorker::search(FileSearchParams params, quint64 generation)
     }
 
     flush(true);
+    reportProgress(true);
     done();
 }

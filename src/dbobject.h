@@ -42,11 +42,21 @@ public:
     bool insertChild(int beforeRow);
     bool removeChild(int pos);
 
+    /// This node's key in the connection registry, stable for its whole life and
+    /// never reused afterwards.
+    ///
+    /// A uuid rather than the node's address: the allocator hands a freed
+    /// address straight back to the next node, so an address key lets a registry
+    /// entry that outlived its node be inherited by an unrelated one. With a
+    /// uuid an orphaned entry simply stays orphaned.
+    const QString &connectionKey() const { return _connectionKey; }
+
 private:
     QList<DbObject*> _children;
     QList<DbObject*> _conceived;
     QHash<int, QVariant> _itemData;
     DbObject *_parent;
+    QString _connectionKey;
 };
 
 #endif // DBOBJECT_H

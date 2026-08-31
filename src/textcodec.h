@@ -32,6 +32,18 @@ QStringList availableEncodings();
 /// from the settings.
 QString canonicalName(const QString &name);
 
+/// The encoding to read a file in when nothing announces one: the first
+/// configured encoding that is not utf-8, since utf-8 is tried on its own first
+/// and whatever else the user lists is what they read such files in. Empty when
+/// the setting names nothing usable, which leaves the caller's own default.
+///
+/// One helper rather than a rule per call site: the file search picked the first
+/// non-utf-8 entry while the preview took `value(1)` - the second entry
+/// whatever it was - so for "windows-1251,UTF-8" the two resolved differently
+/// and a hit re-read for the preview could land on other text than the search
+/// had measured.
+QString fallbackEncoding(const QString &configuredEncodings);
+
 /// The unicode encoding `data` announces with a leading BOM, or an empty string
 /// when there is none. QTextStream used to do this detection on its own
 /// (autoDetectUnicode), overriding the encoding it had been given, and openFile

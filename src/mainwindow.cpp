@@ -104,7 +104,7 @@ MainWindow::MainWindow(QWidget *parent) :
         // close db connection on database node collapse
         if (obj && obj->data(DbObject::TypeRole).toString() == "database")
         {
-            auto con = DbConnectionFactory::connection(QString::number(std::intptr_t(obj)));
+            auto con = DbConnectionFactory::connection(obj->connectionKey());
             if (con)
                 con->close();
         }
@@ -342,6 +342,13 @@ MainWindow::MainWindow(QWidget *parent) :
         dbBtnMenu->clear();
         QueryWidget *qw = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
         DbConnection *currentConnection = (qw ? qw->dbConnection() : nullptr);
+        // Every item below switches *this tab's* connection, so without a tab
+        // there is nothing any of them could do. Saying so beats an empty menu.
+        if (!qw)
+        {
+            dbBtnMenu->addAction(tr("no editor tab"))->setEnabled(false);
+            return;
+        }
         auto m = ui->objectsView->model();
         for (int cr = 0; cr < m->rowCount(); ++cr) // iterate connections
         {
@@ -371,10 +378,16 @@ MainWindow::MainWindow(QWidget *parent) :
 
                 if (databases.isEmpty())
                 {
-                    dbBtnMenu->addAction(srcIndex.data().toString(), this, [this, qw, connection](){
-                        DbConnection *cn = connection->clone();
-                        qw->setDbConnection(cn);
-                        retitleOnDatabaseChange(qw);
+                    dbBtnMenu->addAction(srcIndex.data().toString(), this, [this, connection](){
+                        // Re-resolved rather than taken from the capture: the tab
+                        // can be closed while the popup is open, which left the
+                        // captured pointer dangling. Checked before the clone, so
+                        // no connection is created just to be leaked.
+                        QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
+                        if (!w)
+                            return;
+                        w->setDbConnection(connection->clone());
+                        retitleOnDatabaseChange(w);
                         refreshContextInfo();
                     });
                 }
@@ -389,10 +402,29 @@ MainWindow::MainWindow(QWidget *parent) :
                         if (currentConnection->database() != databases[i])
                         {
                             QAction *a = new QAction(databases[i], dbBtnMenu);
-                            connect(a, &QAction::triggered, this, [this, a, qw, currentConnection](){
+                            connect(a, &QAction::triggered, this, [this, a, currentConnection](){
+                                QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
+                                if (!w)
+                                    return;
+                                // setDatabase() closes the link
+                                // unconditionally, so a failing open() leaves the
+                                // tab with no link at all: the previous database
+                                // is restored rather than reporting a switch that
+                                // did not happen.
+                                //
+                                // open() is synchronous (PQconnectdb, dns and
+                                // all), hence the wait cursor.
+                                const QString prev = currentConnection->database();
+                                QApplication::setOverrideCursor(Qt::WaitCursor);
+                                ScopeGuard<void(*)()> cursorGuard(QApplication::restoreOverrideCursor);
                                 currentConnection->setDatabase(a->text());
-                                currentConnection->open();
-                                retitleOnDatabaseChange(qw);
+                                if (!currentConnection->open())
+                                {
+                                    currentConnection->setDatabase(prev);
+                                    currentConnection->open();
+                                    return;
+                                }
+                                retitleOnDatabaseChange(w);
                                 refreshContextInfo();
                             });
                             actions.append(a);
@@ -409,11 +441,15 @@ MainWindow::MainWindow(QWidget *parent) :
 #else
                     for (const QString &db: std::as_const(databases))
 #endif
-                        menu->addAction(db, this, [this, qw, connection, db](){
-                            DbConnection *cn = connection->clone();
+                        menu->addAction(db, this, [this, connection, db](){
+                            // see the no-databases entry above
+                            QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
+                            if (!w)
+                                return;
+                            std::unique_ptr<DbConnection> cn{connection->clone()};
                             cn->setDatabase(db);
-                            qw->setDbConnection(cn);
-                            retitleOnDatabaseChange(qw);
+                            w->setDbConnection(cn.release());
+                            retitleOnDatabaseChange(w);
                             refreshContextInfo();
                         });
                 }
@@ -439,10 +475,28 @@ MainWindow::MainWindow(QWidget *parent) :
 
 MainWindow::~MainWindow()
 {
+    // The timers go first. _durationRefreshTimer fires every 200 ms into
+    // refreshConnectionState(), which dereferences ui->tabWidget; being a child
+    // of this object it is only destroyed *after* this body has already freed
+    // ui, so anything that pumps events below (tearing down the model releases
+    // connections and their worker machinery) could deliver a timeout against a
+    // freed ui.
+    if (_durationRefreshTimer)
+        _durationRefreshTimer->stop();
+    if (_hideTimer)
+        _hideTimer->stop();
+
     delete _frPanel;
+    _frPanel = nullptr;
     delete _objectsModel;
+    _objectsModel = nullptr;
     delete ui;
+    // Nulled, so the `if (!ui)` guards written for exactly this window of time
+    // (refreshContextInfo(), refreshConnectionState()) can actually fire - they
+    // never could while the member kept pointing at freed memory.
+    ui = nullptr;
     delete _proxyStyle;
+    _proxyStyle = nullptr;
 }
 
 void MainWindow::activateEditorBlock(CodeBlockProperties *blockProperties)
@@ -498,21 +552,34 @@ void MainWindow::queryStateChanged(QueryWidget *w, QueryState state)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    while (ui->tabWidget->count() > 0)
+    // Two passes: ask everything first, destroy afterwards. Closing tabs one at
+    // a time and only then discovering a veto (Cancel in the save prompt, or a
+    // busy connection) left the earlier tabs already removed and deleted while
+    // the window stayed open - Cancel is expected to change nothing.
+    for (int i = 0; i < ui->tabWidget->count(); ++i)
     {
-        if (!closeTab(ui->tabWidget->currentIndex()))
+        if (!mayCloseTab(i))
         {
             event->ignore();
             return;
         }
     }
-    event->accept();
+
+    // The window state is saved before the tabs go, so it is recorded even if
+    // something below decides to keep the application alive.
     SqtSettings::setValue("mainWindowGeometry", saveGeometry());
     SqtSettings::setValue("mainWindowState", saveState());
     SqtSettings::setValue("mainWindowHSplitter", ui->splitterH->saveState());
     SqtSettings::setValue("mainWindowScriptSplitter", ui->contentSplitter->saveState());
     SqtSettings::setValue("fileDialog", _fileDialog.saveState());
     SqtSettings::setValue("mruDirs", _mruDirs);
+
+    // Every tab has already agreed, and each is asked from the end so the
+    // indexes below it stay put. ensureSaved() runs again inside closeTab() and
+    // finds nothing left to save.
+    for (int i = ui->tabWidget->count() - 1; i >= 0; --i)
+        closeTab(i);
+    event->accept();
 }
 
 void MainWindow::changeEvent(QEvent *e)
@@ -548,8 +615,12 @@ void MainWindow::on_actionAbout_triggered()
 
 void MainWindow::on_objectsView_activated(const QModelIndex &index)
 {
-    QModelIndex currentNodeIndex = qobject_cast<QSortFilterProxyModel*>(ui->objectsView->model())->mapToSource(index);
-    DbObject *obj = static_cast<DbObject*>(currentNodeIndex.internalPointer());
+    // The index is not necessarily valid here: this slot is also reached from
+    // the Connect context-menu entry with an index from indexAt(), which is
+    // invalid when the click landed below the last row.
+    DbObject *obj = nodeAt(index);
+    if (!obj)
+        return;
     if (obj->data(DbObject::TypeRole).toString() == "connection" &&
             !obj->data(DbObject::ParentRole).toBool()) // not expanded => not connected yet
     {
@@ -567,8 +638,8 @@ void MainWindow::on_objectsView_activated(const QModelIndex &index)
                     replace("%pass%", dlg->password(), Qt::CaseInsensitive);
         }
 
-        QString connectionID = QString::number(std::intptr_t(obj));
-        std::shared_ptr<DbConnection> con = DbConnectionFactory::createConnection(QString::number(std::intptr_t(obj)), cs);
+        QString connectionID = obj->connectionKey();
+        std::shared_ptr<DbConnection> con = DbConnectionFactory::createConnection(connectionID, cs);
         connect(con.get(), &DbConnection::error, this, &MainWindow::onError);
         connect(con.get(), &DbConnection::message, this, &MainWindow::onMessage);
         // the state indicator is drawn from the connection itself, so a link
@@ -591,7 +662,7 @@ void MainWindow::on_objectsView_activated(const QModelIndex &index)
             }
             //con->disconnect(errConnection);
             scriptSelectedObjects();
-            _objectsModel->setData(currentNodeIndex, true, DbObject::ParentRole);
+            _objectsModel->setData(sourceIndex(index), true, DbObject::ParentRole);
         }
     }
     // index belongs to proxy model
@@ -660,7 +731,7 @@ void MainWindow::on_objectsView_customContextMenuRequested(const QPoint &pos)
             _objectsModel->removeRows(0, item->childCount(), srcIndex);
             con->close();
             con->disconnect(); // disconnect all slots from all signals
-            DbConnectionFactory::removeConnection(QString::number(std::intptr_t(item)));
+            DbConnectionFactory::removeConnection(item->connectionKey());
             _objectsModel->setData(srcIndex, false, DbObject::ParentRole);
             _objectsModel->setData(srcIndex, QVariant(), DbObject::ContentRole);
             _objectsModel->setData(srcIndex, QVariant(), DbObject::ChildObjectsCountRole);
@@ -735,6 +806,8 @@ void MainWindow::selectionChanged(const QItemSelection &selected, const QItemSel
     Q_UNUSED(selected)
     Q_UNUSED(deselected)
     QItemSelectionModel *selectionModel = qobject_cast<QItemSelectionModel*>(sender());
+    if (!selectionModel)
+        return;
     const QModelIndexList si = selectionModel->selectedIndexes();
     QModelIndex cur = selectionModel->currentIndex();
 
@@ -742,6 +815,13 @@ void MainWindow::selectionChanged(const QItemSelection &selected, const QItemSel
     // so the current node's parent is indicative one.
 
     bool allowMultiselect = (cur.parent().isValid() && cur.parent().data(DbObject::MultiselectRole).toBool());
+
+    // Collected first, dropped in one batch, scripted once. select() emits
+    // selectionChanged synchronously, so deselecting inside the loop re-entered
+    // this very slot - and each nested invocation ended by running the object's
+    // content and preview scripts against a half-adjusted selection, one query
+    // round trip per deselected node.
+    QItemSelection toDrop;
     for (const QModelIndex &i: si)
     {
         if (
@@ -754,7 +834,12 @@ void MainWindow::selectionChanged(const QItemSelection &selected, const QItemSel
                 // Here "Indexes" and "Triggers" folders are not allowed to be selected along with columns.
                 !i.data(DbObject::IdRole).isValid()
            )
-            selectionModel->select(i, QItemSelectionModel::Deselect);
+            toDrop.select(i, i);
+    }
+    if (!toDrop.isEmpty())
+    {
+        QSignalBlocker blocker(selectionModel);
+        selectionModel->select(toDrop, QItemSelectionModel::Deselect);
     }
     scriptSelectedObjects();
 }
@@ -786,7 +871,13 @@ void MainWindow::viewModeActionTriggered(QAction *action)
 
 void MainWindow::on_actionExecute_query_triggered()
 {
+    // q, not con, is what may be null: currentWidget() returns nullptr with no
+    // tabs (currentIndex() == -1) and the cast fails for anything else, and the
+    // action's enabled state is no guard - the tab-close path does not refresh
+    // it.
     QueryWidget *q = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
+    if (!q)
+        return;
     DbConnection *con = q->dbConnection();
     if (!con)
         return;
@@ -899,24 +990,63 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event)
     return QMainWindow::eventFilter(object, event);
 }
 
+QModelIndex MainWindow::sourceIndex(const QModelIndex &viewIndex) const
+{
+    if (!viewIndex.isValid())
+        return QModelIndex();
+    auto *proxy = qobject_cast<QSortFilterProxyModel*>(ui->objectsView->model());
+    return (proxy ? proxy->mapToSource(viewIndex) : QModelIndex());
+}
+
+DbObject *MainWindow::nodeAt(const QModelIndex &viewIndex) const
+{
+    const QModelIndex src = sourceIndex(viewIndex);
+    return (src.isValid() ? static_cast<DbObject*>(src.internalPointer()) : nullptr);
+}
+
 bool MainWindow::closeTab(int index)
 {
-    if (ensureSaved(index, false, true))
+    // Validated here rather than trusting ensureSaved(): that returns true both
+    // for "saved / nothing to save" and for "the index names no QueryWidget",
+    // and taking the second as permission to proceed dereferenced a null widget
+    // - and, worse, returned true without removing anything, so closeEvent()'s
+    // `while (count() > 0)` loop could never make progress.
+    QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(index));
+    if (!w)
+        return true;    // nothing of ours here; nothing to keep the caller waiting
+
+    if (!ensureSaved(index, false, true))
+        return false;
+
+    DbConnection *con = w->dbConnection();
+    if (con && con->queryState() != QueryState::Inactive)
     {
-        QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(index));
-
-        DbConnection *con = w->dbConnection();
-        if (con && con->queryState() != QueryState::Inactive)
-        {
-            onError(tr("connection is in use"));
-            return false;
-        }
-
-        ui->tabWidget->removeTab(index);
-        delete w;
-        return true;
+        onError(tr("connection is in use"));
+        return false;
     }
-    return false;
+
+    ui->tabWidget->removeTab(index);
+    delete w;
+    return true;
+}
+
+bool MainWindow::mayCloseTab(int index)
+{
+    // The question closeTab() answers, without the destruction: whether this tab
+    // is willing to go. Asking every tab first is what lets closeEvent() abandon
+    // the whole close without having already thrown away the tabs it got to.
+    QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(index));
+    if (!w)
+        return true;
+    if (!ensureSaved(index, false, true))
+        return false;
+    DbConnection *con = w->dbConnection();
+    if (con && con->queryState() != QueryState::Inactive)
+    {
+        onError(tr("connection is in use"));
+        return false;
+    }
+    return true;
 }
 
 void MainWindow::on_actionNew_triggered()
@@ -1043,7 +1173,7 @@ void MainWindow::releaseIdleDatabaseConnection(const QModelIndex &srcIndex)
     if (!owner)
         return;
 
-    auto con = DbConnectionFactory::connection(QString::number(std::intptr_t(owner)));
+    auto con = DbConnectionFactory::connection(owner->connectionKey());
     if (!con || !con->isOpened())
         return;
 
@@ -1105,6 +1235,12 @@ void MainWindow::on_actionOpen_triggered()
 
 QueryWidget *MainWindow::openScriptTab(const QString &text, const QString &title, DbConnection *connection)
 {
+    // `connection` is an owning pointer, so ownership is taken here and now,
+    // whichever way this returns: the create path below hands it to the
+    // QueryWidget, the reuse path lets this guard delete it. Callers pass a fresh
+    // clone(), which would otherwise leak along with its libpq handle.
+    std::unique_ptr<DbConnection> owned(connection);
+
     // An untouched tab holding this very script is the tab the user is asking
     // for, so reuse it instead of stacking up duplicates. Comparing the text
     // rather than the object name covers both a redefined object and the same
@@ -1124,8 +1260,8 @@ QueryWidget *MainWindow::openScriptTab(const QString &text, const QString &title
         }
     }
 
-    QueryWidget *w = (connection ?
-                          new QueryWidget(connection, ui->tabWidget) :
+    QueryWidget *w = (owned ?
+                          new QueryWidget(owned.release(), ui->tabWidget) :
                           new QueryWidget(ui->tabWidget));
     int ind = ui->tabWidget->addTab(w, title);
     ui->tabWidget->setCurrentIndex(ind);
@@ -1231,9 +1367,13 @@ QVariant MainWindow::current(const QString &nodeType, const QString &field)
     {
         if (item->data(DbObject::TypeRole).toString() == nodeType)
         {
-            if (field.compare("name", Qt::CaseInsensitive))
+            // == 0, because compare() returns zero on equality: written without
+            // it, each test was true exactly when the field was *not* the name
+            // it names, so asking for "name" fell through to the "id" branch and
+            // the two roles came back swapped.
+            if (field.compare("name", Qt::CaseInsensitive) == 0)
                 return item->data(DbObject::NameRole);
-            if (field.compare("id", Qt::CaseInsensitive))
+            if (field.compare("id", Qt::CaseInsensitive) == 0)
                 return item->data(DbObject::IdRole);
             break;
         }
@@ -1251,9 +1391,10 @@ QVariantList MainWindow::selected(const QString &nodeType, const QString &field)
     {
         if (i.data(DbObject::TypeRole).toString() != nodeType)
             continue;
-        if (field.compare("name", Qt::CaseInsensitive))
+        // == 0 - see current() above for the inversion this had.
+        if (field.compare("name", Qt::CaseInsensitive) == 0)
             res.append(i.data(DbObject::NameRole));
-        else if (field.compare("id", Qt::CaseInsensitive))
+        else if (field.compare("id", Qt::CaseInsensitive) == 0)
             res.append(i.data(DbObject::IdRole));
     }
     return res;
@@ -1270,7 +1411,11 @@ void MainWindow::refreshActions()
 
     QWidget *fw = QApplication::focusWidget();
     QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
-    ui->actionExecute_query->setEnabled(fw != ui->objectsView && ui->tabWidget->count() && w->dbConnection());
+    // `w &&`, like the line below already does with the same pointer: a non-zero
+    // tab count does not mean currentWidget() is a QueryWidget (it is null
+    // during a removal), and this runs from the application-wide focus filter.
+    // The count() term is then redundant - a null w covers the empty case.
+    ui->actionExecute_query->setEnabled(fw != ui->objectsView && w && w->dbConnection());
     QueryState qState = QueryState::Inactive;
     if (w && w->dbConnection())
         qState = w->isTimerActive() ? QueryState::Running : w->dbConnection()->queryState();
@@ -1321,10 +1466,20 @@ void MainWindow::adjustMru()
     addMruFile();
 }
 
-void MainWindow::addMruFile()
+void MainWindow::addMruFile(const QString &fileName, const QString &fileEncoding)
 {
-    QString file = _fileDialog.selectedFiles().at(0);
-    QString encoding = _fileDialog.encoding();
+    // The name is passed in rather than read back out of the file dialog: on the
+    // "Open recent" path the dialog has never been executed in this session, so
+    // selectedFiles() could be empty and .at(0) was then out of bounds.
+    QString file = fileName;
+    if (file.isEmpty())
+    {
+        const QStringList sel = _fileDialog.selectedFiles();
+        if (sel.isEmpty())
+            return;
+        file = sel.first();
+    }
+    QString encoding = (fileEncoding.isEmpty() ? _fileDialog.encoding() : fileEncoding);
     auto actions = ui->menuOpen_recent->actions();
 
     QList<RecentFile> itemsToSave {{file, encoding}};
@@ -1740,7 +1895,9 @@ void MainWindow::openFile(const QString &fileName, const QString &encoding)
         }
         _fileDialog.selectFile(fileName);
         _fileDialog.setEncoding(encoding);
-        addMruFile();
+        // Passed explicitly: this path never executed the dialog, so its
+        // selectedFiles() is not something to read the name back out of.
+        addMruFile(fileName, encoding);
     }
 }
 
@@ -2058,8 +2215,12 @@ void MainWindow::previewFileHit(const FileSearchHit &hit, bool focusPane)
         // Decoded exactly as the search decoded it, so the preview shows the
         // text the hit's line and column were measured in.
         params.encoding = hit.encoding;
-        params.fallbackEncoding = SqtSettings::value("encodings").toString()
-                .split(',', Qt::SkipEmptyParts).value(1).trimmed();
+        // The same rule the search itself used - see
+        // TextCodec::fallbackEncoding(). Taking value(1) here resolved to a
+        // different encoding for some settings, and the preview then showed
+        // other text than the hit's line and column were measured in.
+        params.fallbackEncoding = TextCodec::fallbackEncoding(
+                    SqtSettings::value("encodings").toString());
         // Reading the whole file to show a fragment is what makes the sql
         // highlighting and the surrounding lines possible; these are scripts,
         // and the search has already refused anything of unreasonable size.

@@ -67,6 +67,12 @@ private:
         /// Every match this snippet holds, as (offset, length) within the
         /// snippet. The first one is \a hit's own.
         QVector<QPair<int, int>> marks;
+        /// How many matches this line really holds, marked or not: a match past
+        /// the snippet's right edge, or one overlapping the previous mark, has
+        /// nowhere to be drawn but the row still stands for it. Kept apart from
+        /// marks.size() so the tooltip can say the true number - which is what
+        /// this class documents itself as doing.
+        int matchCount = 1;
     };
 
     struct FileNode

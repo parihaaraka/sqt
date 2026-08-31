@@ -67,7 +67,23 @@ FileSearchPanel::~FileSearchPanel()
     // on every file, so it returns promptly even in the middle of a huge tree.
     _worker->cancelUpTo(_generation);
     _thread->quit();
-    _thread->wait();
+
+    // Bounded, then detached. quit() cannot interrupt a search() that is already
+    // executing and the cancellation is only polled between files, so a readAll()
+    // of a file on an unresponsive mount can hold the worker for an unbounded
+    // time - which the gui thread must not wait out with the window already
+    // gone. Nothing the worker touches belongs to this panel (the parameters
+    // arrive by value, and results go through queued connections that a
+    // destroyed receiver drops), so letting the pair finish and delete itself is
+    // safe. Unparenting first is required: ~QObject would otherwise delete a
+    // still-running QThread and abort.
+    if (!_thread->wait(2000))
+    {
+        _thread->setParent(nullptr);
+        connect(_thread, &QThread::finished, _thread, &QObject::deleteLater);
+        _thread = nullptr;
+        _worker = nullptr;
+    }
 }
 
 void FileSearchPanel::buildUi()
@@ -442,19 +458,10 @@ FileSearchParams FileSearchPanel::currentParams() const
     params.unicodeProperties = _regexpU->isChecked();
     params.recursive = _recursive->isChecked();
 
-    // The first of the configured encodings is what the user reads such files
-    // in, so it is the best fallback for anything that is not utf-8.
-    const QStringList encodings = SqtSettings::value("encodings").toString()
-            .split(',', Qt::SkipEmptyParts);
-    for (const QString &e: encodings)
-    {
-        const QString canonical = TextCodec::canonicalName(e.trimmed());
-        if (!canonical.isEmpty() && canonical.compare("UTF-8", Qt::CaseInsensitive))
-        {
-            params.fallbackEncoding = canonical;
-            break;
-        }
-    }
+    // One shared rule for the search and for the preview that re-reads a hit -
+    // see TextCodec::fallbackEncoding().
+    params.fallbackEncoding = TextCodec::fallbackEncoding(
+                SqtSettings::value("encodings").toString());
 
     params.maxFileSizeKb = SqtSettings::value(SettingsGroup + QString("maxFileSizeKb"), 4096).toInt();
     params.maxHits = SqtSettings::value(SettingsGroup + QString("maxHits"), 20000).toInt();
@@ -527,15 +534,19 @@ void FileSearchPanel::onBatch(quint64 generation, QVector<FileSearchHit> hits)
     if (generation != _generation)
         return;     // results of an abandoned search
 
-    const bool expand = (_model->fileCount() < AutoExpandLimit);
+    // The row this batch starts at, sampled before the model is touched, so the
+    // loop below can expand only what this batch brought in. Walking every file
+    // row instead would re-open a file the user collapsed while the search is
+    // still running.
+    const int firstNew = _model->fileCount();
     const bool hadNothing = (_model->hitCount() == 0);
     _model->addHits(hits);
 
-    if (expand)
+    if (firstNew < AutoExpandLimit)
     {
         // Only the files this batch brought in are expanded, so a tree the user
         // has collapsed by hand stays that way.
-        for (int row = 0; row < _model->fileCount() && row < AutoExpandLimit; ++row)
+        for (int row = firstNew; row < _model->fileCount() && row < AutoExpandLimit; ++row)
             _results->expand(_model->index(row, 0));
     }
 
@@ -664,7 +675,10 @@ QString FileSearchPanel::locationOf(const QModelIndex &index, bool absolute) con
     // A file row stands for the whole file, so there is no single line to name;
     // a match row is a place, and the line is the whole point of copying it.
     if (const auto hit = _model->hit(index))
-        return QString("%1:%2").arg(path).arg(hit->line);
+        // One arg() call with both values: chained, a '%' in the path would
+        // consume the line-number placeholder and put a path that does not
+        // exist on the clipboard - the one thing this command must not do.
+        return QString("%1:%2").arg(path, QString::number(hit->line));
     return path;
 }
 

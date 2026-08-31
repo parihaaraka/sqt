@@ -65,10 +65,7 @@ OdbcConnection::~OdbcConnection()
     {
         QThread *thread = _queryThread;
         if (thread->isRunning() && QThread::currentThread() != thread)
-        {
-            cancel();
-            thread->wait();
-        }
+            waitForQueryThread(thread);
         else if (thread->isRunning())
         {
             // destructor running on the worker thread itself - nothing to
@@ -282,6 +279,24 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
     // TODO implement params to use in js-scripts
     Q_UNUSED(params)
 
+    // Running is raised before anything that can fail, and lowered on every exit
+    // path by the guard below - including the early returns of open() and
+    // SQLAllocHandle(). Both halves matter: setQueryState() only emits on a
+    // *change*, so a failure that returned while the state was still Inactive
+    // would emit nothing, while executeAsync() has already reported success to
+    // QueryWidget and left its _queryActive flag raised. Without the pairing that
+    // flag stays up for good and the tab swallows every later connection message
+    // into the query pane.
+    setQueryState(QueryState::Running);
+    // A dummy target, in the shape of hstmt_guard below; only the deleter
+    // matters. hstmt_guard is declared later and therefore destroyed first, so
+    // the handle is freed and _hstmt cleared before the state goes Inactive.
+    int stateGuardDummy = 0;
+    std::unique_ptr<int, std::function<void(int*)>> stateGuard(
+                &stateGuardDummy, [this](int*) {
+        setQueryState(QueryState::Inactive);
+    });
+
     clearResultsets();
     if (!open())
         return false;
@@ -331,13 +346,13 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
         // the handle out from under it, or - if we get here first - makes
         // cancel() see a cleared _hstmt and skip the call entirely. Either
         // way SQLCancel() never touches a freed handle.
+        //
+        // The Inactive transition belongs to stateGuard above, which also covers
+        // the exit paths taken before this guard exists.
         QMutexLocker lk(&_hstmtGuard);
         _hstmt = nullptr;
         SQLFreeHandle(SQL_HANDLE_STMT, *hstmt);
-        setQueryState(QueryState::Inactive);
     });
-
-    setQueryState(QueryState::Running);
 
     _timer.start();
     for (QString &q: queries)
@@ -368,18 +383,58 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
                 lk.unlock();
 
                 ColSizeT col_size;
-                SQLCHAR buf[512];
+                // One buffer per value, both cleared before each column: sharing
+                // a buffer between the two calls means a failing SQLDescribeColA
+                // leaves the *type name* in it and the column gets named after
+                // its own type, and on the first column a failing
+                // SQLColAttributeA leaves nothing but uninitialized stack to
+                // read.
+                SQLCHAR type_buf[512];
+                SQLCHAR name_buf[512];
                 SQLSMALLINT buf_res_length, data_type, dec_digits, nullable_desc;
                 for (SQLUSMALLINT i = 0; i < col_count; ++i)
                 {
-                    SQLColAttributeA(hstmt_local, i + 1, SQL_DESC_TYPE_NAME, buf, sizeof(buf), &buf_res_length, nullptr);
-                    QString typeName = QString::fromLocal8Bit(reinterpret_cast<char*>(buf));
-                    SQLDescribeColA(hstmt_local, i + 1, buf, sizeof(buf), &buf_res_length, &data_type, &col_size, &dec_digits, &nullable_desc);
+                    type_buf[0] = 0;
+                    name_buf[0] = 0;
+                    // A driver that cannot name the type of this column is not
+                    // an error - the column is still usable, it just gets no
+                    // type name - so this one only clears the buffer.
+                    if (!checkStmt(SQLColAttributeA(hstmt_local, i + 1, SQL_DESC_TYPE_NAME,
+                                                    type_buf, sizeof(type_buf),
+                                                    &buf_res_length, nullptr),
+                                   hstmt_local))
+                        type_buf[0] = 0;
+                    QString typeName = QString::fromLocal8Bit(reinterpret_cast<char*>(type_buf));
+
+                    // This one is fatal for the resultset: without it
+                    // data_type/col_size/dec_digits/nullable_desc stay
+                    // uninitialized and would be fed straight into the
+                    // DataColumn and into sqlTypeToVariant().
+                    data_type = SQL_UNKNOWN_TYPE;
+                    col_size = 0;
+                    dec_digits = 0;
+                    nullable_desc = SQL_NULLABLE_UNKNOWN;
+                    if (!checkStmt(SQLDescribeColA(hstmt_local, i + 1,
+                                                   name_buf, sizeof(name_buf),
+                                                   &buf_res_length, &data_type,
+                                                   &col_size, &dec_digits, &nullable_desc),
+                                   hstmt_local))
+                        break;
+
+                    // The declared width is kept in a 64-bit type and clamped
+                    // deliberately: SQLULEN is 64-bit unsigned while DataColumn
+                    // takes an int, and a varchar(max)-style column reports
+                    // 2^31-1 or more - narrowing that implicitly yields a
+                    // negative length.
+                    const qint64 size64 = qint64(col_size);
+                    const bool unboundedSize =
+                            (col_size == ColSizeT(SQL_NO_TOTAL) || size64 > INT32_MAX);
+                    const int col_len = (unboundedSize ? -1 : int(size64));
                     switch (data_type)
                     {
                     case SQL_DECIMAL:
                     case SQL_NUMERIC:
-                        typeName += '(' + QString::number(col_size) +
+                        typeName += '(' + QString::number(size64) +
                                 (dec_digits > 0 ? ',' + QString::number(dec_digits) : "") +
                                 ')';
                         break;
@@ -399,19 +454,20 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
                     case SQL_WLONGVARCHAR:
                     case SQL_BINARY:
                     case SQL_VARBINARY:
-                        if (col_size > 0)
-                            typeName += '(' +
-                                    (col_size == 536870911 || col_size == 1073741823 ?
-                                         "max" : QString::number(col_size)) +
-                                    ')';
+                        // "max" follows from the width itself, so no list of
+                        // per-driver magic numbers has to stay complete.
+                        if (unboundedSize || size64 >= 536870911)
+                            typeName += "(max)";
+                        else if (size64 > 0)
+                            typeName += '(' + QString::number(size64) + ')';
                         break;
                     }
                     table->addColumn(new DataColumn(
-                                         QString::fromLocal8Bit(reinterpret_cast<char*>(buf)),
+                                         QString::fromLocal8Bit(reinterpret_cast<char*>(name_buf)),
                                          typeName,
                                          sqlTypeToVariant(data_type),
                                          data_type,
-                                         col_size,
+                                         col_len,
                                          dec_digits,
                                          int8_t(nullable_desc),
                                          isNumericType(data_type) ?
@@ -558,8 +614,13 @@ bool OdbcConnection::execute(const QString &query, const QVector<QVariant> *para
                             if (retcode == SQL_ERROR)
                                 break;
                             if (cb != SQL_NULL_DATA)
+                                // buf_data on both branches - this is where
+                                // SQLGetData() put the value. The column-name
+                                // buffer is also in scope here, and reading that
+                                // instead would reinterpret 512 bytes of narrow
+                                // text as utf-16.
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-                                (*row)[i] = QString::fromUtf16(reinterpret_cast<ushort*>(buf), int(res_len / sizeof(SQLWCHAR)));
+                                (*row)[i] = QString::fromUtf16(reinterpret_cast<ushort*>(buf_data), int(res_len / sizeof(SQLWCHAR)));
 #else
                                 (*row)[i] = QString::fromUtf16(reinterpret_cast<char16_t*>(buf_data), int(res_len / sizeof(SQLWCHAR)));
 #endif
@@ -877,13 +938,36 @@ void OdbcConnection::close() noexcept
     // one currently between driver calls, so it goes straight to closeLocked().
     QThread *thread = _queryThread;
     if (thread && thread->isRunning() && QThread::currentThread() != thread)
-    {
-        cancel();
-        thread->wait();
-    }
+        waitForQueryThread(thread);
 
     QMutexLocker lk(&_connectionGuard);
     closeLocked();
+}
+
+void OdbcConnection::waitForQueryThread(QThread *thread) noexcept
+{
+    // The wait itself cannot be abandoned: closeLocked() and the destructor touch
+    // _hdbc/_henv, and letting them run while the driver is still inside a call
+    // on that handle is undefined behaviour. So it is bounded per round instead,
+    // re-issuing the cancel and reporting progress - a freeze with no explanation
+    // reads as a hung application.
+    //
+    // Re-issuing matters because a single cancel can arrive too early to have any
+    // effect: with no statement handle published yet (the worker still inside
+    // SQLDriverConnectA) there is nothing for SQLCancel() to target, and that
+    // connect has only its own timeout to end it.
+    const int roundMs = 2000;
+    for (int round = 0; ; ++round)
+    {
+        cancel();
+        if (thread->wait(roundMs))
+            return;
+        if (round == 0)
+            emit message(tr("waiting for the running query to stop..."));
+        else if (round == 2)
+            emit error(tr("the odbc driver has not returned from the running "
+                          "call yet; the window stays blocked until it does"));
+    }
 }
 
 void OdbcConnection::closeLocked() noexcept
@@ -891,7 +975,15 @@ void OdbcConnection::closeLocked() noexcept
     // the caller must hold _connectionGuard
 
     // _dbmsScriptingID survives on purpose - see PgConnection::closeLocked()
-    clearResultsets();
+
+    // The resultsets are *not* dropped here, for the same reason PgConnection
+    // does not drop them: they belong to whoever asked for them (a tab's models
+    // refer to them, and the query thread may still be filling one), while
+    // closing the link is a matter of the handle alone. Dropping them here would
+    // be a use-after-free, since checkStmt() reconnects in place on SQLSTATE
+    // 08S01 and so reaches this function while execute()'s fetch loop still holds
+    // a raw pointer to the table it is appending to. They are released by the
+    // next run, which calls clearResultsets() itself.
     if (!_hdbc || !_opened)
     {
         _opened = false;
@@ -913,12 +1005,6 @@ bool OdbcConnection::isOpened() const noexcept
 
 void OdbcConnection::cancel() noexcept
 {
-    if (_query_state != QueryState::Running)
-        return;
-
-    setQueryState(QueryState::Cancelling);
-    emit message(tr("cancelling..."));
-
     // SQLCancel() is explicitly meant to be called, without any locking of
     // its own, from a thread other than the one blocked inside the driver
     // call it targets - no separate QThread is needed just to make this call,
@@ -929,6 +1015,19 @@ void OdbcConnection::cancel() noexcept
     // (see the hstmt_guard lambda in execute()), and makes this a safe no-op
     // if the query has already finished and freed it.
     //
+    // The lock is taken *before* the state is touched, and the state moves to
+    // Cancelling only once there is a statement to cancel. Writing the state
+    // first would race the end of the run: execute()'s guards can free the handle
+    // and set Inactive in between, and Cancelling would then overwrite that final
+    // state with nothing left to move it back - executeAsync() refuses every
+    // query from then on.
+    //
+    // The Running test sits inside the lock rather than in an early return, so
+    // that a handle is cancelled whenever one exists, whatever the state says:
+    // close() calls this and then waits for the worker unconditionally, and a
+    // cancel that declined to act (the worker still inside SQLDriverConnectA,
+    // state not yet Running) would leave that wait with nothing to unblock it.
+    //
     // check(), not checkStmt(): checkStmt()'s 08S01 branch calls close(),
     // which - seeing this same thread's SQLCancel() in flight from a
     // *different* thread than the worker - would call cancel() again to stop
@@ -936,8 +1035,15 @@ void OdbcConnection::cancel() noexcept
     // _hstmtGuard against itself. Nothing here needs the auto-reconnect
     // check() skips, either.
     QMutexLocker lk(&_hstmtGuard);
-    if (_hstmt)
-        check(SQLCancel(_hstmt), _hstmt, SQL_HANDLE_STMT);
+    if (!_hstmt)
+        return;
+
+    if (_query_state == QueryState::Running)
+    {
+        setQueryState(QueryState::Cancelling);
+        emit message(tr("cancelling..."));
+    }
+    check(SQLCancel(_hstmt), _hstmt, SQL_HANDLE_STMT);
 }
 
 /*

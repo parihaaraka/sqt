@@ -237,6 +237,12 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
     try
     {
         std::shared_ptr<DbConnection> con = dbConnection(parent);
+        // dbConnection() returns null when the node has no registry entry: a
+        // failed open() and "disconnect" both remove it while the node itself
+        // stays in the tree, so expanding that node again arrives here with
+        // nothing.
+        if (!con)
+            throw QObject::tr("the node has no connection; use \"connect\" first");
         if (!con->open())
             throw QString("");
 
@@ -316,8 +322,15 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
                     // initialize database-specific connection
                     if (parent)
                     {
-                        QString cs = DbConnectionFactory::connection(QString::number(std::intptr_t(parent)))->connectionString();
-                        QString id = QString::number(std::intptr_t(newItem.get()));
+                        // The donor's own entry may be gone (a failed open or a
+                        // "disconnect" removes it while the node lives on), so
+                        // the lookup is checked rather than dereferenced.
+                        auto donor = DbConnectionFactory::connection(parent->connectionKey());
+                        if (!donor)
+                            throw QObject::tr("the connection of %1 is not available anymore")
+                                    .arg(parent->data(Qt::DisplayRole).toString());
+                        QString cs = donor->connectionString();
+                        QString id = newItem->connectionKey();
                         //DbObject::NameRole contains quotes the identifier must be quoted, so Qt::DisplayRole is used
                         auto db = DbConnectionFactory::createConnection(id, cs, newItem->data(Qt::DisplayRole).toString());
                         connect(db.get(), &DbConnection::error, this, &DbObjectsModel::error);
@@ -372,7 +385,7 @@ std::shared_ptr<DbConnection> DbObjectsModel::dbConnection(const QModelIndex &in
         QString type = item->data(DbObject::TypeRole).toString();
         if (type == "connection" || type == "database")
         {
-            con = DbConnectionFactory::connection(QString::number(std::intptr_t(item)));
+            con = DbConnectionFactory::connection(item->connectionKey());
             break; // con may be nullptr
         }
         else

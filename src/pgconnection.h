@@ -64,7 +64,16 @@ private:
     PGconn *_conn = nullptr;
     /// Whether the link is alive. Read by isOpened() without any lock (see there).
     std::atomic_bool _opened {false};
-    async_stage _async_stage = async_stage::none;
+    /// Which step of the asynchronous state machine is in progress.
+    ///
+    /// Atomic because it crosses threads: fetch()/getCopyData()/putCopyData()
+    /// write it on the query worker (some of them with _connectionGuard already
+    /// unlocked), while readyReadSocket()/readyWriteSocket() are slots of this
+    /// object and therefore read it in the thread the object lives in - the gui
+    /// one, which is the invariant watchSocket() relies on. Unsynchronized, a
+    /// stale value dispatches a socket activation into the wrong branch. Same
+    /// reasoning as _opened above.
+    std::atomic<async_stage> _async_stage {async_stage::none};
     DataTable* _temp_result; ///< temporary resultset for asynchronous processing
     QString _query_tmp; ///< query storage during asynchronous connection if needed
     PgParams _params_tmp;
@@ -94,6 +103,10 @@ private:
     * (and fix DataTable).
     */
     QHash<int, QPair<QString, int>> _data_types; ///< non-static, not version-specific storage because of db-level user types
+    /// Guards _data_types, which typeInfo() fills from whichever thread asks
+    /// first: the query worker for the connection's own tables, the gui thread
+    /// for a model's copy. Never held across the catalogue query itself.
+    mutable QMutex _dataTypesGuard;
 
     virtual void openAsync() noexcept;
     /// close() itself; the caller must hold _connectionGuard

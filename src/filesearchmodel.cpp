@@ -101,10 +101,17 @@ QVariant FileSearchModel::data(const QModelIndex &index, int role) const
         {
         case Qt::DisplayRole:
             // the count is worth seeing at a glance, the way every editor shows it
-            return QString("%1 (%2)").arg(node.display).arg(node.rows.size());
+            //
+            // One arg() call with both values, not two chained ones: chained
+            // arg() re-scans a string that already holds the file name, so a
+            // name containing "%2" (or "%20", read as placeholder 20 - common in
+            // url-escaped names) had the count spliced into it.
+            return QString("%1 (%2)").arg(node.display,
+                                          QString::number(node.rows.size()));
         case HtmlRole:
             return QString("<span class=\"file\">%1</span> <span class=\"light\">(%2)</span>")
-                    .arg(escapeSnippet(node.display)).arg(node.rows.size());
+                    .arg(escapeSnippet(node.display),
+                         QString::number(node.rows.size()));
         case FileNameRole:
             return node.fileName;
         case Qt::ToolTipRole:
@@ -149,9 +156,14 @@ QVariant FileSearchModel::data(const QModelIndex &index, int role) const
         //
         // The column is deliberately absent: it says nothing one cannot see, and
         // the file and the line are what one copies or asks about.
-        QString tip = QString("%1:%2").arg(h.fileName).arg(h.line);
-        if (row.marks.size() > 1)
-            tip += QObject::tr(" (%n match(es))", "", int(row.marks.size()));
+        // Both values in one arg() call - see the file row above for why a
+        // chained one would let a '%' in the path eat the line number.
+        QString tip = QString("%1:%2").arg(h.fileName, QString::number(h.line));
+        // matchCount, not marks.size(): a match that fell outside the snippet
+        // window has no mark to draw but the line still holds it, and the count
+        // is what the header promises this row stands for.
+        if (row.matchCount > 1)
+            tip += QObject::tr(" (%n match(es))", "", row.matchCount);
         // <pre> would keep the indentation, but it also refuses to wrap; the
         // snippet has its leading blanks trimmed off already.
         return tip + "<br/><br/>" + markUp(h.snippet, row.marks,
@@ -231,10 +243,21 @@ void FileSearchModel::addHits(const QVector<FileSearchHit> &hits)
         if (!node.rows.isEmpty() && node.rows.constLast().hit.line == hit.line)
         {
             const int lastRow = int(node.rows.size()) - 1;
-            addMark(node.rows[lastRow], hit);
-            // The row now marks one more place, and the tooltip counts them.
+            Row &row = node.rows[lastRow];
+            // The line holds one more match whether or not it can be drawn:
+            // the mark may fall outside the snippet window, and dropping such a
+            // match from the count left the tooltip disagreeing with the total.
+            ++row.matchCount;
+            const bool marked = addMark(row, hit);
+            // The row now stands for one more place, and the tooltip counts
+            // them. Only a mark that was actually added changes what is painted,
+            // so an unmarked one asks for the tooltip alone rather than a full
+            // re-layout of the row.
             const QModelIndex hitIndex = index(lastRow, 0, parentIndex);
-            emit dataChanged(hitIndex, hitIndex, {Qt::DisplayRole, HtmlRole, Qt::ToolTipRole});
+            emit dataChanged(hitIndex, hitIndex,
+                             marked ?
+                                 QVector<int>{Qt::DisplayRole, HtmlRole, Qt::ToolTipRole} :
+                                 QVector<int>{Qt::ToolTipRole});
             continue;
         }
 

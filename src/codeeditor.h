@@ -249,6 +249,10 @@ private:
 
     QCompleter *_completer = nullptr;
     MultiTextCursor _multiCursor;
+    /// How the *press* of the gesture in progress was classified, latched so
+    /// that the move and release handlers cannot disagree with it when Alt is
+    /// pressed or released mid-drag. See CodeEditor::mousePressEvent().
+    bool _altGesture = false;
     int _nativeCursorWidth = 1;
 
     // The "sent here" mark (see setMatchHighlight). A cursor with a selection
