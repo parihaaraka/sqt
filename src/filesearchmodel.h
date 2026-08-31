@@ -36,6 +36,9 @@ public:
 
     /// The root the paths are shown relative to. Purely cosmetic.
     void setRootPath(const QString &path);
+    /// The root the current results were collected under - what the last search
+    /// was pointed at. The window reports a previewed hit's path relative to it.
+    QString rootPath() const { return _rootPath; }
     void clear();
     /// Appends a batch, grouping the hits under their files. Several matches on
     /// one line end up in one row (see Row).

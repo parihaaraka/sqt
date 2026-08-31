@@ -40,6 +40,11 @@ public:
     /// The hit under the cursor of the results tree, if any.
     std::optional<FileSearchHit> currentHit() const;
 
+    /// The folder the last search ran in - the root the results' paths are shown
+    /// relative to. The window needs it to report a previewed hit's path the
+    /// same way, see QueryWidget::codeLocation().
+    QString searchRoot() const;
+
     /// Texts of the modified editor tabs, by absolute file name. Called right
     /// before a search starts, since an unsaved tab is what the user sees.
     void setBufferProvider(std::function<QHash<QString, QString>()> provider);
@@ -104,7 +109,15 @@ private:
     void updateStatus(const QString &text);
     /// The single Find/Stop button follows _running: icon and tooltip.
     void updateSearchButton();
-    void copyCurrentToClipboard(bool wholePath) const;
+    /// Where \a index points, ready to be pasted into an ai agent's prompt:
+    /// "sub/file.sql:42" for a match row, "sub/file.sql" for a file row (a whole
+    /// file has no one line to name). Relative to the folder that was searched
+    /// unless \a absolute, or when the file lies outside it. Empty for an index
+    /// that names no file.
+    QString locationOf(const QModelIndex &index, bool absolute) const;
+    /// locationOf() for the row the keyboard is on, onto the clipboard, with a
+    /// remark in the status bar - the clipboard gives no feedback of its own.
+    void copyLocationToClipboard(const QModelIndex &index, bool absolute);
     /// Settings key of the path for the current connection, empty when there is
     /// none (then the shared "last used" path is all we have).
     QString pathKey() const;

@@ -71,12 +71,14 @@ CodeEditor::CodeEditor(QWidget *parent) : QPlainTextEdit(parent)
     connect(this, &CodeEditor::updateRequest, this, &CodeEditor::updateLeftSideBar);
     connect(this, &CodeEditor::cursorPositionChanged, [this]() {
         _leftSideBar->update();
-        auto selections = extraSelections();
-        // remove old line indicator
-        if (!selections.isEmpty() && selections.back().format.property(QTextFormat::FullWidthSelection).toBool())
-            selections.pop_back();
-        // add new line indicator (+ multi-cursor highlights)
-        setExtraSelections(selections + baseExtraSelections());
+        // Only the state-dependent part is rebuilt here; the word occurrences and
+        // the bracket pair are the hl timer's, and stay as they were until it
+        // runs. Appending to extraSelections() instead - which is what this used
+        // to do - stacked another copy of the match mark on every cursor move:
+        // two translucent plates over the same range, so the mark got visibly
+        // darker with each keypress and snapped back 20ms later when the timer
+        // rebuilt the list from scratch. That was the flicker.
+        applyExtraSelections();
         _hlTimer->start();
     });
     connect(this, &CodeEditor::textChanged, [this]() {
@@ -86,7 +88,9 @@ CodeEditor::CodeEditor(QWidget *parent) : QPlainTextEdit(parent)
         // place you were sent to" has stopped meaning anything.
         _matchHighlight = QTextCursor();
         _matchHighlightColor = QColor();
-        setExtraSelections(baseExtraSelections());
+        // The occurrence/bracket marks were measured in the old text too.
+        _computedSelections.clear();
+        applyExtraSelections();
         _hlTimer->start();
     });
     connect(this, &CodeEditor::selectionChanged, _hlTimer, static_cast<void(QTimer::*)(void)>(&QTimer::start));
@@ -282,6 +286,30 @@ void CodeEditor::syncToNativeCursor()
         _caretBlinkVisible = true;
     }
     viewport()->update();
+}
+
+void CodeEditor::refreshSingleCursorState()
+{
+    // Only where the set holds no more than one cursor. With several, this
+    // widget's handlers are the only thing that could have made them, so the set
+    // is authoritative and the native cursor is merely its main one.
+    if (_multiCursor.isMultiple())
+        return;
+
+    const QTextCursor native = textCursor();
+    if (_multiCursor.isEmpty())
+    {
+        _multiCursor.setCursors(native);
+        return;
+    }
+
+    // Anything that moved the native cursor outside our handlers (setTextCursor,
+    // find(), the Find panel, a jump to a search hit) left the copy here
+    // pointing elsewhere. Cheap to compare, and copying costs nothing when they
+    // already agree.
+    const QTextCursor kept = _multiCursor.mainCursor();
+    if (kept.position() != native.position() || kept.anchor() != native.anchor())
+        _multiCursor.setCursors(native);
 }
 
 void CodeEditor::collapseToSingleCursor()
@@ -810,6 +838,65 @@ bool CodeEditor::hasSelectedText() const
     return textCursor().hasSelection();
 }
 
+QPair<int, int> CodeEditor::selectedLineSpan() const
+{
+    QTextDocument *doc = document();
+    if (!doc)
+        return {1, 1};
+
+    // Every cursor is looked at, not just the native one: with several cursors
+    // the native one is merely the main cursor, and what the user has marked is
+    // the union of them all - the same reasoning as in hasSelectedText().
+    //
+    // Callers reach this from a key press or a context menu, both of which
+    // refresh the set first (refreshSingleCursorState), so with a single cursor
+    // it agrees with textCursor(); the fallback covers a direct call. Both ends
+    // are compared, not just the position: a whole-document selection ends where
+    // a stale caret sitting at the end of the text already was, and comparing
+    // positions alone accepted that one as current - reporting the last line
+    // instead of the whole range.
+    QVector<QTextCursor> all = _multiCursor.cursors();
+    const QTextCursor native = textCursor();
+    if (all.isEmpty() || (!_multiCursor.isMultiple() &&
+                          (_multiCursor.mainCursor().position() != native.position() ||
+                           _multiCursor.mainCursor().anchor() != native.anchor())))
+    {
+        all.clear();
+        all.append(native);
+    }
+
+    int first = -1, last = -1;
+    for (const QTextCursor &c: std::as_const(all))
+    {
+        if (c.isNull())
+            continue;
+        int start = c.selectionStart();
+        int end = c.selectionEnd();
+        if (c.hasSelection())
+        {
+            // A selection ending at a block's first character (dragged one line
+            // too far, or made with Shift+Down) does not reach into that line,
+            // so it must not be named. Only when the selection is more than the
+            // boundary itself, or the caret has nowhere to back off to.
+            const QTextBlock endBlock = doc->findBlock(end);
+            if (endBlock.isValid() && end == endBlock.position() && end > start)
+                --end;
+        }
+        const QTextBlock startBlock = doc->findBlock(start);
+        const QTextBlock endBlock = doc->findBlock(end);
+        if (!startBlock.isValid() || !endBlock.isValid())
+            continue;
+        const int from = startBlock.blockNumber() + 1;
+        const int to = endBlock.blockNumber() + 1;
+        first = (first < 0 ? from : qMin(first, from));
+        last = (last < 0 ? to : qMax(last, to));
+    }
+
+    if (first < 0)
+        return {1, 1};
+    return {first, last};
+}
+
 void CodeEditor::changeSelectedTextCase(bool upper)
 {
     if (isReadOnly() || !hasSelectedText())
@@ -1140,6 +1227,11 @@ bool CodeEditor::eventFilter(QObject *object, QEvent *event)
         // cutCurrentLines()) - Qt would otherwise decline it as "nothing to
         // cut" and hand the key sequence to whatever global action holds it.
         QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
+        // The same staleness that used to make Shift+Delete cut the wrong thing
+        // would decide the wrong way here too: isMultiple() and, below, the
+        // read-only test are read off a set that may still be describing an old
+        // caret. Cheap, and it runs before anything is claimed.
+        refreshSingleCursorState();
         if (_multiCursor.isMultiple() && isCopyShortcut(keyEvent))
         {
             event->accept();
@@ -1213,6 +1305,12 @@ bool CodeEditor::handleKeyPress(QKeyEvent *keyEvent)
     // is handled entirely here and returns true before the event ever reaches
     // keyPressEvent().
     resetCaretBlink();
+
+    // Every command below reads _multiCursor, so it has to describe what is on
+    // screen before any of them runs. A selection made through the
+    // QPlainTextEdit API never went through our handlers and so never reached the
+    // set - see refreshSingleCursorState() for what that cost.
+    refreshSingleCursorState();
 
     const bool ctrl = keyEvent->modifiers().testFlag(Qt::ControlModifier);
     const bool alt = keyEvent->modifiers().testFlag(Qt::AltModifier);
@@ -1555,6 +1653,11 @@ bool CodeEditor::handleKeyPress(QKeyEvent *keyEvent)
 
 void CodeEditor::contextMenuEvent(QContextMenuEvent *event)
 {
+    // The items below are enabled from hasSelectedText() and selectedLineSpan(),
+    // both of which read the cursor set - and a right click arrives without any
+    // key press having refreshed it. Same reason as in handleKeyPress().
+    refreshSingleCursorState();
+
     // Qt's own menu (undo/redo/cut/copy/paste/select all), already enabled and
     // disabled to match the current state, plus whatever the owner appends -
     // the point being that the keyboard-only commands (run the statement under
@@ -1668,6 +1771,18 @@ void CodeEditor::keyPressEvent(QKeyEvent *e)
             // both flags checked explicitly - testFlag(ControlModifier) alone
             // would also match plain Ctrl+A (select all)
             emit selectStatementRequest();
+            return;
+        }
+        else if (e->key() == Qt::Key_C &&
+                 e->modifiers().testFlag(Qt::ControlModifier) &&
+                 e->modifiers().testFlag(Qt::ShiftModifier) &&
+                 !e->modifiers().testFlag(Qt::AltModifier))
+        {
+            // "where is this code" rather than "what is this code" - the
+            // counterpart of Ctrl+C one line above in the menu. Ctrl+C itself
+            // is handled by the copy path (see isCopyShortcut), which requires
+            // Shift to be up, so the two never collide.
+            emit copyCodeLocationRequest();
             return;
         }
     }
@@ -2302,8 +2417,11 @@ void CodeEditor::onHlTimerTimeout()
         }
     }
 
-    selections += right_bracket_selections + left_bracket_selections + baseExtraSelections();
-    setExtraSelections(selections);
+    selections += right_bracket_selections + left_bracket_selections;
+    // Remembered so a mere cursor move can reinstall them without this whole
+    // scan, and installed through the one place that composes the final list.
+    _computedSelections = selections;
+    applyExtraSelections();
 }
 
 void CodeEditor::insertCompletion(const QString &completion)
@@ -2416,9 +2534,9 @@ void CodeEditor::setMatchHighlight(const QTextCursor &range, const QColor &color
 {
     _matchHighlight = range;
     _matchHighlightColor = color;
-    // Straight through setExtraSelections(): the mark has to appear now, while
-    // whoever jumped here is still looking, not on the next cursor move.
-    setExtraSelections(baseExtraSelections());
+    // Straight through, not on the next cursor move: the mark has to appear now,
+    // while whoever jumped here is still looking.
+    applyExtraSelections();
 }
 
 void CodeEditor::clearMatchHighlight()
@@ -2427,7 +2545,7 @@ void CodeEditor::clearMatchHighlight()
         return;
     _matchHighlight = QTextCursor();
     _matchHighlightColor = QColor();
-    setExtraSelections(baseExtraSelections());
+    applyExtraSelections();
 }
 
 QList<QTextEdit::ExtraSelection> CodeEditor::matchHighlightSelections() const
@@ -2471,6 +2589,14 @@ QList<QTextEdit::ExtraSelection> CodeEditor::baseExtraSelections() const
     // cursorPositionChanged handler pops off the back is still the current-line
     // one - and so the caret's own line wins when the two coincide.
     return matchHighlightSelections() + currentLineSelection() + multiCursorSelections();
+}
+
+void CodeEditor::applyExtraSelections()
+{
+    // The computed marks first, the state-dependent ones on top: a later
+    // selection wins where two overlap, and the current line / the place you
+    // were sent to should not be buried under an occurrence plate.
+    setExtraSelections(_computedSelections + baseExtraSelections());
 }
 
 QList<QTextEdit::ExtraSelection> CodeEditor::multiCursorSelections() const

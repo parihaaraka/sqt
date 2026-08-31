@@ -8,7 +8,9 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
+#include <QDir>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QGridLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
@@ -419,6 +421,14 @@ std::optional<FileSearchHit> FileSearchPanel::currentHit() const
     return _model->firstHit(_results->currentIndex());
 }
 
+QString FileSearchPanel::searchRoot() const
+{
+    // The model's root, not the path field: the field may have been retyped
+    // since, while the results on screen still belong to the folder they were
+    // collected in.
+    return _model->rootPath();
+}
+
 FileSearchParams FileSearchPanel::currentParams() const
 {
     FileSearchParams params;
@@ -627,21 +637,46 @@ void FileSearchPanel::updateSearchButton()
                                       tr("Start the search (Enter)"));
 }
 
-void FileSearchPanel::copyCurrentToClipboard(bool wholePath) const
+QString FileSearchPanel::locationOf(const QModelIndex &index, bool absolute) const
 {
-    const QModelIndex index = _results->currentIndex();
     if (!index.isValid())
-        return;
-    QString text;
-    if (wholePath)
+        return QString();
+    const QString fileName = index.data(FileSearchModel::FileNameRole).toString();
+    if (fileName.isEmpty())
+        return QString();
+
+    QString path = QFileInfo(fileName).absoluteFilePath();
+    if (!absolute)
     {
-        text = index.data(FileSearchModel::FileNameRole).toString();
-        if (const auto hit = _model->hit(index))
-            text += QString(":%1").arg(hit->line);
+        // The same root the rows are displayed against, so what is copied is what
+        // is read on screen. A file outside it keeps the absolute path: a trail of
+        // '..' hops is less useful than the full name.
+        const QString root = searchRoot();
+        if (!root.isEmpty())
+        {
+            const QString rel = QDir(QFileInfo(root).absoluteFilePath()).relativeFilePath(path);
+            if (!rel.startsWith(".."))
+                path = rel;
+        }
     }
-    else
-        text = index.data(Qt::DisplayRole).toString();
-    QApplication::clipboard()->setText(text);
+    path = QDir::toNativeSeparators(path);
+
+    // A file row stands for the whole file, so there is no single line to name;
+    // a match row is a place, and the line is the whole point of copying it.
+    if (const auto hit = _model->hit(index))
+        return QString("%1:%2").arg(path).arg(hit->line);
+    return path;
+}
+
+void FileSearchPanel::copyLocationToClipboard(const QModelIndex &index, bool absolute)
+{
+    const QString location = locationOf(index, absolute);
+    if (location.isEmpty())
+        return;
+    QApplication::clipboard()->setText(location);
+    // The clipboard says nothing of its own, and the point of the command is to
+    // paste this elsewhere - so confirm it, in the status bar, never a popup.
+    emit statusMessage(tr("copied: %1").arg(location), 5000);
 }
 
 void FileSearchPanel::showResultsContextMenu(const QPoint &pos)
@@ -649,12 +684,37 @@ void FileSearchPanel::showResultsContextMenu(const QPoint &pos)
     const QModelIndex index = _results->indexAt(pos);
     QMenu menu(this);
 
-    QAction *open = menu.addAction(tr("Open in editor\tCtrl+E"));
+    QAction *open = menu.addAction(tr("Open in editor"));
+    open->setShortcut(QKeySequence("Ctrl+E"));
+    open->setShortcutVisibleInContextMenu(true);
     open->setEnabled(index.isValid());
-    QAction *copyText = menu.addAction(tr("Copy line"));
-    copyText->setEnabled(index.isValid());
-    QAction *copyPath = menu.addAction(tr("Copy path"));
-    copyPath->setEnabled(index.isValid());
+
+    menu.addSeparator();
+
+    // What the two copy items will produce, spelled into their own labels: the
+    // wording alone ("copy path") never said whether the line came along, nor
+    // which of the two paths one would get. Seeing the actual string removes
+    // both questions - and shows there is nothing to copy when there is nothing.
+    const QString relative = locationOf(index, false);
+    const QString absolute = locationOf(index, true);
+
+    QAction *copyRelative = menu.addAction(relative.isEmpty() ?
+                                              tr("Copy location") :
+                                              tr("Copy location: %1").arg(relative));
+    copyRelative->setShortcut(QKeySequence("Ctrl+Shift+C"));
+    copyRelative->setShortcutVisibleInContextMenu(true);
+    copyRelative->setEnabled(!relative.isEmpty());
+
+    // Offered separately rather than as a setting: which of the two is wanted
+    // depends on where it is being pasted, and both are one click away.
+    QAction *copyAbsolute = menu.addAction(absolute.isEmpty() ?
+                                              tr("Copy full path") :
+                                              tr("Copy full path: %1").arg(absolute));
+    copyAbsolute->setEnabled(!absolute.isEmpty());
+    // Hidden when it would repeat the item above verbatim (the search root is
+    // the file's own folder, or there is no root at all).
+    copyAbsolute->setVisible(absolute != relative);
+
     menu.addSeparator();
     QAction *expandAll = menu.addAction(tr("Expand all"));
     QAction *collapseAll = menu.addAction(tr("Collapse all"));
@@ -667,10 +727,10 @@ void FileSearchPanel::showResultsContextMenu(const QPoint &pos)
         if (const auto hit = _model->firstHit(index))
             emit openInEditorRequested(*hit);
     }
-    else if (chosen == copyText)
-        copyCurrentToClipboard(false);
-    else if (chosen == copyPath)
-        copyCurrentToClipboard(true);
+    else if (chosen == copyRelative)
+        copyLocationToClipboard(index, false);
+    else if (chosen == copyAbsolute)
+        copyLocationToClipboard(index, true);
     else if (chosen == expandAll)
         _results->expandAll();
     else if (chosen == collapseAll)
@@ -706,6 +766,16 @@ bool FileSearchPanel::eventFilter(QObject *target, QEvent *event)
                 stopSearch();
             else
                 activateSearchField();
+            return true;
+        }
+        // The same key the editor uses for the same thing, so "where is this
+        // code" is one gesture wherever the code is being read.
+        if (ke->key() == Qt::Key_C &&
+            ke->modifiers().testFlag(Qt::ControlModifier) &&
+            ke->modifiers().testFlag(Qt::ShiftModifier) &&
+            !ke->modifiers().testFlag(Qt::AltModifier))
+        {
+            copyLocationToClipboard(_results->currentIndex(), false);
             return true;
         }
         return QWidget::eventFilter(target, event);

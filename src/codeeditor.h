@@ -61,6 +61,18 @@ public:
     void setMatchHighlight(const QTextCursor &range, const QColor &color = QColor());
     void clearMatchHighlight();
 
+    /// The lines the "copy the location of this code" command refers to,
+    /// 1-based and \a first <= \a second: the caret's own line with nothing
+    /// selected, otherwise from the first line any selection starts on to the
+    /// last line any selection ends on (every cursor counts - see
+    /// hasSelectedText - so a multi-cursor selection is reported as the whole
+    /// span it covers).
+    ///
+    /// A selection dragged onto the very beginning of a line stops *before*
+    /// that line and does not include it: naming it would point at a line the
+    /// user never selected.
+    QPair<int, int> selectedLineSpan() const;
+
 protected:
     void resizeEvent(QResizeEvent *event) override;
     virtual bool eventFilter(QObject *object, QEvent *event) override;
@@ -89,6 +101,23 @@ private:
     bool multiCursorSharesSelection(const QString &selectedText) const;
     QList<QTextEdit::ExtraSelection> matchHighlightSelections() const; // the "sent here" mark, if any
     QList<QTextEdit::ExtraSelection> baseExtraSelections() const; // match + current line + multi-cursor, used in 3 places
+
+    /// The one place the widget's extra selections are installed: the marks the
+    /// hl timer computed (word occurrences, bracket pair) plus the ones that
+    /// follow the current state (match mark, current line, extra cursors).
+    ///
+    /// Every caller goes through this rather than composing a list of its own and
+    /// appending to extraSelections(): reading the current list back and adding to
+    /// it accumulated duplicates of the match mark on every cursor move, which is
+    /// what made the mark pulse (each copy is translucent, so two of them are
+    /// darker than one) until the timer replaced the list wholesale.
+    void applyExtraSelections();
+
+    /// What onHlTimerTimeout() worked out from the text: the occurrences of the
+    /// selected word and the matching bracket pair. Kept so that a cursor move
+    /// can reinstall them without recomputing - and so that nothing has to be
+    /// read back out of the widget.
+    QList<QTextEdit::ExtraSelection> _computedSelections;
     bool isEnveloped(int pos) const;
     int indentSize() const; // small wrapper so the setting key/default lives in one place
 
@@ -102,6 +131,22 @@ private:
     // ---- multi-cursor plumbing ----
     void syncFromNativeCursor();   // native textCursor() -> _multiCursor (call after anything that moved the native cursor without going through us)
     void syncToNativeCursor();     // _multiCursor's main cursor -> native textCursor() (call after anything that changed _multiCursor ourselves)
+
+    /// Brings _multiCursor back in step with the native cursor when there is only
+    /// one of them. Called at the top of handleKeyPress(), so every command below
+    /// acts on what is actually on screen.
+    ///
+    /// _multiCursor is refreshed by this widget's own handlers alone, so a
+    /// selection or a caret move made through the QPlainTextEdit API - setTextCursor(),
+    /// find(), the Find/Replace panel, "select statement at the caret", a jump to a
+    /// search hit - never reaches it. The copy it keeps is a live QTextCursor, so
+    /// the document carries it along to wherever the text it pointed at ended up
+    /// (typically the end of a freshly filled editor), and it holds no selection.
+    /// Commands that read the set then act somewhere else entirely: Shift+Delete
+    /// concluded "nothing is selected" and cut that stale cursor's line instead of
+    /// the selection the user was looking at. Intermittently, because it depends on
+    /// how the selection happened to be made.
+    void refreshSingleCursorState();
     void selectNextOccurrence();               // Ctrl+D
     void addCursorOnAdjacentLine(bool below);   // Ctrl+Alt+Up / Ctrl+Alt+Down
     QString multiCursorSelectedText() const;    // every selection, joined by '\n' in document order
@@ -222,6 +267,11 @@ signals:
     /// it - a dry-run preview of what Ctrl+Return would send with no
     /// selection.
     void selectStatementRequest();
+    /// Ctrl+Shift+C: put the place being read - file and line(s) - on the
+    /// clipboard, to be pasted into an ai agent's prompt. The editor does not
+    /// do it itself: which file its text belongs to (if any) is the owner's
+    /// knowledge, see QueryWidget::codeLocation().
+    void copyCodeLocationRequest();
     /// The standard context menu, for the owner to append its own commands to
     /// before it is shown. Only the owner knows whether they apply (a
     /// connection, a dbms with a statement separator), so the editor builds

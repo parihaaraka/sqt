@@ -45,6 +45,13 @@ public:
     bool openFile(const QString &fileName, const QString &encoding);
     bool saveFile(const QString &fileName, const QString &encoding = QString());
     QString encoding() { return _encoding; }
+    /// Tells the widget which file the text it *shows* comes from, when that
+    /// file is not one of its own (fileName() is empty for the content pane -
+    /// it never opens or saves anything, the window hands it a file search hit
+    /// to preview). Only codeLocation() reads this. \a root is the folder the
+    /// path is to be reported relative to - the folder that was searched -
+    /// empty for an absolute one.
+    void setShownFile(const QString &fileName, const QString &root = QString());
     DbConnection* dbConnection() { return _connection.get(); }
     /// The same link, shareable - the file search borrows it to highlight the
     /// scripts it finds and to clone a connection for the tabs it opens.
@@ -102,6 +109,19 @@ public:
     /// there. Falls back to the pane only where there is no status bar.
     void status(const QString &text);
 
+    /// "Where is this code", ready to be pasted into an ai agent's prompt:
+    /// the file behind the editor's text followed by the line the caret is on
+    /// ("path/to/file.sql:42"), or by the range a selection covers
+    /// ("path/to/file.sql:42-58"). Empty when the text belongs to no file on
+    /// disk - the script of a database object, a tab never saved, the html
+    /// content pane - in which case there is nothing to point at.
+    ///
+    /// The path is absolute for a file opened in a tab, and relative to the
+    /// folder that was searched when the text is a file search hit shown in the
+    /// preview pane: those results are read as a set, and the root they share
+    /// is the project an agent will be pointed at.
+    QString codeLocation() const;
+
 signals:
     void sqlChanged();
     // Whatever the connection has to say while no query of ours is running.
@@ -119,6 +139,9 @@ public slots:
     void onScriptObjectRequest();
     void onExecuteStatementRequest();
     void onSelectStatementRequest();
+    /// Ctrl+Shift+C and the matching context menu item: the place being read,
+    /// as "file:line" (see codeLocation()), onto the clipboard.
+    void onCopyCodeLocationRequest();
     /// Appends the editor's own commands to the standard context menu it just
     /// built (CodeEditor::contextMenuRequest).
     void onEditorContextMenu(QMenu *menu);
@@ -129,6 +152,11 @@ private:
     QTimer *_timer;
     QJsonObject _querySettings;
     QString _fn;
+    /// The file the *shown* text comes from when it is not the widget's own
+    /// (the content pane previewing a file search hit), and the folder its path
+    /// is reported relative to. See setShownFile().
+    QString _shownFile;
+    QString _shownFileRoot;
     QString _title;
     bool _titleIsAuto = false;
     bool _generatedScript = false;

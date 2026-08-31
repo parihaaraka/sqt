@@ -36,6 +36,9 @@
 #include "timechart.h"
 #include <QStatusBar>
 #include "textcodec.h"
+#include <QClipboard>
+#include <QDir>
+#include <QFileInfo>
 
 
 QueryWidget::QueryWidget(QWidget *parent) : QueryWidget(nullptr, parent)
@@ -404,6 +407,9 @@ void QueryWidget::clear()
 {
     if (!_editor)
         return;
+    // Whatever file the text belonged to, it is gone with the text.
+    _shownFile.clear();
+    _shownFileRoot.clear();
     if (QPlainTextEdit *plain = qobject_cast<QPlainTextEdit*>(_editor))
         plain->clear();
     else if (QTextEdit *rich = qobject_cast<QTextEdit*>(_editor))
@@ -525,17 +531,31 @@ T* initEditor(QWidget **textEdit, QueryWidget *parent)
 
 void QueryWidget::setPlainText(const QString &text)
 {
+    // A new text has arrived; unless the caller says otherwise (setShownFile,
+    // right after this) it belongs to no file - a tree node's script, a query
+    // result, the next preview.
+    _shownFile.clear();
+    _shownFileRoot.clear();
     CodeEditor *editor = initEditor<CodeEditor>(&_editor, this);
     connect(editor, &CodeEditor::completerRequest, this, &QueryWidget::onCompleterRequest, Qt::UniqueConnection);
     connect(editor, &CodeEditor::scriptObjectRequest, this, &QueryWidget::onScriptObjectRequest, Qt::UniqueConnection);
     connect(editor, &CodeEditor::executeStatementRequest, this, &QueryWidget::onExecuteStatementRequest, Qt::UniqueConnection);
     connect(editor, &CodeEditor::selectStatementRequest, this, &QueryWidget::onSelectStatementRequest, Qt::UniqueConnection);
+    connect(editor, &CodeEditor::copyCodeLocationRequest, this, &QueryWidget::onCopyCodeLocationRequest, Qt::UniqueConnection);
     connect(editor, &CodeEditor::contextMenuRequest, this, &QueryWidget::onEditorContextMenu, Qt::UniqueConnection);
     editor->setPlainText(text);
 }
 
+void QueryWidget::setShownFile(const QString &fileName, const QString &root)
+{
+    _shownFile = fileName;
+    _shownFileRoot = root;
+}
+
 void QueryWidget::setHtml(const QString &html)
 {
+    _shownFile.clear();
+    _shownFileRoot.clear();
     //QTextEdit *editor = initEditor<QTextEdit>(&_editor, this);
     QTextBrowser *editor = initEditor<QTextBrowser>(&_editor, this);
     editor->setOpenExternalLinks(true);
@@ -630,6 +650,48 @@ void QueryWidget::status(const QString &text)
     }
     // no status bar to notify through
     log(text, QPalette().color(QPalette::Text));
+}
+
+QString QueryWidget::codeLocation() const
+{
+    // Only a code editor has lines to name; the html browser used for object
+    // content has no such notion, and neither has an empty widget.
+    CodeEditor *ed = qobject_cast<CodeEditor*>(_editor);
+    if (!ed)
+        return QString();
+
+    // Which file the text on screen belongs to. A tab has its own (_fn), the
+    // content pane is told what it is previewing (setShownFile). Everything
+    // else - a scripted object, a tab never saved - has no file, and pointing
+    // an agent at a path that does not exist is worse than offering nothing.
+    QString fileName = (_fn.isEmpty() ? _shownFile : _fn);
+    if (fileName.isEmpty())
+        return QString();
+
+    const QFileInfo fi(fileName);
+    if (!fi.isFile())
+        return QString();
+
+    // A file search hit is reported relative to the folder that was searched:
+    // its results are read as one project, and that root is the directory an
+    // agent will be started in. Only when the file really lies inside it -
+    // otherwise the '..' hops would be less useful than the full path.
+    QString path = fi.absoluteFilePath();
+    if (_fn.isEmpty() && !_shownFileRoot.isEmpty())
+    {
+        const QString root = QFileInfo(_shownFileRoot).absoluteFilePath();
+        const QString rel = QDir(root).relativeFilePath(path);
+        if (!rel.startsWith(".."))
+            path = rel;
+    }
+    // Native separators: the string is going into a prompt a human reads, and
+    // on windows Qt's internal '/' form is not what anything else there shows.
+    path = QDir::toNativeSeparators(path);
+
+    const QPair<int, int> lines = ed->selectedLineSpan();
+    return (lines.first == lines.second ?
+                QString("%1:%2").arg(path).arg(lines.first) :
+                QString("%1:%2-%3").arg(path).arg(lines.first).arg(lines.second));
 }
 
 QCompleter* QueryWidget::completer()
@@ -1210,6 +1272,36 @@ void QueryWidget::onEditorContextMenu(QMenu *menu)
     // one connection to the next is no way to learn what the editor can do.
     select->setEnabled(lexer && lexer->canSplitStatements());
     connect(select, &QAction::triggered, this, &QueryWidget::onSelectStatementRequest);
+
+    // "Where is this code" - the file and the line(s) on screen, for a prompt to
+    // an ai agent. Left out entirely rather than greyed out when there is no
+    // file behind the text (a scripted object, an unsaved tab): unlike the
+    // commands above it is not a keyboard shortcut worth advertising in a state
+    // where it can never work, and an item saying "copy the path" with no path
+    // to copy invites the question of which file it meant.
+    if (!codeLocation().isEmpty())
+    {
+        QAction *copyLocation = menu->addAction(tr("Copy code location"));
+        copyLocation->setShortcut(QKeySequence("Ctrl+Shift+C"));
+        copyLocation->setShortcutVisibleInContextMenu(true);
+        connect(copyLocation, &QAction::triggered, this, &QueryWidget::onCopyCodeLocationRequest);
+    }
+}
+
+void QueryWidget::onCopyCodeLocationRequest()
+{
+    const QString location = codeLocation();
+    if (location.isEmpty())
+    {
+        // Reachable by the shortcut alone (the menu hides the item then), and a
+        // key that silently does nothing reads as the application being broken.
+        status(tr("this text has no file behind it, nothing to point at"));
+        return;
+    }
+    QApplication::clipboard()->setText(location);
+    // A confirmation is worth it here: the clipboard gives no feedback of its
+    // own, and the point of the command is to paste this elsewhere.
+    status(tr("copied: %1").arg(location));
 }
 
 void QueryWidget::onScriptObjectRequest()
