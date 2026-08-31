@@ -8,6 +8,7 @@
 #include <QRegularExpression>
 #include <QThread>
 #include "settings.h"
+#include "misc.h"
 
 PgConnection::PgConnection() :
     DbConnection(), _readNotifier(nullptr), _writeNotifier(nullptr), _temp_result(nullptr), _temp_result_rowcount(0)
@@ -1518,7 +1519,12 @@ int PgConnection::appendRawDataToTable(DataTable &dst, PGresult *src) noexcept
                     break;
                 case FLOAT4OID:
                 case FLOAT8OID:
-                    (*row)[i] = std::atof(val);
+                    // Not atof()/strtod(): those follow the current locale, and
+                    // QApplication sets it from the system - so where LC_NUMERIC
+                    // uses a comma, "1.5" off the wire silently became 1. The
+                    // server always prints '.' (and "NaN"/"Infinity"), so the
+                    // parsing must not depend on a locale at all. See misc.h.
+                    (*row)[i] = parseDouble(val);
                     break;
                 case BOOLOID:
                     (*row)[i] = (val[0] == 't');

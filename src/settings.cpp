@@ -12,6 +12,7 @@
 #include <QRegularExpression>
 #include <QFont>
 #include "styling.h"
+#include "misc.h"
 
 namespace SqtSettings
 {
@@ -103,7 +104,11 @@ void load()
                 else if (match2.captured(1) == "font-size")
                 {
                     QString val = match2.captured(2).trimmed();
-                    double size = strtod(val.toStdString().c_str(), nullptr);
+                    // Locale-independent: strtod() here followed the system
+                    // locale, so a "font-size: 9.5pt" was read as 9 wherever
+                    // LC_NUMERIC uses a comma. A stylesheet always writes '.'.
+                    const std::string valUtf8 = val.toStdString();
+                    double size = parseDouble(valUtf8.c_str());
                     if (size)
                     {
                         if (val.endsWith("px"))

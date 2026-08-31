@@ -156,3 +156,10 @@ void TableModel::clear()
     _table->clear();
     endResetModel();
 }
+
+QString TableModel::columnTypeName(int column) const
+{
+    if (!_table || column < 0 || column >= _table->columnCount())
+        return QString();
+    return _table->getColumn(column).typeName();
+}

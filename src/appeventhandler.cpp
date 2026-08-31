@@ -19,6 +19,23 @@
 #include <QVBoxLayout>
 #include "jsonsyntaxhighlighter.h"
 #include "querywidget.h"
+#include "rowjson.h"
+#include "tablemodel.h"
+
+namespace
+{
+
+/// The type name of column \a column, as the dbms calls it ("jsonb",
+/// "numeric(10,2)") - what tells json and arbitrary-precision columns apart.
+/// Only a resultset grid has them; any other view simply gets no hint, which
+/// costs nothing but the explicit json/numeric handling.
+QString columnTypeName(const QAbstractItemModel *model, int column)
+{
+    const TableModel *tm = qobject_cast<const TableModel*>(model);
+    return (tm ? tm->columnTypeName(column) : QString());
+}
+
+} // namespace
 
 AppEventHandler::AppEventHandler(QObject *parent) : QObject(parent)
 {
@@ -57,11 +74,30 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                 return QObject::eventFilter(obj, event);
 
             QString stringValue;
+            // The value has been built as json already (a row, or a selection of
+            // cells): it must reach the viewer as it is. The reformatting below
+            // would round-trip it through QJsonObject, which keeps its keys
+            // sorted alphabetically - and the column order of a row is exactly
+            // what makes it readable.
+            bool preformatted = false;
             if (QTableView *tv = qobject_cast<QTableView*>(obj))
             {
                 // no model - no selection model to ask
-                if (QItemSelectionModel *sm = tv->selectionModel())
-                    stringValue = sm->currentIndex().data().toString();
+                QItemSelectionModel *sm = tv->selectionModel();
+                if (sm && tv->model())
+                {
+                    QModelIndexList indexes = sm->selectedIndexes();
+                    // Nothing selected (only a current cell): treat that cell as
+                    // the selection, which is what the grid shows as focused.
+                    if (indexes.isEmpty() && sm->currentIndex().isValid())
+                        indexes.append(sm->currentIndex());
+
+                    const QAbstractItemModel *model = tv->model();
+                    stringValue = RowJson::forSelection(
+                                model, indexes,
+                                [model](int column) { return columnTypeName(model, column); },
+                                &preformatted);
+                }
             }
             else if (QPlainTextEdit *ed = qobject_cast<QPlainTextEdit*>(obj))
             {
@@ -73,11 +109,17 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
                 return QObject::eventFilter(obj, event);
 
             QJsonParseError err;
+            err.error = QJsonParseError::NoError;
             QString preparedJsonString = stringValue.trimmed();
             static auto jrepl = QRegularExpression("\\R", QRegularExpression::UseUnicodePropertiesOption);
             // remove line breaks because QJsonDocument::fromJson() doesn't parse formatted json
             preparedJsonString.replace(jrepl, "");
-            QJsonDocument doc = QJsonDocument::fromJson(preparedJsonString.toUtf8(), &err);
+            // A value already built as json (a row, a cell selection) is left
+            // alone: parsing it back would sort a row's keys alphabetically and
+            // destroy the column order that makes it readable.
+            QJsonDocument doc = (preformatted ?
+                                     QJsonDocument() :
+                                     QJsonDocument::fromJson(preparedJsonString.toUtf8(), &err));
 
             std::function<QJsonValue(const QJsonValue&)> expandJsonValue;
             expandJsonValue = [&expandJsonValue](const QJsonValue &node) -> QJsonValue {
