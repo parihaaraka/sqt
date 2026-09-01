@@ -20,6 +20,7 @@
 #include "jsonsyntaxhighlighter.h"
 #include "querywidget.h"
 #include "rowjson.h"
+#include "styling.h"
 #include "tablemodel.h"
 
 namespace
@@ -381,9 +382,23 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
         else if (QTableView *tv = qobject_cast<QTableView*>(obj))
         {
             // adjust grid line height
-            int minHeight = tv->verticalHeader()->minimumSectionSize();
-            int comfortableHeight = qRound(tv->fontMetrics().height() * 1.35);
-            tv->verticalHeader()->setDefaultSectionSize(qMax(minHeight, comfortableHeight));
+            tv->verticalHeader()->setDefaultSectionSize(comfortableRowHeight(tv));
+        }
+    }
+    else if (event->type() == QEvent::Paint)
+    {
+        // Runs ahead of QTableView's own paint handling (this filter is
+        // installed on qApp, so it sees every event before its target does),
+        // which is what paintPixelPerfectGrid() needs: Qt draws the grid
+        // before the cells, and a cell's own opaque background is what then
+        // covers this line's leftover pixel inside that cell, exactly the
+        // way it would with the native grid this replaces (see
+        // setShowGrid(false) wherever a results QTableView is set up).
+        if (QWidget *viewport = qobject_cast<QWidget*>(obj))
+        {
+            if (QTableView *tv = qobject_cast<QTableView*>(viewport->parentWidget());
+                    tv && tv->viewport() == viewport)
+                paintPixelPerfectGrid(tv);
         }
     }
     else if (event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut)

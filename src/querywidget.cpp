@@ -3,11 +3,13 @@
 #include <QTabWidget>
 #include <QApplication>
 #include "misc.h"
+#include "settings.h"
 #include "sqlsyntaxhighlighter.h"
 #include "dbconnectionfactory.h"
 #include "dbconnection.h"
 #include <QTableView>
 #include <QHeaderView>
+#include "styling.h"
 #include "tablemodel.h"
 #include <QFile>
 #include <QMessageBox>
@@ -39,7 +41,6 @@
 #include <QClipboard>
 #include <QDir>
 #include <QFileInfo>
-
 
 QueryWidget::QueryWidget(QWidget *parent) : QueryWidget(nullptr, parent)
 {
@@ -137,6 +138,7 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
     QString text;
     if (QPlainTextEdit *plain = qobject_cast<QPlainTextEdit*>(_editor))
     {
+        bool keepTrailingSpaces = SqtSettings::value("keepTrailingSpaces", false).toBool();
         // remove trailing space characters without regexp
         // * but save exactly 3 whitespaces! It's about bitbucket's markdown :(
         QTextDocument *doc = plain->document();
@@ -146,24 +148,31 @@ bool QueryWidget::saveFile(const QString &fileName, const QString &encoding)
                 text += '\n';
 
             QString line = it.text();
-            qsizetype len = line.size();
 
-            int whitespace_count = 0;
-            int any_space_count = 0;
-            // the counter is the loop variable here: a line made of spaces only
-            // used to run the index past the front of the line
-            while (any_space_count < len)
+            if (!keepTrailingSpaces)
             {
-                QChar c = line.at(len - any_space_count - 1);
-                if (!c.isSpace())
-                    break;
-                ++any_space_count;
-                if (c == ' ')
-                    ++whitespace_count;
+                qsizetype len = line.size();
+                int whitespace_count = 0;
+                int any_space_count = 0;
+                // the counter is the loop variable here: a line made of spaces only
+                // used to run the index past the front of the line
+                while (any_space_count < len)
+                {
+                    QChar c = line.at(len - any_space_count - 1);
+                    if (!c.isSpace())
+                        break;
+                    ++any_space_count;
+                    if (c == ' ')
+                        ++whitespace_count;
+                }
+                if (whitespace_count != 3 || whitespace_count != any_space_count)
+                    len -= any_space_count;
+                text += line.mid(0, len);
             }
-            if (whitespace_count != 3 || whitespace_count != any_space_count)
-                len -= any_space_count;
-            text += line.mid(0, len);
+            else
+            {
+                text += line;
+            }
         }
     }
     else if (QTextEdit *rich = qobject_cast<QTextEdit*>(_editor))
@@ -939,7 +948,15 @@ void QueryWidget::fetched(DataTable *table)
         if (!tv || tv->objectName() != tname)
         {
             tv = new QTableView(_resSplitter);
-            tv->verticalHeader()->setDefaultSectionSize(QFontMetrics(tv->font()).lineSpacing());
+            // Matches what the FontChange handler in AppEventHandler sets later -
+            // see comfortableRowHeight() - so a freshly created grid starts out
+            // with the same row height it would otherwise only get after the
+            // next font or stylesheet change, rather than the tighter
+            // lineSpacing() a plain single-line box would need.
+            tv->verticalHeader()->setDefaultSectionSize(comfortableRowHeight(tv));
+            // Painted by hand instead - see paintPixelPerfectGrid() and
+            // AppEventHandler's QEvent::Paint case for why and where.
+            tv->setShowGrid(false);
             tv->horizontalHeader()->viewport()->setMouseTracking(true);
             tv->setObjectName(tname);
 
@@ -958,6 +975,10 @@ void QueryWidget::fetched(DataTable *table)
             // prevent autoresize overhead when big resultset is fetched at once
             tv->horizontalHeader()->setResizeContentsPrecision(20);
             tv->resizeColumnsToContents();
+            // A row height alone (see comfortableRowHeight() above) only keeps
+            // the *horizontal* grid lines crisp at a fractional display scale;
+            // the vertical ones need every column's own width snapped too.
+            keepColumnsSnappedToDevicePixels(tv);
         }
         else
         {

@@ -158,13 +158,17 @@ QRegularExpression buildPattern(const FileSearchParams &params, QString *error)
                            params.text :
                            QRegularExpression::escape(params.text));
 
-    if (params.wholeWord && !pattern.isEmpty())
+    // Meaningful for a literal string only, hence the !regexp: the boundary is a
+    // wrapper around text that is known to be matched verbatim. Around an
+    // arbitrary regexp no wrapper can promise "one whole word" - it does not know
+    // what the expression consumes, and measured on real patterns it destroys
+    // matches rather than narrowing them: `foo\W` stops matching at all (the
+    // right guard is evaluated where the expression's own \W already sat), a
+    // zero-width `(?=foo)` has no edges to guard, and `(a)\1` loses its match
+    // after any word character. In a regexp the boundary belongs to the author,
+    // who writes \b (or \y, or a lookaround) exactly where it is meant.
+    if (params.wholeWord && !params.regexp && !pattern.isEmpty())
     {
-        // Lookarounds around the *grouped* pattern. Grouping is what makes this
-        // hold for a regexp: `|` has the lowest precedence in pcre, so a bare
-        // boundary glued to the pattern text would bind to one alternative only
-        // and "foo|bar" would match the "bar" inside "foobar".
-        //
         // Each guard is an alternation, because the requirement is conditional -
         // the case findWholeWordWithNonWordEdges() pins down: a match whose own
         // edge is a non-word character must not demand a word boundary there, or
@@ -173,9 +177,6 @@ QRegularExpression buildPattern(const FileSearchParams &params, QString *error)
         //           begins with a non-word character;
         //   right - nothing word-like immediately after, or the match itself
         //           ended with a non-word character.
-        // The lookarounds inspect the *matched text*, which is why they hold for
-        // a plain string and a regexp alike - the pattern source says nothing
-        // about what the pattern can match ("\w+" starts with a backslash).
         pattern = "(?:(?<!\\w)|(?=\\W))(?:" + pattern + ")(?:(?!\\w)|(?<=\\W))";
     }
 

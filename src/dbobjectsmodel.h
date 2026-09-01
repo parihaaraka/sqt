@@ -50,6 +50,10 @@ public:
     QVariant parentNodeProperty(const QModelIndex &index, QString type);
     bool addServer(QString name, QString connectionString);
     bool removeConnection(QModelIndex &index);
+    /// Ends the server sessions of \a item and of every node below it. A database
+    /// node holds a session of its own, so removing a connection node has to walk
+    /// the subtree rather than close one link.
+    void closeSubtreeConnections(DbObject *item) noexcept;
     bool alterConnection(QModelIndex &index, QString name, QString connectionString);
 
 private:

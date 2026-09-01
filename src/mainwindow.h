@@ -146,12 +146,23 @@ private:
     /// The tree node behind a view index, or nullptr.
     DbObject *nodeAt(const QModelIndex &viewIndex) const;
 
+    /// Closes a single tab: asks (confirmTabClose()) and, if agreed, discards
+    /// it. The entry point for a one-tab-at-a-time close - the tab bar's own
+    /// [x], Ctrl+W, the context menu. closeEvent() does not call this for its
+    /// own bulk close; see there for why.
     bool closeTab(int index);
-    /// Whether the tab at \a index would let itself be closed - the save prompt
-    /// and the busy-connection check, without destroying anything. closeEvent()
-    /// asks every tab this before it closes any, so a Cancel halfway through
-    /// leaves the session as it was.
-    bool mayCloseTab(int index);
+    /// Whether the tab at \a index is willing to close: the save prompt and
+    /// the busy-connection check. Can put a dialog on screen and is answered
+    /// fresh each time it is called - callers are responsible for calling it
+    /// only once per tab per close attempt (closeEvent() asks every tab this,
+    /// once each, before discarding any of them; closeTab() asks it for the
+    /// one tab it was told to close).
+    bool confirmTabClose(int index);
+    /// Removes and deletes the tab at \a index outright, with no question of
+    /// its own - only for a caller that already has the person's agreement in
+    /// hand (closeTab(), after confirmTabClose(); closeEvent(), after its own
+    /// pass over every tab).
+    void discardTab(int index);
     bool ensureSaved(int index, bool ask_name = false, bool forceWarning = false);
     FindAndReplacePanel *_frPanel;
     // Created in the constructor, but the Ctrl+E lambda above is installed

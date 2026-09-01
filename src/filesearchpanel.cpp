@@ -147,6 +147,20 @@ void FileSearchPanel::buildUi()
     _wholeWord = makeCheck(QString::fromUtf8("\xe2\x80\xb9\xe2\x80\xba"), tr("Whole word"));
     _regexp = makeCheck(".*", tr("Regular expression"));
     _regexpU = makeCheck("/u", tr("Use unicode properties"));
+    // "Whole word" applies to a literal string only, so it follows the regexp
+    // flag rather than standing next to it as an equal - the editor's find panel
+    // links the two the same way. Greyed out rather than unchecked, so the
+    // setting survives a round trip through the regexp mode.
+    const auto syncWholeWord = [this]() {
+        const bool re = _regexp->isChecked();
+        _wholeWord->setEnabled(!re);
+        _wholeWord->setToolTip(re ?
+                    tr("Whole word does not apply to a regular expression - "
+                       "write \\b where the boundary is meant") :
+                    tr("Whole word"));
+    };
+    connect(_regexp, &QCheckBox::toggled, this, syncWholeWord);
+    syncWholeWord();
     _recursive = makeCheck(tr("subfolders"), tr("Search in subdirectories"));
     _recursive->setChecked(true);
 

@@ -460,9 +460,33 @@ bool DbObjectsModel::removeConnection(QModelIndex &index)
     if (item->data(DbObject::TypeRole) != "connection")
         return false;
 
+    // The server sessions go first, deliberately and before the nodes are gone.
+    // Dropping the rows alone would leave it to ~DbObject to unregister the keys
+    // and to the refcount to reach zero, which happens to work - and makes
+    // releasing a backend a side effect of memory management instead of an
+    // action. A database node below carries a session of its own, so the whole
+    // subtree is walked, and the "disconnect" path does exactly this explicitly.
+    closeSubtreeConnections(item);
+
     removeRows(index.row(), 1);
     saveConnectionSettings();
     return true;
+}
+
+void DbObjectsModel::closeSubtreeConnections(DbObject *item) noexcept
+{
+    if (!item)
+        return;
+    for (int i = 0; i < item->childCount(); ++i)
+        closeSubtreeConnections(item->child(i));
+
+    if (auto con = DbConnectionFactory::connection(item->connectionKey()))
+    {
+        // close() only ends the link; the entry is dropped by ~DbObject, which
+        // the caller is about to trigger.
+        con->close();
+        con->disconnect();
+    }
 }
 
 bool DbObjectsModel::alterConnection(QModelIndex &index, QString name, QString connectionString)

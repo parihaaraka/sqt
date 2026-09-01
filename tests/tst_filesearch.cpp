@@ -177,37 +177,46 @@ private slots:
         QCOMPARE(hits("f(x) + g(x)", p).size(), 2);
     }
 
-    void findWholeWordRegexpAlternation()
+    void wholeWordIsIgnoredForRegexp()
     {
-        // The boundary must bind to the whole pattern, not to one alternative.
-        // Without grouping "foo|bar" reads as "(\bfoo)|(bar\b)", and the "bar"
-        // inside "foobar" then matches - the very thing whole-word excludes.
+        // The flag is not honoured around an expression, because no wrapper can
+        // promise "one whole word" there - so the result must be exactly what the
+        // expression alone matches. "foo|bar" is the case that reads as a
+        // regression if the wrapper ever comes back: with it, either the "bar"
+        // inside "foobar" matched (bare boundaries) or nothing did.
         FileSearchParams p = plain("foo|bar");
         p.regexp = true;
         p.wholeWord = true;
-        QCOMPARE(hits("foobar", p).size(), 0);
-        QCOMPARE(hits("a bar b", p).size(), 1);
-        QCOMPARE(hits("foo bar", p).size(), 2);
+
+        FileSearchParams bare = plain("foo|bar");
+        bare.regexp = true;
+        QCOMPARE(hits("foobar", p).size(), hits("foobar", bare).size());
+        QCOMPARE(hits("foo bar", p).size(), hits("foo bar", bare).size());
+        QCOMPARE(hits("foobar", p).size(), 2);      // both halves, as written
     }
 
-    void findWholeWordRegexpIsNotDecidedBySourceText()
+    void wholeWordDoesNotBreakRegexpsItCannotWrap()
     {
-        // The pattern *source* says nothing about what the pattern can match:
-        // "\w+" begins with '\' and ends with '+', neither a word character, yet
-        // it matches words. Deciding the boundary from those characters would
-        // make the option a no-op here.
-        FileSearchParams p = plain("\\w+");
-        p.regexp = true;
-        p.wholeWord = true;
-        const auto res = hits("id, oid", p);
-        QCOMPARE(res.size(), 2);
-        // and it still finds whole words rather than nothing
-        QCOMPARE(res[0].column, 1);
-
-        FileSearchParams cls = plain("[a-z]+");
-        cls.regexp = true;
-        cls.wholeWord = true;
-        QCOMPARE(hits("abc", cls).size(), 1);
+        // Patterns a wrapper measurably destroyed rather than narrowed. Each must
+        // behave as if wholeWord were not set at all.
+        struct { const char *pattern; const char *text; int expected; } cases[] = {
+            // ends with its own \W: the right guard used to be evaluated where
+            // that \W already sat, and the match was lost
+            { "foo\\W",   "xfoo bar",  1 },
+            // zero-width: no edges to guard
+            { "(?=foo)",  "foo bar",   1 },
+            // a backreference after a word character
+            { "(a)\\1",   "xaa",       1 },
+            // the author's own boundary must not be doubled
+            { "\\bfoo\\b", "a foo b",  1 },
+        };
+        for (const auto &c: cases)
+        {
+            FileSearchParams p = plain(c.pattern);
+            p.regexp = true;
+            p.wholeWord = true;
+            QCOMPARE(hits(c.text, p).size(), c.expected);
+        }
     }
 
     void findRegexpMultiline()

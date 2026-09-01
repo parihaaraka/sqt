@@ -4,6 +4,13 @@
 #include <QWidget>
 #include <QGuiApplication>
 #include <QtMath>
+#include <cmath>
+#include <QTableView>
+#include <QHeaderView>
+#include <QStyle>
+#include <QStyleOptionViewItem>
+#include <QAbstractItemModel>
+#include <QPainter>
 
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
@@ -188,4 +195,197 @@ void fixInactiveSelection(QWidget *w)
     pal.setColor(QPalette::Inactive, QPalette::HighlightedText,
                  appPalette.color(QPalette::Active, QPalette::HighlightedText));
     w->setPalette(pal);
+}
+
+int snapToDevicePixels(int logicalSize, const QWidget *w)
+{
+    if (!w || logicalSize <= 0)
+        return logicalSize;
+
+    const qreal dpr = w->devicePixelRatioF();
+    // Nothing to do at an integral ratio, and the guard also covers a screen that
+    // reports a ratio of 0 before the widget is shown.
+    if (dpr <= 0 || qFuzzyCompare(dpr, qreal(qRound(dpr))))
+        return logicalSize;
+
+    // Up to the next size whose device size is whole - never down, since that
+    // could reach 0 for a small size, and a row/column one pixel bigger than
+    // asked is invisible next to a grid line that changes thickness from one
+    // row or column to the next.
+    //
+    // ceil(ceil(logicalSize*dpr)/dpr) - the previous approach here - finds
+    // *a* whole number of device pixels, but nothing guarantees it is the
+    // *closest* one reachable from a whole logical size: at dpr=1.25 it maps
+    // logical 1 to 2, i.e. 2*1.25=2.5 device pixels - still fractional. Every
+    // fractional scale factor Windows and Linux actually offer is some tidy
+    // ratio p/q (quarters on Windows: 125/150/175%; other small denominators
+    // on Linux's fractional scaling), so the smallest logical size at or above
+    // the one asked for that lands on a whole device pixel is never more than
+    // q away - a handful of steps, found fastest by just trying them, no
+    // reconstruction of p/q from a rounded double required.
+    //
+    // The comparison against "whole" needs slack rather than qFuzzyCompare's
+    // near-exact tolerance: devicePixelRatioF() is a float under the hood, so
+    // even a perfectly clean ratio like 1.2 already arrives as something like
+    // 1.1999969... - correct to about six decimal digits, not sixteen. A
+    // tenth of a device pixel is still far below anything visible, so
+    // treating that noise as "whole" costs nothing.
+    for (int l = logicalSize; l < logicalSize + 128; ++l)
+    {
+        const qreal devicePixels = l * dpr;
+        if (std::abs(devicePixels - std::round(devicePixels)) < 1e-3)
+            return l;
+    }
+    // Not a realistic scale factor (or a very large denominator): fall back
+    // to the exact request rather than looping further.
+    return logicalSize;
+}
+
+int comfortableRowHeight(const QTableView *tv)
+{
+    if (!tv)
+        return 0;
+
+    // CT_ItemViewItem is precisely the box QStyleSheetStyle overrides to add
+    // the ::item rule's border and padding on top of whatever the native
+    // style already reserves, so this - rather than a hand-rolled multiple of
+    // the font's height - is what stays correct for any padding the user
+    // writes and any style it is combined with.
+    QStyleOptionViewItem opt;
+    opt.initFrom(tv);
+    opt.font = tv->font();
+    opt.fontMetrics = tv->fontMetrics();
+    opt.features = QStyleOptionViewItem::HasDisplay;
+    opt.displayAlignment = Qt::AlignLeft | Qt::AlignVCenter;
+    // A representative single line - both an ascender and a descender present,
+    // so the measured height isn't accidentally short for glyphs the actual
+    // cell content will have but "Ag" itself would lack.
+    opt.text = QStringLiteral("Ag");
+
+    const int contentHeight = tv->style()->sizeFromContents(
+                QStyle::CT_ItemViewItem, &opt, QSize(), tv).height();
+    const int minHeight = tv->verticalHeader()->minimumSectionSize();
+    return snapToDevicePixels(qMax(minHeight, contentHeight), tv);
+}
+
+void keepColumnsSnappedToDevicePixels(QTableView *tv)
+{
+    if (!tv)
+        return;
+
+    QHeaderView *hh = tv->horizontalHeader();
+
+    // Whatever is already there - typically a resizeColumnsToContents() that
+    // ran just before this call.
+    for (int i = 0; i < hh->count(); ++i)
+    {
+        const int w = hh->sectionSize(i);
+        const int snapped = snapToDevicePixels(w, tv);
+        if (snapped != w)
+            hh->resizeSection(i, snapped);
+    }
+
+    // And everything resized afterwards, interactively or otherwise. Re-snapping
+    // the very size this signal just reported would be an infinite loop; it
+    // isn't one, because the second call finds newSize already snapped and
+    // does not call resizeSection() again.
+    // Connected once per header - a call site can legitimately run this
+    // again on the very same long-lived QTableView (ui->tableView is reused
+    // across tree navigations, resizeColumnsToContents() and all), and a
+    // second connection would just mean every future resize gets snapped
+    // twice over.
+    static const char *kWiredProperty = "_sqtColumnsSnapped";
+    if (hh->property(kWiredProperty).toBool())
+        return;
+    hh->setProperty(kWiredProperty, true);
+
+    QObject::connect(hh, &QHeaderView::sectionResized, tv,
+                      [tv, hh](int logicalIndex, int /*oldSize*/, int newSize)
+    {
+        const int snapped = snapToDevicePixels(newSize, tv);
+        if (snapped != newSize)
+            hh->resizeSection(logicalIndex, snapped);
+    });
+}
+
+void paintPixelPerfectGrid(QTableView *tv)
+{
+    if (!tv)
+        return;
+
+    QAbstractItemModel *model = tv->model();
+    if (!model || !model->rowCount() || !model->columnCount())
+        return;
+
+    QWidget *vp = tv->viewport();
+    const qreal dpr = tv->devicePixelRatioF();
+    if (dpr <= 0)
+        return;
+
+    const int lastCol = model->columnCount() - 1;
+    const int lastRow = model->rowCount() - 1;
+    const int firstVisibleCol = qMax(0, tv->columnAt(0));
+    const int firstVisibleRow = qMax(0, tv->rowAt(0));
+    int lastVisibleCol = tv->columnAt(vp->width());
+    if (lastVisibleCol < 0)
+        lastVisibleCol = lastCol;
+    int lastVisibleRow = tv->rowAt(vp->height());
+    if (lastVisibleRow < 0)
+        lastVisibleRow = lastRow;
+
+    const int right = tv->columnViewportPosition(lastVisibleCol) + tv->columnWidth(lastVisibleCol);
+    const int bottom = tv->rowViewportPosition(lastVisibleRow) + tv->rowHeight(lastVisibleRow);
+
+    QPainter painter(vp);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+
+    // The same style hint QTableView's own (now unused, see setShowGrid(false)
+    // at every call site) grid used, rather than a guess at a palette role: a
+    // generic role like Mid is tuned for widget chrome, not specifically for
+    // being visible as a hairline against a themed grid - on a dark theme it
+    // all but disappears.
+    QStyleOptionViewItem opt;
+    opt.initFrom(tv);
+    const QColor gridColor = QColor::fromRgba(
+                static_cast<QRgb>(tv->style()->styleHint(QStyle::SH_Table_GridLineColor, &opt, tv)));
+    QPen pen(gridColor);
+    pen.setCosmetic(true);
+    painter.setPen(pen);
+
+    // Half a *device* pixel past the cell boundary, converted back to the
+    // logical units this painter is given coordinates in - not the boundary
+    // itself. A cell's own fill (drawn separately, right after this) covers
+    // device columns/rows [left, boundary) under the ordinary half-open fill
+    // rule, so the pixel this line is meant to occupy is the *next* whole one,
+    // [boundary, boundary+1). Asking for that pixel by its centre rather than
+    // its edge is what makes the request unambiguous: a one-pixel-wide
+    // cosmetic pen at exactly the edge coordinate is a tie between that pixel
+    // and the one before it, and which way a given paint backend breaks that
+    // tie is exactly the kind of platform-specific rounding rule not worth
+    // relying on - Windows and this project's Linux test both accept the
+    // exact same input and are free to answer differently. A pen centred
+    // instead of edged has no tie to break.
+    const qreal half = dpr > 0 ? 0.5 / dpr : 0.0;
+
+    // Deliberately at the exact same coordinates QTableView itself paints
+    // cell content at (columnViewportPosition()+columnWidth(), etc.) rather
+    // than at some position corrected for where an ancestor happens to have
+    // placed the viewport: a correction here alone, with nothing painting the
+    // cells themselves any differently, only pulls the grid line away from
+    // the selection/background rect that is drawn at the raw position - a
+    // cell's highlight then over- or under-shoots the line next to it, which
+    // is worse than the line itself being imperceptibly off.
+    //
+    // Columns are assumed to appear in logical order - true as long as
+    // nothing calls setSectionsMovable(true) on the horizontal header.
+    for (int col = firstVisibleCol; col <= lastVisibleCol; ++col)
+    {
+        const qreal x = tv->columnViewportPosition(col) + tv->columnWidth(col) + half;
+        painter.drawLine(QPointF(x, 0), QPointF(x, bottom));
+    }
+    for (int row = firstVisibleRow; row <= lastVisibleRow; ++row)
+    {
+        const qreal y = tv->rowViewportPosition(row) + tv->rowHeight(row) + half;
+        painter.drawLine(QPointF(0, y), QPointF(right, y));
+    }
 }

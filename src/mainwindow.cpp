@@ -22,6 +22,7 @@
 #include "tablemodel.h"
 #include "dbtreeitemdelegate.h"
 #include "findandreplacepanel.h"
+#include "styling.h"
 #include <memory>
 #include "scripting.h"
 #include "sqllexer.h"
@@ -221,6 +222,12 @@ MainWindow::MainWindow(QWidget *parent) :
     _tableModel = new TableModel(this);
     ui->tableView->setModel(_tableModel);
     ui->tableView->hide();
+    // Same treatment as the query-editor result grids in querywidget.cpp -
+    // see comfortableRowHeight()/setShowGrid(false) there for why. This one
+    // is built in Designer rather than resized fresh each time, so it needs
+    // the same setup done explicitly, once, right here.
+    ui->tableView->verticalHeader()->setDefaultSectionSize(comfortableRowHeight(ui->tableView));
+    ui->tableView->setShowGrid(false);
     //ui->tableView->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
 
     QActionGroup *viewMode = new QActionGroup(this);
@@ -292,6 +299,31 @@ MainWindow::MainWindow(QWidget *parent) :
     tabFilesSeparator->setSeparator(true);
     ui->tabWidget->tabBar()->addAction(tabFilesSeparator);
     _fileTabActions.append(tabFilesSeparator);
+
+    // re-read the file from disk, discarding whatever is in the editor - the
+    // in-memory copy is what a stale open tab has instead of the file changing
+    // outside sqt, and there was no way back to it short of closing the tab
+    // (losing its place in the tab bar) and reopening the file by hand.
+    QAction *reloadAction = new QAction(tr("reload file"), ui->tabWidget);
+    connect(reloadAction, &QAction::triggered, this, [this]()
+    {
+        QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(targetTabIndex()));
+        if (!w || w->fileName().isEmpty())
+            return;
+        if (w->isModified())
+        {
+            QMessageBox::StandardButton answer = QMessageBox::warning(
+                        this, tr("Warning"),
+                        tr("`%1` has unsaved changes. Discard them and reload from disk?").arg(w->title()),
+                        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+            if (answer != QMessageBox::Yes)
+                return;
+        }
+        if (w->openFile(w->fileName(), w->encoding()))
+            updateTabCaption(w);
+    });
+    ui->tabWidget->tabBar()->addAction(reloadAction);
+    _fileTabActions.append(reloadAction);
 
     // every such action just copies some part of the file name to the clipboard
     auto addFileNameAction = [this](const QString &title, QString (QFileInfo::*extract)() const)
@@ -552,13 +584,21 @@ void MainWindow::queryStateChanged(QueryWidget *w, QueryState state)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    // Two passes: ask everything first, destroy afterwards. Closing tabs one at
-    // a time and only then discovering a veto (Cancel in the save prompt, or a
-    // busy connection) left the earlier tabs already removed and deleted while
-    // the window stayed open - Cancel is expected to change nothing.
+    // Two passes: ask everything first, discard afterwards. Interleaving the
+    // two - closing tabs one at a time - left a veto discovered partway
+    // through (Cancel in the save prompt, or a busy connection) with the
+    // earlier tabs already gone while the window stayed open, when Cancel is
+    // expected to change nothing.
+    //
+    // The person has now agreed to every tab exactly once by the time this
+    // loop finishes, which is also exactly why the second loop below must not
+    // go through confirmTabClose() again (directly, or via closeTab()) - not
+    // "shouldn't ask a second time" as a nicety to engineer around, but
+    // "there is nothing left to ask": consent for the whole set was already
+    // given right here.
     for (int i = 0; i < ui->tabWidget->count(); ++i)
     {
-        if (!mayCloseTab(i))
+        if (!confirmTabClose(i))
         {
             event->ignore();
             return;
@@ -574,11 +614,10 @@ void MainWindow::closeEvent(QCloseEvent *event)
     SqtSettings::setValue("fileDialog", _fileDialog.saveState());
     SqtSettings::setValue("mruDirs", _mruDirs);
 
-    // Every tab has already agreed, and each is asked from the end so the
-    // indexes below it stay put. ensureSaved() runs again inside closeTab() and
-    // finds nothing left to save.
+    // Plain cleanup - see above for why nothing here asks again - from the end
+    // so the indexes below it stay put.
     for (int i = ui->tabWidget->count() - 1; i >= 0; --i)
-        closeTab(i);
+        discardTab(i);
     event->accept();
 }
 
@@ -1006,35 +1045,30 @@ DbObject *MainWindow::nodeAt(const QModelIndex &viewIndex) const
 
 bool MainWindow::closeTab(int index)
 {
-    // Validated here rather than trusting ensureSaved(): that returns true both
-    // for "saved / nothing to save" and for "the index names no QueryWidget",
-    // and taking the second as permission to proceed dereferenced a null widget
-    // - and, worse, returned true without removing anything, so closeEvent()'s
-    // `while (count() > 0)` loop could never make progress.
-    QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(index));
-    if (!w)
+    // Validated here rather than trusting confirmTabClose(): that returns true
+    // both for "confirmed" and for "the index names no QueryWidget", and taking
+    // the second as permission to proceed dereferenced a null widget - and,
+    // worse, returned true without removing anything, so a caller looping over
+    // tabs could never make progress.
+    if (!qobject_cast<QueryWidget*>(ui->tabWidget->widget(index)))
         return true;    // nothing of ours here; nothing to keep the caller waiting
 
-    if (!ensureSaved(index, false, true))
+    if (!confirmTabClose(index))
         return false;
 
-    DbConnection *con = w->dbConnection();
-    if (con && con->queryState() != QueryState::Inactive)
-    {
-        onError(tr("connection is in use"));
-        return false;
-    }
-
-    ui->tabWidget->removeTab(index);
-    delete w;
+    discardTab(index);
     return true;
 }
 
-bool MainWindow::mayCloseTab(int index)
+// Whether this tab is willing to go: unsaved changes and a still-running query
+// are both something only the person can resolve, so this can put a dialog on
+// screen and is not a query the rest of the class should treat as free to
+// call more than once per tab per user decision - closeEvent() asks every tab
+// exactly this, once each, before discarding any of them (see there for why
+// asking again while discarding would mean the same prompt twice for one
+// "close the app" click).
+bool MainWindow::confirmTabClose(int index)
 {
-    // The question closeTab() answers, without the destruction: whether this tab
-    // is willing to go. Asking every tab first is what lets closeEvent() abandon
-    // the whole close without having already thrown away the tabs it got to.
     QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(index));
     if (!w)
         return true;
@@ -1043,10 +1077,22 @@ bool MainWindow::mayCloseTab(int index)
     DbConnection *con = w->dbConnection();
     if (con && con->queryState() != QueryState::Inactive)
     {
-        onError(tr("connection is in use"));
+        onError(tr("`%1` still has a query running").arg(ui->tabWidget->tabText(index)));
         return false;
     }
     return true;
+}
+
+// The mechanical half of closing a tab, with no question of its own: whoever
+// calls this has already secured the person's agreement (closeTab() via
+// confirmTabClose(), or closeEvent()'s own pass over every tab).
+void MainWindow::discardTab(int index)
+{
+    QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(index));
+    if (!w)
+        return;
+    ui->tabWidget->removeTab(index);
+    delete w;
 }
 
 void MainWindow::on_actionNew_triggered()
@@ -1316,11 +1362,15 @@ bool MainWindow::ensureSaved(int index, bool ask_name, bool forceWarning)
             ask_name = true;
         if (/*!ask_name || */forceWarning)
         {
+            // fn can be empty for a tab with no file of its own yet (created
+            // manually, or by F4) - the title is what the tab bar itself shows
+            // for exactly that case, so it is what actually identifies the tab
+            // in the prompt instead of a blank "Save ?".
             QMessageBox::StandardButton answer_btn =
                     QMessageBox::warning(
                         this,
                         tr("Warning"),
-                        tr("Save %1?").arg(fn),
+                        tr("Save %1?").arg(fn.isEmpty() ? w->title() : fn),
                         QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, QMessageBox::Yes);
             if (answer_btn == QMessageBox::No)
                 return true;
@@ -1629,6 +1679,7 @@ void MainWindow::scriptSelectedObjects()
                     _tableModel->take(table);
                     ui->tableView->show();
                     ui->tableView->resizeColumnsToContents();
+                    keepColumnsSnappedToDevicePixels(ui->tableView);
                 }
                 else
                     ui->tableView->hide();
@@ -1730,6 +1781,7 @@ void MainWindow::showContent(QModelIndex &index, const Scripting::CppConductor *
     DataTable *table = content->resultsets.back();
     _tableModel->take(table);
     ui->tableView->resizeColumnsToContents();
+    keepColumnsSnappedToDevicePixels(ui->tableView);
     if (index.isValid())
         _objectsModel->setData(index, "table", DbObject::ContentTypeRole);
 }

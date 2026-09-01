@@ -25,6 +25,10 @@ struct FileSearchParams
     /// descended into at all.
     QString excluding;
     bool caseSensitive = false;
+    /// Ignored when \a regexp is set: a word boundary can only be promised around
+    /// text matched verbatim, while in an expression it belongs to whoever wrote
+    /// it (\b, \y, a lookaround). See buildPattern() for what wrapping an
+    /// arbitrary expression actually did to it.
     bool wholeWord = false;
     bool regexp = false;
     bool unicodeProperties = false;
