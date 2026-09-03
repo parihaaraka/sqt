@@ -87,29 +87,35 @@ void keepColumnsSnappedToDevicePixels(QTableView *tv);
 /// Removed rather than chased further without a way to reproduce the
 /// original platform-specific symptom directly.
 ///
-/// What replaced it: every line is drawn at the boundary coordinate plus
-/// half a device pixel, not at the boundary itself. A cell's own fill stops
-/// at that boundary under the ordinary half-open fill rule (it owns
+/// What replaced it: every line is drawn at the boundary coordinate plus half
+/// its own device-pixel width, not at the boundary itself. A cell's own fill
+/// stops at that boundary under the ordinary half-open fill rule (it owns
 /// [left, boundary), never the boundary pixel itself), so the line is meant
-/// to occupy the very next whole device pixel, [boundary, boundary+1) - and
-/// asking a one-pixel cosmetic pen for a coordinate sitting exactly on that
-/// pixel's centre, rather than on its edge, is what makes the request
-/// unambiguous in principle. In practice this did not fully fix the
-/// Windows-only symptom it was aimed at: a selected cell's background still
-/// ends up about one physical pixel off from the grid line next to it there
-/// (confirmed still present after this change, on real hardware - it just
-/// never reproduces in this project's own Linux sandbox, so there is no
-/// local way to keep iterating on it). Decided, together with the person
-/// who could actually see it, that this residual is cosmetic enough - a
-/// selection edge overlapping its grid line by a pixel, not any loss of
-/// data legibility - to leave as a known limitation rather than keep
-/// guessing at a platform-specific rounding rule neither of us can step
-/// through directly. The genuinely bad symptom this whole effort started
-/// from, grid lines alternating between one and two physical pixels thick,
-/// is what actually mattered and is fixed by comfortableRowHeight() and
-/// keepColumnsSnappedToDevicePixels() alone - this function's own
-/// contribution beyond that is a visible, theme-correct grid colour
-/// (SH_Table_GridLineColor) rather than a resolved alignment.
+/// to occupy the whole-device-pixel band starting there, [boundary,
+/// boundary+width) - and centring a pen of that width on a coordinate half a
+/// width past the boundary is what lands it exactly on that band. At width 1
+/// this also makes the request unambiguous in principle: a pen centred
+/// exactly on the boundary itself is a tie between the pixel this band names
+/// and the one before it. In practice the centring alone did not fully fix
+/// the Windows-only symptom it was aimed at: a selected cell's background
+/// still ended up about one physical pixel off from the grid line next to it
+/// there (confirmed still present after that change, on real hardware - it
+/// just never reproduces in this project's own Linux sandbox, so there is no
+/// local way to keep iterating on it). Decided, together with the person who
+/// could actually see it, that this residual is cosmetic enough - a
+/// selection edge overlapping its grid line by a pixel, not any loss of data
+/// legibility - to leave as a known limitation rather than keep guessing at
+/// a platform-specific rounding rule neither of us can step through
+/// directly.
+///
+/// The line's width itself is qBound(1, qRound(devicePixelRatioF()), 4)
+/// device pixels, not a flat one - see the comment at that expression in the
+/// .cpp for why a fixed one physical pixel, correct at an unscaled ~100 dpi,
+/// went from "thin but there" at a laptop's 150% to "all but gone" next to
+/// the several-times-larger text a properly scaled dense display puts around
+/// it, and why rounding a continuous quantity (devicePixelRatioF() itself)
+/// rather than reproducing the old boundary-position tie is what keeps this
+/// stable instead of flickering between widths.
 void paintPixelPerfectGrid(QTableView *tv);
 
 /// The two colours of the same-word mark: an opaque plate and the glyph colour

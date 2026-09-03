@@ -349,23 +349,48 @@ void paintPixelPerfectGrid(QTableView *tv)
     const QColor gridColor = QColor::fromRgba(
                 static_cast<QRgb>(tv->style()->styleHint(QStyle::SH_Table_GridLineColor, &opt, tv)));
     QPen pen(gridColor);
-    pen.setCosmetic(true);
+
+    // A fixed one device pixel (what a cosmetic pen gives, and what this used
+    // to be unconditionally) is a fine hairline at the ~100 dpi of an
+    // unscaled desktop monitor, but it does not grow with everything else
+    // once the display scale does: at 150% on a small laptop panel it is
+    // already thin enough to be easy to miss, and on a genuinely dense
+    // display scaled well past that it all but disappears next to text
+    // rendered several times larger. Scaling the line's device-pixel width by
+    // the same dpr that already scales the fonts and the rows around it
+    // keeps it in the same visual proportion to the rest of the grid at any
+    // scale - qRound() rather than dpr itself because the width has to be a
+    // whole number of device pixels to stay crisp (see the offset below), and
+    // because a fixed width for a given rounded dpr is what keeps it from the
+    // one-pixel-here-two-pixels-there flicker a boundary-dependent rounding
+    // rule produced before. Bounded well above any scale factor any real
+    // display is likely to report, only so a screen misreporting its ratio
+    // cannot ask for a grid drawn in bars.
+    //
+    // pen.setCosmetic(true);
+    const int deviceLineWidth = qBound(1, qRound(dpr), 4);
+    pen.setWidthF(deviceLineWidth / dpr);
+
     painter.setPen(pen);
 
-    // Half a *device* pixel past the cell boundary, converted back to the
-    // logical units this painter is given coordinates in - not the boundary
-    // itself. A cell's own fill (drawn separately, right after this) covers
-    // device columns/rows [left, boundary) under the ordinary half-open fill
-    // rule, so the pixel this line is meant to occupy is the *next* whole one,
-    // [boundary, boundary+1). Asking for that pixel by its centre rather than
-    // its edge is what makes the request unambiguous: a one-pixel-wide
-    // cosmetic pen at exactly the edge coordinate is a tie between that pixel
-    // and the one before it, and which way a given paint backend breaks that
-    // tie is exactly the kind of platform-specific rounding rule not worth
-    // relying on - Windows and this project's Linux test both accept the
-    // exact same input and are free to answer differently. A pen centred
-    // instead of edged has no tie to break.
-    const qreal half = dpr > 0 ? 0.5 / dpr : 0.0;
+    // Half of the line's own *device*-pixel width past the cell boundary,
+    // converted back to the logical units this painter is given coordinates
+    // in - not the boundary itself. A cell's own fill (drawn separately,
+    // right after this) covers device columns/rows [left, boundary) under
+    // the ordinary half-open fill rule, so the line is meant to occupy the
+    // whole-device-pixel band starting there, [boundary, boundary+width) -
+    // and centring a pen of that same width on a coordinate half its width
+    // past the boundary is what lands it exactly on that band and nowhere
+    // else. At width 1 this is also what makes the request unambiguous: a
+    // one-pixel pen centred exactly on the boundary coordinate is a tie
+    // between the pixel this band names and the one before it, and which way
+    // a given paint backend breaks that tie is not something worth depending
+    // on - it is exactly the kind of platform-specific rounding rule that
+    // otherwise puts the line a pixel away from where the cells think their
+    // own edge is.
+    //
+    // const qreal half = dpr > 0 ? 0.5 / dpr : 0.0;
+    const qreal half = dpr > 0 ? (deviceLineWidth / 2.0) / dpr : 0.0;
 
     // Deliberately at the exact same coordinates QTableView itself paints
     // cell content at (columnViewportPosition()+columnWidth(), etc.) rather
