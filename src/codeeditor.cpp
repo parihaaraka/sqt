@@ -1737,26 +1737,30 @@ void CodeEditor::keyPressEvent(QKeyEvent *e)
     }
     else
     {
-        if (e->key() == Qt::Key_M && e->modifiers().testFlag(Qt::ControlModifier))
+        const bool ctrl = e->modifiers().testFlag(Qt::ControlModifier);
+        const bool alt = e->modifiers().testFlag(Qt::AltModifier);
+        const bool shift = e->modifiers().testFlag(Qt::ShiftModifier);
+
+        if (e->key() == Qt::Key_M && ctrl)
         {
             QTextCursor c = textCursor();
             CodeBlockProperties *prop = static_cast<CodeBlockProperties*>(c.block().userData());
             c.block().setUserData(prop ? nullptr : new CodeBlockProperties(this));
             // do not prevent further handling of key event to allow left-side panel to be repainted immediately
         }
-        else if (e->key() == Qt::Key_Space && e->modifiers().testFlag(Qt::ControlModifier))
+        else if (e->key() == Qt::Key_Space && ctrl)
         {
             if (!_multiCursor.isMultiple() && !isEnveloped(textCursor().position()))
                 emit completerRequest();
             return;
         }
-        else if (e->key() == Qt::Key_F4 && !e->modifiers().testFlag(Qt::AltModifier))
+        else if (e->key() == Qt::Key_F4 && !alt)
         {
             emit scriptObjectRequest();
             return;
         }
         else if ((e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) &&
-                 e->modifiers().testFlag(Qt::ControlModifier))
+                 ctrl)
         {
             // whether there is a selection or not is for the slot to decide
             // (same "selection, if any, else something derived from the
@@ -1764,19 +1768,14 @@ void CodeEditor::keyPressEvent(QKeyEvent *e)
             emit executeStatementRequest();
             return;
         }
-        else if (e->key() == Qt::Key_A &&
-                 e->modifiers().testFlag(Qt::ControlModifier) &&
-                 e->modifiers().testFlag(Qt::ShiftModifier))
+        else if (e->key() == Qt::Key_A && ctrl && shift)
         {
             // both flags checked explicitly - testFlag(ControlModifier) alone
             // would also match plain Ctrl+A (select all)
             emit selectStatementRequest();
             return;
         }
-        else if (e->key() == Qt::Key_C &&
-                 e->modifiers().testFlag(Qt::ControlModifier) &&
-                 e->modifiers().testFlag(Qt::ShiftModifier) &&
-                 !e->modifiers().testFlag(Qt::AltModifier))
+        else if (e->key() == Qt::Key_C && ctrl && shift && !alt)
         {
             // "where is this code" rather than "what is this code" - the
             // counterpart of Ctrl+C one line above in the menu. Ctrl+C itself

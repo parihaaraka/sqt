@@ -286,7 +286,12 @@ MainWindow::MainWindow(QWidget *parent) :
     {
         int index = targetTabIndex();
         if (index >= 0)
+        {
+            bool current = (ui->tabWidget->currentIndex() == index);
             closeTab(index);
+            if (current && index)
+                ui->tabWidget->setCurrentIndex(index - 1);
+        }
         QWidget *w = ui->tabWidget->currentWidget();
         if (w)
             w->setFocus();
@@ -1309,7 +1314,9 @@ QueryWidget *MainWindow::openScriptTab(const QString &text, const QString &title
     QueryWidget *w = (owned ?
                           new QueryWidget(owned.release(), ui->tabWidget) :
                           new QueryWidget(ui->tabWidget));
-    int ind = ui->tabWidget->addTab(w, title);
+    //int ind = ui->tabWidget->addTab(w, title);
+    int ind = ui->tabWidget->insertTab(ui->tabWidget->currentIndex() + 1, w, title);
+
     ui->tabWidget->setCurrentIndex(ind);
     // the object name is the tab's own, so it must survive editing
     w->setTitle(title);
