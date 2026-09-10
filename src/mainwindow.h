@@ -69,6 +69,20 @@ private slots:
     void scriptSelectedObjects();
     void showContent(QModelIndex &index, const Scripting::CppConductor *content);
     void showTextualContent(const QVariant &value, const QVariant &type, std::shared_ptr<DbConnection> con);
+    /// Breaks a freshly generated function/procedure DDL's parameter list
+    /// across several lines when it has more than a few of them -
+    /// `pg_get_functiondef()` (and whatever the odbc content scripts use)
+    /// hands back a single long line, however many arguments it declares.
+    ///
+    /// The tree has no notion of "this kind of node is a routine" beyond the
+    /// type name a `scripts/<dbms>/tree` script happens to be registered
+    /// under - a user's own tree may register arbitrary type names for
+    /// arbitrary objects, and the program has no way to know what any of them
+    /// mean. So this is hardcoded to the two type names the bundled postgres
+    /// and odbc scripts themselves use, rather than attempting to infer
+    /// "routine-ness" some other way; a script registered under any other
+    /// name is simply left alone.
+    void autoSplitRoutineSignature(const QString &type, Scripting::CppConductor *content, DbConnection *con);
     void objectsViewAdjustColumnWidth(const QModelIndex &);
     void on_actionFind_triggered();
     void on_tabWidget_currentChanged(int index);

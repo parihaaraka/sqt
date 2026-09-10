@@ -29,6 +29,7 @@ sqt_add_test(decimalsum "${SQT_SRC_DIR}/decimalsum.cpp")
 sqt_add_test(resourcelocator "${SQT_SRC_DIR}/resourcelocator.cpp")
 sqt_add_test(queryoptions "${SQT_SRC_DIR}/queryoptions.cpp")
 sqt_add_test(sqlparser "${SQT_SRC_DIR}/sqlparser.cpp")
+sqt_add_test(sqllexer "${SQT_SRC_DIR}/sqllexer.cpp")
 sqt_add_test(textcodec "${SQT_SRC_DIR}/textcodec.cpp")
 sqt_add_test(pgtypmod "${SQT_SRC_DIR}/pgtypmod.cpp")
 # locale-independent number parsing: the values a dbms prints and the sizes in a

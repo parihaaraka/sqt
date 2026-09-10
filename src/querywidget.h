@@ -19,6 +19,7 @@ class DataTable;
 class CodeEditor;
 class QCompleter;
 class QTimer;
+struct SqlListBounds;
 
 class QueryWidget : public QSplitter
 {
@@ -85,6 +86,12 @@ public:
     /// Ctrl+Shift+A selects to preview that. {-1, -1} if no dictionary-driven
     /// lexer is available for this connection (see SqlLexer::sharedFor()).
     QPair<int, int> currentStatementBounds();
+    /// Bounds of the parenthesized, comma-separated list the caret sits
+    /// inside (see SqlLexer::listBounds()) - what the "Split list into lines"
+    /// context menu item acts on, and what decides whether it is enabled.
+    /// \c SqlListBounds{}.open (-1) if no dictionary-driven lexer is
+    /// available for this connection, same as currentStatementBounds().
+    SqlListBounds currentListBounds();
     QTextDocument* document() const;
     QWidget* editor() const;
     void setPlainText(const QString &text);
@@ -139,6 +146,9 @@ public slots:
     void onScriptObjectRequest();
     void onExecuteStatementRequest();
     void onSelectStatementRequest();
+    /// "Split list into lines" context menu item: rewrites the parenthesized
+    /// list at the caret (see currentListBounds()) with one item per line.
+    void onSplitListRequest();
     /// Ctrl+Shift+C and the matching context menu item: the place being read,
     /// as "file:line" (see codeLocation()), onto the clipboard.
     void onCopyCodeLocationRequest();

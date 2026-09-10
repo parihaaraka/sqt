@@ -5,11 +5,22 @@
 #include <QSet>
 #include <QString>
 #include <QPair>
+#include <QVector>
 #include <functional>
 #include <memory>
 
 class QJsonDocument;
 class DbConnection;
+
+/// A parenthesized, comma-separated list: a function/procedure argument list,
+/// an IN (...) or VALUES (...) list, a column list and so on.
+/// \see SqlLexer::listBounds()
+struct SqlListBounds
+{
+    int open = -1;   ///< position of the opening '(', -1 if nothing was found
+    int close = -1;  ///< position of the closing ')'
+    QVector<int> separators; ///< positions of the top-level ',' in between
+};
 
 /*!
  * \brief Dictionary-driven sql scanner shared by the highlighter and the
@@ -130,6 +141,66 @@ public:
      */
     QPair<int, int> statementBounds(const QString &text, int pos) const;
 
+    /*!
+     * \brief Bounds of the parenthesized, comma-separated list \a pos sits
+     *        inside.
+     * \param text  the whole script
+     * \param pos   caret position within \a text; a negative value asks for
+     *              the *first* top-level list in the whole text instead (see
+     *              below), and \a pos itself is then ignored
+     * \return the list's bounds, or \c SqlListBounds::open == -1 if none was
+     *         found
+     *
+     * The *innermost* enclosing pair is reported: a caret inside
+     * `left(t.f1, 5)` of `string_agg(left(t.f1, 5), ',' order by ...)` bounds
+     * that inner list, not the outer string_agg() one. A '(', ')' or ','
+     * inside a literal/quoted identifier/comment/dollar-quoted body -
+     * scanLine()'s claimed spans, same idea as in statementBounds() - does
+     * not count, and neither does one nested a level deeper: `left(...)`'s
+     * own comma above is not reported for the outer list.
+     *
+     * With \a pos < 0, the *first* top-level (outermost, earliest opened)
+     * list in the whole text is reported - the parameter list right after
+     * `CREATE [OR REPLACE] FUNCTION|PROCEDURE name`, for every caller that
+     * uses this so far, since nothing legitimately opens a bracket ahead of
+     * it in such a script (a leading comment, e.g. the commented-out
+     * `DROP FUNCTION ...` some content scripts prepend, is skipped like any
+     * other claimed span).
+     *
+     * \a open is left at -1 (with \a close and \a separators empty) when
+     * nothing matches at all: with \a pos >= 0, it sits outside any
+     * bracketed list - a bare, unparenthesized list (a plain `select a, b, c`
+     * field list, say) is not something this finds the bounds of, and is not
+     * attempted; with \a pos < 0, the text has no top-level bracket to speak
+     * of.
+     */
+    SqlListBounds listBounds(const QString &text, int pos) const;
+
+    /*!
+     * \brief The text that belongs between \a bounds.open and \a bounds.close
+     *        (see listBounds()) to give the list one item per line.
+     * \param text  the same text \a bounds was computed against
+     * \param bounds  a list found by listBounds(); returns an empty string if
+     *                \a bounds.open is -1 - callers are expected to check
+     *                that first rather than splice this in regardless
+     * \param unit  one indentation step (a tab, or a run of spaces - see
+     *              indentUnit() in misc.h)
+     * \return replacement for the `[bounds.open+1, bounds.close)` slice of
+     *         \a text: each item on its own line, indented one \a unit past
+     *         whatever the line \a bounds.open sits on is indented with,
+     *         and the closing bracket's own line back at that same
+     *         indentation - lining the whole thing up with the call or
+     *         declaration around it rather than with wherever the caret (or
+     *         the search) happened to land.
+     *
+     * Each item is trimmed of its own surrounding whitespace first, so
+     * running this again on an already multi-line list (or one formatted by
+     * hand some other way) normalizes it rather than piling up blank lines.
+     * A comment sitting between two items, though, is swallowed into
+     * whichever item's trim reaches it - nothing clever is attempted about
+     * where such a comment "belongs".
+     */
+    static QString reflowList(const QString &text, const SqlListBounds &bounds, const QString &unit);
 
     /// lexer built with the connection's hl.conf (nullptr if unavailable)
     static std::shared_ptr<const SqlLexer> sharedFor(DbConnection *con);

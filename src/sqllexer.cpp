@@ -2,6 +2,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QStringList>
 #include "dbconnection.h"
 #include "misc.h"
 #include "scripting.h"
@@ -434,6 +435,130 @@ QPair<int, int> SqlLexer::statementBounds(const QString &text, int pos) const
     return trimmed(stmtStart, text.length());
 }
 
+SqlListBounds SqlLexer::listBounds(const QString &text, int pos) const
+{
+    SqlListBounds result;
+
+    QString dollarTag;
+    int state = InitialState;
+    int lineStart = 0;
+
+    // Bracket nesting, tracked the same way statementBounds() tracks ';': a
+    // '(', ')' or ',' inside a span scanLine() claims (a literal, a quoted
+    // identifier, a comment, a dollar-quoted body) is not code and does not
+    // count. Each open bracket carries the top-level commas seen since it was
+    // pushed - "top-level" meaning "at this bracket's own nesting", since a
+    // deeper one pushes (and pops) its own entry.
+    struct Level { int open; QVector<int> commas; };
+    QVector<Level> stack;
+    // No caret to aim at: the first pair to close back to zero nesting is, by
+    // construction, the first one that ever opened (nothing else at depth 0
+    // can open before it closes) - which is exactly the routine's own
+    // argument list for every caller that asks for this.
+    const bool wantFirstTopLevel = (pos < 0);
+
+    while (true)
+    {
+        const int nl = text.indexOf('\n', lineStart);
+        const int lineEnd = (nl < 0 ? text.length() : nl);
+        const QString line = text.mid(lineStart, lineEnd - lineStart);
+
+        QVector<QPair<int, int>> claimed;
+        state = scanLine(line, state, [&claimed](const Span &s)
+        {
+            claimed.append({s.start, s.start + s.length});
+        }, &dollarTag);
+
+        for (int i = 0; i < line.length(); ++i)
+        {
+            bool isClaimed = false;
+            for (const auto &s: claimed)
+            {
+                if (i >= s.first && i < s.second)
+                {
+                    isClaimed = true;
+                    break;
+                }
+            }
+            if (isClaimed)
+                continue;
+
+            const QChar ch = line.at(i);
+            const int abs = lineStart + i;
+            if (ch == QLatin1Char('('))
+            {
+                stack.append(Level{abs, {}});
+            }
+            else if (ch == QLatin1Char(')'))
+            {
+                if (stack.isEmpty())
+                    continue;
+                const Level lvl = stack.takeLast();
+                // With a caret to satisfy, the first bracket whose range
+                // contains it - scanned left to right, closing brackets in
+                // document order - is necessarily the innermost one: any pair
+                // properly containing the caret and closing earlier in the
+                // text would have to be nested inside this one, not around it.
+                const bool isMatch = wantFirstTopLevel ? stack.isEmpty()
+                                                        : (pos > lvl.open && pos <= abs);
+                if (isMatch)
+                {
+                    result.open = lvl.open;
+                    result.close = abs;
+                    result.separators = lvl.commas;
+                    return result;
+                }
+            }
+            else if (ch == QLatin1Char(',') && !stack.isEmpty())
+            {
+                stack.last().commas.append(abs);
+            }
+        }
+
+        if (nl < 0)
+            break;
+        lineStart = nl + 1;
+    }
+
+    return result;
+}
+
+QString SqlLexer::reflowList(const QString &text, const SqlListBounds &bounds, const QString &unit)
+{
+    if (bounds.open < 0)
+        return QString(); // nothing found - callers are expected not to splice this in at all
+
+    // The indentation already sitting on the line the '(' is on - the items
+    // go one further than that, the closing ')' stays right at it, so the
+    // result lines up with whatever the list belongs to (a `create function`
+    // header, a call, ...) rather than with the caret.
+    const int lineStart = text.lastIndexOf('\n', bounds.open) + 1;
+    int textStart = lineStart;
+    while (textStart < bounds.open && text.at(textStart).isSpace())
+        ++textStart;
+    const QString baseIndent = text.mid(lineStart, textStart - lineStart);
+    const QString itemIndent = baseIndent + unit;
+
+    // Item boundaries: open+1..separators[0], between separators, and
+    // separators.last()+1..close - each trimmed of its own whitespace so a
+    // list already spread over several lines (a previous run of this very
+    // command, or hand formatting) is normalized rather than accumulating
+    // blank lines or drifting indentation.
+    QVector<int> cuts = bounds.separators;
+    cuts.prepend(bounds.open);
+    cuts.append(bounds.close);
+
+    QStringList items;
+    items.reserve(cuts.size() - 1);
+    for (int i = 0; i + 1 < cuts.size(); ++i)
+    {
+        const int from = cuts.at(i) + 1;
+        const int to = cuts.at(i + 1);
+        items.append(text.mid(from, to - from).trimmed());
+    }
+
+    return "\n" + itemIndent + items.join(",\n" + itemIndent) + "\n" + baseIndent;
+}
 
 QString SqlLexer::foldKeywords(const QString &script) const
 {

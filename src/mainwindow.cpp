@@ -1129,7 +1129,8 @@ void MainWindow::on_actionNew_triggered()
         w = new QueryWidget(ui->tabWidget);
     }
 
-    int ind = ui->tabWidget->addTab(w, QString());
+    //int ind = ui->tabWidget->addTab(w, QString());
+    int ind = ui->tabWidget->insertTab(ui->tabWidget->currentIndex() + 1, w, QString());
     ui->tabWidget->setCurrentIndex(ind);
     // a manually created tab has no name of its own to show
     w->setTitle(autoTabTitle(w), true);
@@ -1665,6 +1666,7 @@ void MainWindow::scriptSelectedObjects()
                     c = std::unique_ptr<Scripting::CppConductor>(new Scripting::CppConductor(con, env));
                     c->texts.append(dbmsInfo);
                 }
+                autoSplitRoutineSignature(type, c.get(), con.get());
                 showContent(srcIndex, c.get());
             }
             else
@@ -1833,6 +1835,39 @@ void MainWindow::showTextualContent(const QVariant &value, const QVariant &type,
         _objectScript->dehighlight();
         _objectScript->setPlainText(value.toString());
     }
+}
+
+void MainWindow::autoSplitRoutineSignature(const QString &type, Scripting::CppConductor *content, DbConnection *con)
+{
+    // A parameter list worth breaking up starts at four items - three or
+    // fewer usually still reads fine on one line, and pulling those apart too
+    // would just add noise to the overwhelming majority of routines that
+    // take few arguments. listBounds() reports commas, not item count, hence
+    // the -1.
+    static const int kMinCommasToSplit = 3;
+
+    if (!content || content->scripts.isEmpty() || !con ||
+        (type != "function" && type != "procedure"))
+        return;
+
+    auto lexer = SqlLexer::sharedFor(con);
+    if (!lexer)
+        return;
+
+    // pg_get_functiondef() (and whatever the odbc content scripts use) hands
+    // back the whole `CREATE [OR REPLACE] FUNCTION|PROCEDURE name(...)  ...`
+    // text as one piece; a negative position asks listBounds() for the first
+    // top-level bracket in it, which - see listBounds()'s own docs - is
+    // exactly this parameter list, comments (the commented-out `DROP
+    // FUNCTION` some content scripts prepend included) and everything else
+    // notwithstanding.
+    QString &script = content->scripts.last();
+    const SqlListBounds bounds = lexer->listBounds(script, -1);
+    if (bounds.open < 0 || bounds.separators.size() < kMinCommasToSplit)
+        return;
+
+    script.replace(bounds.open + 1, bounds.close - bounds.open - 1,
+                    SqlLexer::reflowList(script, bounds, indentUnit()));
 }
 
 void MainWindow::refreshContextInfo()

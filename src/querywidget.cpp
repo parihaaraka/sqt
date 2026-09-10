@@ -494,6 +494,16 @@ QPair<int, int> QueryWidget::currentStatementBounds()
     return lexer->statementBounds(toPlainText(), textCursor().position());
 }
 
+SqlListBounds QueryWidget::currentListBounds()
+{
+    if (!_connection)
+        return {};
+    auto lexer = SqlLexer::sharedFor(_connection.get());
+    if (!lexer)
+        return {};
+    return lexer->listBounds(toPlainText(), textCursor().position());
+}
+
 QTextDocument* QueryWidget::document() const
 {
     if (!_editor)
@@ -1272,6 +1282,29 @@ void QueryWidget::onSelectStatementRequest()
     setTextCursor(c);
 }
 
+void QueryWidget::onSplitListRequest()
+{
+    const SqlListBounds bounds = currentListBounds();
+    if (bounds.open < 0 || bounds.separators.isEmpty())
+    {
+        // Same "say nothing rather than guess" stance as
+        // onSelectStatementRequest(): a bare, unparenthesized list (a select's
+        // field list, say) is not something SqlLexer::listBounds() attempts to
+        // find the bounds of, and neither is a single-item list worth
+        // "splitting".
+        status(tr("no list to split at the caret"));
+        return;
+    }
+
+    const QString replacement = SqlLexer::reflowList(toPlainText(), bounds, indentUnit());
+
+    QTextCursor c = textCursor();
+    c.setPosition(bounds.open + 1);
+    c.setPosition(bounds.close, QTextCursor::KeepAnchor);
+    c.insertText(replacement);
+    setTextCursor(c);
+}
+
 void QueryWidget::onEditorContextMenu(QMenu *menu)
 {
     if (!menu)
@@ -1306,6 +1339,25 @@ void QueryWidget::onEditorContextMenu(QMenu *menu)
     // one connection to the next is no way to learn what the editor can do.
     select->setEnabled(lexer && lexer->canSplitStatements());
     connect(select, &QAction::triggered, this, &QueryWidget::onSelectStatementRequest);
+
+    // Splitting a long parenthesized list - call arguments, an IN (...) or
+    // VALUES (...), a column list - one item per line. Left out entirely
+    // (rather than shown disabled) in a read-only widget: it edits the text,
+    // unlike everything else on this menu, so there is nothing to grey out in
+    // the preview pane - it simply cannot apply there at all.
+    if (!isReadOnly())
+    {
+        QAction *split = menu->addAction(tr("Split list into lines"));
+        // No caret to aim the lexer at without a connection, no list without
+        // one already found at the caret, and nothing worth "splitting" with
+        // a single item and no comma. Same "disabled, not hidden" choice as
+        // "Select statement" above, for the same reason (a menu that changes
+        // shape from one caret position to the next is no way to learn the
+        // command exists).
+        const SqlListBounds bounds = (lexer ? currentListBounds() : SqlListBounds{});
+        split->setEnabled(bounds.open >= 0 && !bounds.separators.isEmpty());
+        connect(split, &QAction::triggered, this, &QueryWidget::onSplitListRequest);
+    }
 
     // "Where is this code" - the file and the line(s) on screen, for a prompt to
     // an ai agent. Left out entirely rather than greyed out when there is no

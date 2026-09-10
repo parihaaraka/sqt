@@ -154,6 +154,13 @@ void setValue(const QString &key, const QVariant &value)
 
 } // namespace SqtSettings
 
+QString indentUnit()
+{
+    if (SqtSettings::value("tabsIndent", true).toBool())
+        return QStringLiteral("\t");
+    return QString(SqtSettings::value("indentSize", 3).toInt(), QLatin1Char(' '));
+}
+
 QTextCharFormat hlFormat(const QJsonValue &node, const QVariant &prop, const QColor &defForeground, bool bold, bool italic)
 {
     QTextCharFormat format;
