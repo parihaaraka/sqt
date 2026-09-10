@@ -2352,7 +2352,19 @@ void MainWindow::refreshContentPane()
     if (_searchPanel && ui->objectsTab->currentWidget() == ui->searchPage)
     {
         if (const auto hit = _searchPanel->currentHit())
-            previewFileHit(*hit, false);
+        {
+            // previewFileHit() re-reads the file from scratch and re-positions
+            // the cursor on the match, scrolling the pane back to it. That is
+            // exactly right the first time a hit is opened, but calling it again
+            // just because the view toggled away and back (F2, or the tab
+            // regaining focus) would undo whatever scrolling the user did while
+            // reading the code around the match. So it is only called when the
+            // tree's current hit actually changed while we were away - the same
+            // hit is left as it stands, scroll position and all.
+            if (!_paneHit || _paneHit->fileName != hit->fileName ||
+                _paneHit->position != hit->position)
+                previewFileHit(*hit, false);
+        }
         // No results yet, or nothing selected among them: the pane is left as it
         // is. Clearing it would throw away a preview that is still worth reading,
         // and the tree's object has no business appearing here either.
