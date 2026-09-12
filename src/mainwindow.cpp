@@ -2,6 +2,7 @@
 #include "ui_mainwindow.h"
 #include "connectiondialog.h"
 #include "settings.h"
+#include <QApplication>
 #include <QMessageBox>
 #include "dbobject.h"
 #include "dbobjectsmodel.h"
@@ -589,6 +590,29 @@ void MainWindow::queryStateChanged(QueryWidget *w, QueryState state)
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    // A context menu runs its own nested event loop for as long as it's
+    // open - and this very close event (Alt+F4, the window's own [x], ...)
+    // is delivered through *that* loop if one happens to be active when the
+    // request arrives, exactly like any other queued event would be. Tearing
+    // a tab's editor down from here would then delete the CodeEditor (and
+    // its own QMenu, parented to it by createStandardContextMenu()) while
+    // CodeEditor::contextMenuEvent()'s call to menu->exec() is still an
+    // active C++ stack frame underneath this very call - a real, not
+    // hypothetical, use-after-free once that frame tries to unwind.
+    // Politely declining to close this time, after closing the popup itself,
+    // sidesteps the whole timing question: menu->close() alone would not be
+    // enough (it only flags the loop to exit once control unwinds back down
+    // to it, not synchronously - a delete performed right after would still
+    // race it), but doing *nothing* destructive here, so that frame is free
+    // to return safely on its own, is. The next close attempt - once it has,
+    // popup or not - goes through normally.
+    if (QWidget *popup = QApplication::activePopupWidget())
+    {
+        popup->close();
+        event->ignore();
+        return;
+    }
+
     // Two passes: ask everything first, discard afterwards. Interleaving the
     // two - closing tabs one at a time - left a veto discovered partway
     // through (Cancel in the save prompt, or a busy connection) with the

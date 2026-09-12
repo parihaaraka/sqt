@@ -3,6 +3,9 @@
 #include <charconv>
 #include <cstring>
 #include <system_error>
+#ifdef Q_OS_WIN
+#include <QtCore/qnamespace.h>
+#endif
 
 QJsonDocument readJsonFile(const QString &path)
 {
@@ -52,4 +55,22 @@ double parseDouble(const char *text, bool *ok)
     if (ok)
         *ok = true;
     return value;
+}
+
+int effectiveLetterKey(int key, quint32 nativeVirtualKey)
+{
+    if (key >= Qt::Key_A && key <= Qt::Key_Z)
+        return key; // already a Latin letter - some Latin layout, trust it as-is
+
+#ifdef Q_OS_WIN
+    // Windows defines VK_A..VK_Z to equal the ASCII codes 'A'..'Z' - the same
+    // numbers Qt::Key_A..Key_Z happen to use, which is what lets a bare
+    // integer comparison work here without a lookup table.
+    if (nativeVirtualKey >= 'A' && nativeVirtualKey <= 'Z')
+        return Qt::Key_A + (static_cast<int>(nativeVirtualKey) - 'A');
+#else
+    Q_UNUSED(nativeVirtualKey);
+#endif
+
+    return key;
 }

@@ -47,7 +47,12 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
     if (event->type() == QEvent::KeyPress)
     {
         QKeyEvent *keyEvent = static_cast<QKeyEvent *>(event);
-        const int keyCode = keyEvent->key();
+        // Not keyEvent->key() directly: with a non-Latin keyboard layout
+        // active on Windows (Cyrillic, Greek, Hebrew...), key() does not come
+        // back as any Qt::Key_A..Key_Z value at all, so every Ctrl+<letter>
+        // comparison below would simply never match - see
+        // effectiveLetterKey()'s own docs.
+        const int keyCode = effectiveLetterKey(keyEvent->key(), keyEvent->nativeVirtualKey());
         if ((keyCode == Qt::Key_Comma ||
              keyCode == Qt::Key_Period ||
              keyCode == Qt::Key_L) &&
@@ -73,7 +78,7 @@ bool AppEventHandler::eventFilter(QObject *obj, QEvent *event)
         // json viewer (do we need good editor?)
         // * it is used to view any textual value for a while (i need to view long text in cells somehow :)
         // ** json objects being serialized into string values are expanded to become more readable
-        if (keyEvent->key() == Qt::Key_J && keyEvent->modifiers().testFlag(Qt::ControlModifier))
+        if (keyCode == Qt::Key_J && keyEvent->modifiers().testFlag(Qt::ControlModifier))
         {
             QWidget *window = QApplication::activeWindow();
             // do not open json viewer within itself

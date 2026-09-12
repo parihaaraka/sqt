@@ -1,5 +1,6 @@
 #include "filesearchpanel.h"
 #include "filesearchmodel.h"
+#include "misc.h"
 #include "settings.h"
 #include "styling.h"
 #include "textcodec.h"
@@ -798,7 +799,7 @@ bool FileSearchPanel::eventFilter(QObject *target, QEvent *event)
         }
         // The same key the editor uses for the same thing, so "where is this
         // code" is one gesture wherever the code is being read.
-        if (ke->key() == Qt::Key_C &&
+        if (effectiveLetterKey(ke->key(), ke->nativeVirtualKey()) == Qt::Key_C &&
             ke->modifiers().testFlag(Qt::ControlModifier) &&
             ke->modifiers().testFlag(Qt::ShiftModifier) &&
             !ke->modifiers().testFlag(Qt::AltModifier))
