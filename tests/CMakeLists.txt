@@ -36,6 +36,7 @@ sqt_add_test(pgtypmod "${SQT_SRC_DIR}/pgtypmod.cpp")
 # stylesheet always use '.', while atof()/strtod() follow LC_NUMERIC - which
 # QApplication sets from the system, so "1.5" was read as 1 in a comma locale
 sqt_add_test(parsedouble "${SQT_SRC_DIR}/misc.cpp")
+sqt_add_test(keyboardshortcuts "${SQT_SRC_DIR}/misc.cpp")
 # resultset rows rendered as json (Ctrl+J on a grid selection): pure text
 # building over QVariant/QJsonDocument, no gui and no dbms behind it
 sqt_add_test(rowjson "${SQT_SRC_DIR}/rowjson.cpp")

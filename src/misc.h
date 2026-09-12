@@ -1,24 +1,28 @@
 #ifndef MISC_H
 #define MISC_H
-
 #include "qjsondocument.h"
 
 QJsonDocument readJsonFile(const QString &path);
-
-/// Parses a double out of \a text regardless of the current locale, and of what
-/// Qt has done to it: QApplication applies the system locale on startup, so on a
-/// machine whose LC_NUMERIC uses a comma (ru_RU, de_DE, ...) the C library's
-/// atof()/strtod() stop at the '.' of a value like "1.5" and return 1.
-///
-/// The values here are machine-readable text - what a dbms printed over the
-/// wire, or a number inside a stylesheet - never something a user typed, so the
-/// decimal separator is always '.' and a locale must not enter into it.
-///
-/// Lenient like strtod, which it replaces: leading whitespace and a leading '+'
-/// are skipped, parsing stops at the first character that cannot belong to the
-/// number ("9.5pt" gives 9.5), and \a ok reports whether a number was found at
-/// all. The special forms postgres prints for a float - "NaN", "Infinity",
-/// "-Infinity" - are understood, as they were by atof().
 double parseDouble(const char *text, bool *ok = nullptr);
+
+/*!
+ * Returns the Qt key which represents the physical key intended by a shortcut.
+ *
+ * For ordinary Latin layouts the translated Qt key is deliberately trusted.
+ * For non-Latin layouts Qt may translate a physical shortcut key (for example
+ * the US comma key) to a Cyrillic/Greek/etc. key. Native key information is
+ * then used as a fallback to recover the physical key.
+ *
+ * The native values are platform dependent; only the platforms for which Qt
+ * exposes a stable native key/scancode are handled here. A zero native value
+ * simply leaves \a key unchanged.
+ */
+int effectiveShortcutKey(int key, quint32 nativeScanCode, quint32 nativeVirtualKey);
+
+/* Compatibility wrapper for the existing Windows-only letter use sites. */
+inline int effectiveLetterKey(int key, quint32 nativeVirtualKey)
+{
+    return effectiveShortcutKey(key, 0, nativeVirtualKey);
+}
 
 #endif // MISC_H

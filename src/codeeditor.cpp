@@ -5,6 +5,7 @@
 #include <QPlainTextDocumentLayout>
 #include <QAbstractTextDocumentLayout>
 #include "codeeditor.h"
+#include "misc.h"
 #include <QPainter>
 #include <QTextBlock>
 #include <QMenu>
@@ -1316,9 +1317,12 @@ bool CodeEditor::handleKeyPress(QKeyEvent *keyEvent)
     const bool alt = keyEvent->modifiers().testFlag(Qt::AltModifier);
     const bool shift = keyEvent->modifiers().testFlag(Qt::ShiftModifier);
     const bool meta = keyEvent->modifiers().testFlag(Qt::MetaModifier);
+    const int effectiveKey = effectiveShortcutKey(
+                keyEvent->key(), keyEvent->nativeScanCode(), keyEvent->nativeVirtualKey());
+
 
     // ---- claimed even in a read-only editor ----
-    switch (keyEvent->key())
+    switch (effectiveKey)
     {
     case Qt::Key_Escape:
         if (_multiCursor.isMultiple())
@@ -1385,7 +1389,7 @@ bool CodeEditor::handleKeyPress(QKeyEvent *keyEvent)
     // Keep consuming Ctrl+Z while our parallel history has entries, so several
     // consecutive undos restore the corresponding cursor sets instead of
     // letting QPlainTextEdit collapse back to one cursor.
-    if (ctrl && !alt && !shift && keyEvent->key() == Qt::Key_Z &&
+    if (ctrl && !alt && !shift && effectiveKey == Qt::Key_Z &&
         !_multiUndoHistory.isEmpty())
     {
         const MultiEditCursorHistory entry = _multiUndoHistory.takeLast();
@@ -1399,7 +1403,7 @@ bool CodeEditor::handleKeyPress(QKeyEvent *keyEvent)
     }
 
     if (ctrl && !alt &&
-            ((keyEvent->key() == Qt::Key_Y) || (shift && keyEvent->key() == Qt::Key_Z)) &&
+            ((effectiveKey == Qt::Key_Y) || (shift && effectiveKey == Qt::Key_Z)) &&
             !_multiRedoHistory.isEmpty())
     {
         const MultiEditCursorHistory entry = _multiRedoHistory.takeLast();
@@ -1412,7 +1416,7 @@ bool CodeEditor::handleKeyPress(QKeyEvent *keyEvent)
         return true;
     }
 
-    switch (keyEvent->key())
+    switch (effectiveKey)
     {
     // ---- a cursor above/below, or plain vertical navigation ----
     case Qt::Key_Up:
@@ -1693,9 +1697,17 @@ void CodeEditor::contextMenuEvent(QContextMenuEvent *event)
         toUpper->setEnabled(hasSelection);
         connect(toUpper, &QAction::triggered, this, [this]{ changeSelectedTextCase(true); });
 
-        QAction *toLower = menu->addAction(tr("lowercase"));
+        QAction *toLower = menu->addAction(tr("lowercase") + QStringLiteral("\tCtrl+Shift+U / Ctrl+Win+U"));
         toLower->setShortcut(QKeySequence("Ctrl+Shift+U"));
-        toLower->setShortcutVisibleInContextMenu(true);
+        // The auto-appended hint would only ever show one of the two working
+        // combos - baked directly into the text above instead, since there is
+        // no way to tell whether Ctrl+Shift+U is actually free to use: on many
+        // Linux setups (Ubuntu among them) IBus claims it system-wide, before
+        // the key event ever reaches Qt, for entering a character by its
+        // Unicode code point - Ctrl+Win+U is there for exactly that case.
+        // Whichever one actually works is decided in handleKeyPress(), not
+        // here; both are handled identically.
+        toLower->setShortcutVisibleInContextMenu(false);
         toLower->setEnabled(hasSelection);
         connect(toLower, &QAction::triggered, this, [this]{ changeSelectedTextCase(false); });
     }
@@ -1740,26 +1752,28 @@ void CodeEditor::keyPressEvent(QKeyEvent *e)
         const bool ctrl = e->modifiers().testFlag(Qt::ControlModifier);
         const bool alt = e->modifiers().testFlag(Qt::AltModifier);
         const bool shift = e->modifiers().testFlag(Qt::ShiftModifier);
+        const int effectiveKey = effectiveShortcutKey(
+                    e->key(), e->nativeScanCode(), e->nativeVirtualKey());
 
-        if (e->key() == Qt::Key_M && ctrl)
+        if (effectiveKey == Qt::Key_M && ctrl)
         {
             QTextCursor c = textCursor();
             CodeBlockProperties *prop = static_cast<CodeBlockProperties*>(c.block().userData());
             c.block().setUserData(prop ? nullptr : new CodeBlockProperties(this));
             // do not prevent further handling of key event to allow left-side panel to be repainted immediately
         }
-        else if (e->key() == Qt::Key_Space && ctrl)
+        else if (effectiveKey == Qt::Key_Space && ctrl)
         {
             if (!_multiCursor.isMultiple() && !isEnveloped(textCursor().position()))
                 emit completerRequest();
             return;
         }
-        else if (e->key() == Qt::Key_F4 && !alt)
+        else if (effectiveKey == Qt::Key_F4 && !alt)
         {
             emit scriptObjectRequest();
             return;
         }
-        else if ((e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) &&
+        else if ((effectiveKey == Qt::Key_Return || effectiveKey == Qt::Key_Enter) &&
                  ctrl)
         {
             // whether there is a selection or not is for the slot to decide
@@ -1768,14 +1782,14 @@ void CodeEditor::keyPressEvent(QKeyEvent *e)
             emit executeStatementRequest();
             return;
         }
-        else if (e->key() == Qt::Key_A && ctrl && shift)
+        else if (effectiveKey == Qt::Key_A && ctrl && shift)
         {
             // both flags checked explicitly - testFlag(ControlModifier) alone
             // would also match plain Ctrl+A (select all)
             emit selectStatementRequest();
             return;
         }
-        else if (e->key() == Qt::Key_C && ctrl && shift && !alt)
+        else if (effectiveKey == Qt::Key_C && ctrl && shift && !alt)
         {
             // "where is this code" rather than "what is this code" - the
             // counterpart of Ctrl+C one line above in the menu. Ctrl+C itself
