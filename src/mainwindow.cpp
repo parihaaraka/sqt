@@ -1863,11 +1863,11 @@ void MainWindow::autoSplitRoutineSignature(const QString &type, Scripting::CppCo
     // notwithstanding.
     QString &script = content->scripts.last();
     const SqlListBounds bounds = lexer->listBounds(script, -1);
-    if (bounds.open < 0 || bounds.separators.size() < kMinCommasToSplit)
+    if (bounds.close < 0 || bounds.separators.size() < kMinCommasToSplit)
         return;
 
-    script.replace(bounds.open + 1, bounds.close - bounds.open - 1,
-                    SqlLexer::reflowList(script, bounds, indentUnit()));
+    const SqlListReflow reflow = SqlLexer::reflowList(script, bounds, indentUnit());
+    script.replace(reflow.start, reflow.end - reflow.start, reflow.replacement);
 }
 
 void MainWindow::refreshContextInfo()

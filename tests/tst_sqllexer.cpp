@@ -134,12 +134,17 @@ private slots:
 
     // ---- reflowList(): the actual rewrite ------------------------------
 
+    static QString splice(const QString &text, const SqlListReflow &r)
+    {
+        return text.left(r.start) + r.replacement + text.mid(r.end);
+    }
+
     void reflowListIndentsOneStepPastTheOpeningLine()
     {
         const QString text = "create or replace function foo(a integer, b integer, c integer, d integer)\n"
                               "returns integer as $$ ... $$ language plpgsql;\n";
         const SqlListBounds b = _lexer.listBounds(text, -1);
-        const QString rewritten = text.left(b.open + 1) + SqlLexer::reflowList(text, b, "\t") + text.mid(b.close);
+        const QString rewritten = splice(text, SqlLexer::reflowList(text, b, "\t"));
         QCOMPARE(rewritten,
                  QStringLiteral("create or replace function foo(\n"
                                  "\ta integer,\n"
@@ -156,20 +161,186 @@ private slots:
     {
         const QString text = "select foo(a, b, c, d) from t";
         const SqlListBounds b1 = _lexer.listBounds(text, text.indexOf("a,"));
-        const QString once = text.left(b1.open + 1) + SqlLexer::reflowList(text, b1, "  ") + text.mid(b1.close);
+        const QString once = splice(text, SqlLexer::reflowList(text, b1, "  "));
 
         const SqlListBounds b2 = _lexer.listBounds(once, once.indexOf("a,"));
-        const QString twice = once.left(b2.open + 1) + SqlLexer::reflowList(once, b2, "  ") + once.mid(b2.close);
+        const QString twice = splice(once, SqlLexer::reflowList(once, b2, "  "));
 
         QCOMPARE(twice, once);
     }
 
-    void reflowListOnAnEmptyBoundsIsAnEmptyString()
+    void reflowListOnAnEmptyBoundsIsEmpty()
     {
-        QCOMPARE(SqlLexer::reflowList("select a, b", SqlListBounds{}, "\t"), QString());
+        const SqlListReflow r = SqlLexer::reflowList("select a, b", SqlListBounds{}, "\t");
+        QCOMPARE(r.start, -1);
+        QCOMPARE(r.end, -1);
+        QVERIFY(r.replacement.isEmpty());
     }
 
-    // ---- horizontalSpaceRun(): the leftover space/tab after a spliced list
+    // The actual bug this exists to fix: splicing a bare list's replacement
+    // used to leave the one space that separated it from what followed -
+    // "... c from t" became "...c\n from t", not "...c\nfrom t".
+    void reflowListDoesNotLeaveAStraySpaceBeforeWhatFollows()
+    {
+        const QString text = "select a, b, c from t";
+        const int from = text.indexOf("a,");
+        const int to = text.indexOf(" from"); // stops right before the space
+        const SqlListBounds b = _lexer.listBoundsInRange(text, from, to);
+        const QString rewritten = splice(text, SqlLexer::reflowList(text, b, "\t"));
+        QCOMPARE(rewritten, QStringLiteral("select\n\ta,\n\tb,\n\tc\nfrom t"));
+    }
+
+    // The three scenarios from the person who asked for this: selecting more
+    // than just the list should not invent a blank line or an indentation
+    // level that was not there to begin with - a break is only inserted (and
+    // the rest of the list indented to match) where the first item actually
+    // needs pushing onto a fresh line at all.
+
+    void splittingTheWholeQueryOnlyBreaksAtTheComma()
+    {
+        const QString text = "select a, b\nfrom t";
+        const SqlListBounds b = _lexer.listBoundsInRange(text, 0, text.length());
+        const QString rewritten = splice(text, SqlLexer::reflowList(text, b, "\t"));
+        QCOMPARE(rewritten, QStringLiteral("select a,\nb\nfrom t"));
+    }
+
+    void splittingJustTheFirstLineLeavesItFlush()
+    {
+        const QString text = "select a, b\nfrom t";
+        const int to = text.indexOf('\n');
+        const SqlListBounds b = _lexer.listBoundsInRange(text, 0, to);
+        const QString rewritten = splice(text, SqlLexer::reflowList(text, b, "\t"));
+        QCOMPARE(rewritten, QStringLiteral("select a,\nb\nfrom t"));
+    }
+
+    void splittingPreciselyTheColumnListIndentsBothItems()
+    {
+        const QString text = "select a, b\nfrom t";
+        const int from = text.indexOf("a,");
+        const int to = text.indexOf('\n');
+        const SqlListBounds b = _lexer.listBoundsInRange(text, from, to);
+        const QString rewritten = splice(text, SqlLexer::reflowList(text, b, "\t"));
+        QCOMPARE(rewritten, QStringLiteral("select\n\ta,\n\tb\nfrom t"));
+    }
+
+    // A second round of feedback, this time with the source itself already
+    // indented, and selections that stop short of a trailing ",c" still
+    // belonging to the very same list. Source for all four:
+    //   \t\tselect a,b,c
+    //   \t\tfrom t
+    // (only the first two use "a,b" instead of "a,b,c" - see each case).
+
+    // Whole two lines selected: the pre-existing "\t\t" indentation must
+    // survive (the homeTextStart scan used to be capped at bounds.open,
+    // which is -1 for a selection starting at position 0 of the whole text -
+    // so it never looked past that and reported no indentation at all), and
+    // a trailing newline swept into the selection along with "from t" must
+    // not collapse into "from t" losing its own line, let alone eating a
+    // blank line further down.
+    void wholeIndentedLinesKeepTheirIndentAndTrailingBlankLine()
+    {
+        const QString text = "\t\tselect a,b\n\t\tfrom t\n\nselect * from t2\n";
+        const int to = text.indexOf("from t") + QStringLiteral("from t").length();
+        const SqlListBounds b = _lexer.listBoundsInRange(text, 0, to);
+        const QString rewritten = splice(text, SqlLexer::reflowList(text, b, "\t"));
+        QCOMPARE(rewritten,
+                 QStringLiteral("\t\tselect a,\n\t\tb\n\t\tfrom t\n\nselect * from t2\n"));
+    }
+
+    // Same idea with the selection including the line's own trailing '\n' -
+    // must come out identical to the case above rather than losing the blank
+    // line that follows, regardless of exactly where the selection's own
+    // edge happened to land.
+    void aTrailingNewlineSweptIntoTheSelectionDoesNotEatTheBlankLineAfterIt()
+    {
+        const QString text = "\t\tselect a,b\n\t\tfrom t\n\nselect * from t2\n";
+        const int to = text.indexOf("from t") + QStringLiteral("from t").length() + 1; // +1: the '\n'
+        const SqlListBounds b = _lexer.listBoundsInRange(text, 0, to);
+        const QString rewritten = splice(text, SqlLexer::reflowList(text, b, "\t"));
+        QCOMPARE(rewritten,
+                 QStringLiteral("\t\tselect a,\n\t\tb\n\t\tfrom t\n\nselect * from t2\n"));
+    }
+
+    // "select a,b" selected out of "\t\tselect a,b,c" (",c" is not part of the
+    // selection): the trailing ",c" is the rest of the very same list, one
+    // character past where the selection ends - it belongs right after "b",
+    // not walled off behind a break of its own the way genuinely different
+    // content (like "from t" above) would be.
+    void aCommaRightPastTheSelectionJoinsTheLastItemInstead()
+    {
+        const QString text = "\t\tselect a,b,c\n\t\tfrom t";
+        const int from = text.indexOf("select");
+        const int to = text.indexOf(",c");
+        const SqlListBounds b = _lexer.listBoundsInRange(text, from, to);
+        const QString rewritten = splice(text, SqlLexer::reflowList(text, b, "\t"));
+        QCOMPARE(rewritten, QStringLiteral("\t\tselect a,\n\t\tb,c\n\t\tfrom t"));
+    }
+
+    // Same source, "a,b" selected this time (not "select a,b"): the first
+    // item now does get pushed onto its own line (real code - "select " -
+    // still precedes it), so the rest of the list is indented one step past
+    // "select"'s own line rather than staying level with it - but ",c" still
+    // joins "b" rather than getting a break of its own.
+    void aLeadingKeywordEarnsAFreshLineButATrailingCommaStillDoesNot()
+    {
+        const QString text = "\t\tselect a,b,c\n\t\tfrom t";
+        const int from = text.indexOf("a,b");
+        const int to = text.indexOf(",c");
+        const SqlListBounds b = _lexer.listBoundsInRange(text, from, to);
+        const QString rewritten = splice(text, SqlLexer::reflowList(text, b, "\t"));
+        QCOMPARE(rewritten, QStringLiteral("\t\tselect\n\t\t\ta,\n\t\t\tb,c\n\t\tfrom t"));
+    }
+
+    // The mirror image of the previous two: a selection starting right after
+    // a comma (the rest of the list continuing just *before* it, this time)
+    // is treated the same way on that side.
+    // A comma right before the selection does NOT get the same "already
+    // fine" treatment as one right after it (see reflowList()'s own docs for
+    // why): "b" still gets pushed onto its own fresh line here, "a," is left
+    // exactly as it was rather than being treated as already being in the
+    // right shape just because it happens to end in a comma too.
+    void aCommaRightBeforeTheSelectionStillGetsAFreshLine()
+    {
+        const QString text = "select a, b, c from t";
+        const int from = text.indexOf("b,");
+        const int to = text.indexOf(" from");
+        const SqlListBounds b = _lexer.listBoundsInRange(text, from, to);
+        const QString rewritten = splice(text, SqlLexer::reflowList(text, b, "\t"));
+        QCOMPARE(rewritten, QStringLiteral("select a,\n\tb,\n\tc\nfrom t"));
+    }
+
+    // The exact scenario that motivated the asymmetry above, with the source
+    // itself indented: selecting "b,c" out of "\t\tselect a,b,c\n\t\tfrom t"
+    // must NOT glue "b" after "a," on the same line the way a trailing
+    // ",c" past the selection would have glued onto "b" instead - it gets
+    // pushed onto its own line, indented one step past "select"'s own line,
+    // by the same reasoning as selecting "a,b,c" whole would have.
+    void aCommaRightBeforeAnIndentedSelectionStillGetsAFreshLine()
+    {
+        const QString text = "\t\tselect a,b,c\n\t\tfrom t";
+        const int from = text.indexOf("b,c");
+        const int to = from + QStringLiteral("b,c").length();
+        const SqlListBounds b = _lexer.listBoundsInRange(text, from, to);
+        const QString rewritten = splice(text, SqlLexer::reflowList(text, b, "\t"));
+        QCOMPARE(rewritten, QStringLiteral("\t\tselect a,\n\t\t\tb,\n\t\t\tc\n\t\tfrom t"));
+    }
+
+    // A trailing comma *inside* the selection ("a,b," rather than "a,b") must
+    // not turn into a blank line: once trimmed it is an empty last item, and
+    // that is folded into the same "a comma right past the edge is fine, no
+    // break needed" handling that a comma just *outside* the selection gets,
+    // rather than being kept as a genuinely empty item to render as one.
+    void aTrailingCommaInsideTheSelectionDoesNotProduceABlankLine()
+    {
+        const QString text = "\t\tselect a,b,c\n\t\tfrom t";
+        const int from = text.indexOf("a,b,c");
+        const int to = from + QStringLiteral("a,b,").length(); // "a,b," - trailing comma included
+        const SqlListBounds b = _lexer.listBoundsInRange(text, from, to);
+        const QString rewritten = splice(text, SqlLexer::reflowList(text, b, "\t"));
+        QCOMPARE(rewritten, QStringLiteral("\t\tselect\n\t\t\ta,\n\t\t\tb,c\n\t\tfrom t"));
+    }
+
+    // ---- horizontalSpaceRun(): still a useful scan on its own -----------
 
     void horizontalSpaceRunCoversSpacesAndTabsOnly()
     {
@@ -187,23 +358,6 @@ private slots:
         // bounds.close sits on ')' itself, not on whitespace - nothing to
         // absorb there, unlike the bare-list/selection case.
         QCOMPARE(SqlLexer::horizontalSpaceRun(text, b.close), 0);
-    }
-
-    // The actual bug this exists to fix: splicing a bare list's replacement
-    // used to leave the one space that separated it from what followed -
-    // "... c from t" became "...c\n from t", not "...c\nfrom t".
-    void splicingABareListDoesNotLeaveAStraySpaceBeforeWhatFollows()
-    {
-        const QString text = "select a, b, c from t";
-        const int from = text.indexOf("a,");
-        const int to = text.indexOf(" from"); // stops right before the space
-        const SqlListBounds b = _lexer.listBoundsInRange(text, from, to);
-
-        const QString replacement = SqlLexer::reflowList(text, b, "\t");
-        const int spliceEnd = b.close + SqlLexer::horizontalSpaceRun(text, b.close);
-        const QString rewritten = text.left(b.open + 1) + replacement + text.mid(spliceEnd);
-
-        QCOMPARE(rewritten, QStringLiteral("select \n\ta,\n\tb,\n\tc\nfrom t"));
     }
 };
 

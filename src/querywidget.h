@@ -86,11 +86,14 @@ public:
     /// Ctrl+Shift+A selects to preview that. {-1, -1} if no dictionary-driven
     /// lexer is available for this connection (see SqlLexer::sharedFor()).
     QPair<int, int> currentStatementBounds();
-    /// Bounds of the parenthesized, comma-separated list the caret sits
-    /// inside (see SqlLexer::listBounds()) - what the "Split list into lines"
-    /// context menu item acts on, and what decides whether it is enabled.
-    /// \c SqlListBounds{}.open (-1) if no dictionary-driven lexer is
-    /// available for this connection, same as currentStatementBounds().
+    /// Bounds of the list the "Split list into lines" context menu item acts
+    /// on, and what decides whether it is enabled: the current selection if
+    /// there is one (see SqlLexer::listBoundsInRange() - this is also the
+    /// only way to reach a bare, unparenthesized list, like a plain
+    /// `select a, b, c` field list), otherwise the parenthesized list the
+    /// caret sits inside (SqlLexer::listBounds()). \c SqlListBounds{}.close
+    /// (-1) if no dictionary-driven lexer is available for this connection,
+    /// same as currentStatementBounds().
     SqlListBounds currentListBounds();
     QTextDocument* document() const;
     QWidget* editor() const;

@@ -12,14 +12,37 @@
 class QJsonDocument;
 class DbConnection;
 
-/// A parenthesized, comma-separated list: a function/procedure argument list,
-/// an IN (...) or VALUES (...) list, a column list and so on.
-/// \see SqlLexer::listBounds()
+/// A comma-separated list: a function/procedure argument list, an IN (...) or
+/// VALUES (...) list, a column list and so on - or, via listBoundsInRange(),
+/// an arbitrary selection the person made themselves instead of one found by
+/// bracket search, in which case \a open/\a close bound the selection rather
+/// than a literal '('/')' pair.
+/// \see SqlLexer::listBounds(), SqlLexer::listBoundsInRange()
 struct SqlListBounds
 {
-    int open = -1;   ///< position of the opening '(', -1 if nothing was found
-    int close = -1;  ///< position of the closing ')'
+    /// One before the list's first item - \a close - open - 1 is the item
+    /// area's length. For a bracket-search result this is the '(' itself; for
+    /// a range-based one, \a from - 1 (which is legitimately -1 when the
+    /// range starts at the very beginning of the text - not a "nothing found"
+    /// case; see \a close for the sentinel that is).
+    int open = -1;
+    /// \b close < 0, unlike \a open, always and only means "nothing found" -
+    /// check this to tell a genuine miss apart from a range-based result that
+    /// happens to start at position 0.
+    int close = -1;
     QVector<int> separators; ///< positions of the top-level ',' in between
+};
+
+/// What SqlLexer::reflowList() computed - a splice, not just a fragment: the
+/// list's own bounds are not necessarily what should actually be erased (see
+/// reflowList()'s own docs on absorbing adjacent horizontal whitespace), so
+/// callers are handed the range to use rather than left to work it out a
+/// second time themselves.
+struct SqlListReflow
+{
+    int start = -1;   ///< \c text[start, end) is what \a replacement replaces
+    int end = -1;
+    QString replacement;
 };
 
 /*!
@@ -177,21 +200,39 @@ public:
     SqlListBounds listBounds(const QString &text, int pos) const;
 
     /*!
-     * \brief The text that belongs between \a bounds.open and \a bounds.close
-     *        (see listBounds()) to give the list one item per line.
+     * \brief Bounds of the list within an explicit range - what "Split list
+     *        into lines" uses instead of searching for an enclosing bracket
+     *        when the person has something selected: the selection itself
+     *        says what "the list" is, so there is nothing to search for.
+     * \param text  the whole script (scanned from its own start regardless of
+     *              \a from - the lexer's own state, such as which
+     *              quoting/comment mode it is in, only makes sense read
+     *              continuously from the top, same as in listBounds())
+     * \param from, to  the range, e.g. a selection's bounds (\a to exclusive)
+     * \return every top-level ',' in \c [from, to) as a separator -
+     *         "top-level" meaning "not inside a bracket that itself opened
+     *         inside the range", so a comma in a function call fully inside
+     *         the selection is skipped same as elsewhere, but nothing is
+     *         asked about what encloses the range from the outside: a
+     *         selection of `a, b, c` out of `foo(a, b, c, d)` is its own
+     *         three-item list, whether or not the enclosing foo(...) itself
+     *         is fully selected. \c SqlListBounds::close == -1 if \a from/
+     *         \a to do not describe a non-empty range within \a text.
+     */
+    SqlListBounds listBoundsInRange(const QString &text, int from, int to) const;
+
+    /*!
+     * \brief What it takes to give the list \a bounds points at (see
+     *        listBounds()/listBoundsInRange()) one item per line.
      * \param text  the same text \a bounds was computed against
-     * \param bounds  a list found by listBounds(); returns an empty string if
-     *                \a bounds.open is -1 - callers are expected to check
-     *                that first rather than splice this in regardless
+     * \param bounds  a list found by listBounds()/listBoundsInRange();
+     *                returns a default-constructed (\c start/\c end == -1)
+     *                result if \a bounds.close is -1 - callers are expected
+     *                to check that first rather than splice this in
+     *                regardless
      * \param unit  one indentation step (a tab, or a run of spaces - see
-     *              indentUnit() in misc.h)
-     * \return replacement for the `[bounds.open+1, bounds.close)` slice of
-     *         \a text: each item on its own line, indented one \a unit past
-     *         whatever the line \a bounds.open sits on is indented with,
-     *         and the closing bracket's own line back at that same
-     *         indentation - lining the whole thing up with the call or
-     *         declaration around it rather than with wherever the caret (or
-     *         the search) happened to land.
+     *              indentUnit() in settings.h)
+     * \return where to splice, and with what - see SqlListReflow
      *
      * Each item is trimmed of its own surrounding whitespace first, so
      * running this again on an already multi-line list (or one formatted by
@@ -199,8 +240,55 @@ public:
      * A comment sitting between two items, though, is swallowed into
      * whichever item's trim reaches it - nothing clever is attempted about
      * where such a comment "belongs".
+     *
+     * A line break (and the adjacent horizontal whitespace it makes
+     * redundant - see horizontalSpaceRun()) is only inserted before the
+     * first item / after the last one where one is not already there. On the
+     * trailing side that includes a comma: `,c` picking up immediately where
+     * a selection of `a, b` out of `a, b, c` left off is the rest of the very
+     * same list continuing just past the selection, not foreign content to
+     * wall off behind a break of its own - the same reasoning turns a
+     * trailing comma *inside* the selection (`a, b,` out of `a, b, c`) into
+     * an empty last item once trimmed, which is dropped along with the
+     * separator that produced it rather than becoming a blank line, folding
+     * back into this same "the list carries on right here" handling. The
+     * leading side does not extend the same courtesy to a comma: `b, c`
+     * selected out of `a, b, c` still pushes "b" onto a fresh line rather
+     * than leaving it glued after "a," - unlike a continuation past the
+     * selection, content before it is left completely untouched regardless
+     * of what character happens to end it, comma included, the same as
+     * `select ` would be.
+     *
+     * Between items a break is always inserted - that is the entire point -
+     * but whether it is followed by \a unit's worth of indentation depends on
+     * the very same "did the first item get pushed onto a fresh line"
+     * answer: if it did not (nothing above needed touching, so there is no
+     * *new* indentation level to align the rest of the list to), none of the
+     * other items are indented past that either, rather than only some of
+     * them ending up indented relative to a first item that stayed exactly
+     * where it was. A `create function name(...)` or a precisely-selected
+     * `a, b, c` both get the first kind of treatment; a whole query selected
+     * at once, dragging `select` and `from t` along into the first/last
+     * item, gets the second - see the class-level notes on why nothing is
+     * attempted to tell such a selection apart from a "clean" one; a wider
+     * selection is answered less, not guessed at more.
      */
-    static QString reflowList(const QString &text, const SqlListBounds &bounds, const QString &unit);
+    static SqlListReflow reflowList(const QString &text, const SqlListBounds &bounds, const QString &unit);
+
+    /*!
+     * \brief How far a run of plain spaces/tabs starting at \a pos extends -
+     *        not newlines, so a blank line right after \a pos stays a blank
+     *        line rather than being pulled up into the previous one.
+     * \return \a pos plus the run's length; \a pos itself if \a text.at(pos)
+     *         is not a space or a tab to begin with
+     *
+     * What reflowList() uses, on both ends of a list, to tell "genuinely
+     * more code follows" apart from "just some whitespace that is about to
+     * become redundant" - the space before `from` in `... c from t`, once
+     * `c` is pulled onto its own line, say. Exposed on its own since it is a
+     * generic enough little scan to be worth reusing rather than inlining.
+     */
+    static int horizontalSpaceRun(const QString &text, int pos);
 
     /// lexer built with the connection's hl.conf (nullptr if unavailable)
     static std::shared_ptr<const SqlLexer> sharedFor(DbConnection *con);
@@ -218,6 +306,23 @@ private:
 
     /// index just past the closing '$' of the $tag$ at `from`, -1 if not a tag
     static int dollarTagEnd(const QString &text, int from);
+
+    /*!
+     * \brief Every character of \a text that is actual code - not inside a
+     *        literal, a quoted identifier, a comment or a dollar-quoted body
+     *        (scanLine()'s claimed spans) - visited once, in order.
+     * \param visit  called with each character's absolute position and value;
+     *               returning \c false stops the walk right there (used for
+     *               an early exit once a caller has found what it needed, the
+     *               same way listBounds() used to stop scanning on its own)
+     *
+     * The line-by-line bookkeeping (state, $-tag, claimed spans per line)
+     * that both listBounds() and listBoundsInRange() need to tell code from
+     * "not code" is identical between the two - only what they do once a
+     * bracket or a comma turns out to be actual code differs - so it lives
+     * here once rather than twice.
+     */
+    void forEachCodeChar(const QString &text, const std::function<bool(int, QChar)> &visit) const;
 
     QHash<QString, WordInfo> _keywords;
     QSet<QString> _functions;

@@ -3,9 +3,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStringList>
-#include "dbconnection.h"
-#include "misc.h"
-#include "scripting.h"
 
 SqlLexer::SqlLexer(const QJsonDocument &settings)
 {
@@ -435,27 +432,11 @@ QPair<int, int> SqlLexer::statementBounds(const QString &text, int pos) const
     return trimmed(stmtStart, text.length());
 }
 
-SqlListBounds SqlLexer::listBounds(const QString &text, int pos) const
+void SqlLexer::forEachCodeChar(const QString &text, const std::function<bool(int, QChar)> &visit) const
 {
-    SqlListBounds result;
-
     QString dollarTag;
     int state = InitialState;
     int lineStart = 0;
-
-    // Bracket nesting, tracked the same way statementBounds() tracks ';': a
-    // '(', ')' or ',' inside a span scanLine() claims (a literal, a quoted
-    // identifier, a comment, a dollar-quoted body) is not code and does not
-    // count. Each open bracket carries the top-level commas seen since it was
-    // pushed - "top-level" meaning "at this bracket's own nesting", since a
-    // deeper one pushes (and pops) its own entry.
-    struct Level { int open; QVector<int> commas; };
-    QVector<Level> stack;
-    // No caret to aim at: the first pair to close back to zero nesting is, by
-    // construction, the first one that ever opened (nothing else at depth 0
-    // can open before it closes) - which is exactly the routine's own
-    // argument list for every caller that asks for this.
-    const bool wantFirstTopLevel = (pos < 0);
 
     while (true)
     {
@@ -483,70 +464,133 @@ SqlListBounds SqlLexer::listBounds(const QString &text, int pos) const
             if (isClaimed)
                 continue;
 
-            const QChar ch = line.at(i);
-            const int abs = lineStart + i;
-            if (ch == QLatin1Char('('))
-            {
-                stack.append(Level{abs, {}});
-            }
-            else if (ch == QLatin1Char(')'))
-            {
-                if (stack.isEmpty())
-                    continue;
-                const Level lvl = stack.takeLast();
-                // With a caret to satisfy, the first bracket whose range
-                // contains it - scanned left to right, closing brackets in
-                // document order - is necessarily the innermost one: any pair
-                // properly containing the caret and closing earlier in the
-                // text would have to be nested inside this one, not around it.
-                const bool isMatch = wantFirstTopLevel ? stack.isEmpty()
-                                                        : (pos > lvl.open && pos <= abs);
-                if (isMatch)
-                {
-                    result.open = lvl.open;
-                    result.close = abs;
-                    result.separators = lvl.commas;
-                    return result;
-                }
-            }
-            else if (ch == QLatin1Char(',') && !stack.isEmpty())
-            {
-                stack.last().commas.append(abs);
-            }
+            if (!visit(lineStart + i, line.at(i)))
+                return;
         }
 
         if (nl < 0)
             break;
         lineStart = nl + 1;
     }
+}
+
+SqlListBounds SqlLexer::listBounds(const QString &text, int pos) const
+{
+    SqlListBounds result;
+
+    // Bracket nesting, tracked the same way statementBounds() tracks ';': a
+    // '(', ')' or ',' that is not actual code (forEachCodeChar() already
+    // filtered those out) does not count. Each open bracket carries the
+    // top-level commas seen since it was pushed - "top-level" meaning "at
+    // this bracket's own nesting", since a deeper one pushes (and pops) its
+    // own entry.
+    struct Level { int open; QVector<int> commas; };
+    QVector<Level> stack;
+    // No caret to aim at: the first pair to close back to zero nesting is, by
+    // construction, the first one that ever opened (nothing else at depth 0
+    // can open before it closes) - which is exactly the routine's own
+    // argument list for every caller that asks for this.
+    const bool wantFirstTopLevel = (pos < 0);
+
+    forEachCodeChar(text, [&](int abs, QChar ch)
+    {
+        if (ch == QLatin1Char('('))
+        {
+            stack.append(Level{abs, {}});
+        }
+        else if (ch == QLatin1Char(')'))
+        {
+            if (stack.isEmpty())
+                return true;
+            const Level lvl = stack.takeLast();
+            // With a caret to satisfy, the first bracket whose range contains
+            // it - scanned left to right, closing brackets in document order
+            // - is necessarily the innermost one: any pair properly
+            // containing the caret and closing earlier in the text would
+            // have to be nested inside this one, not around it.
+            const bool isMatch = wantFirstTopLevel ? stack.isEmpty()
+                                                    : (pos > lvl.open && pos <= abs);
+            if (isMatch)
+            {
+                result.open = lvl.open;
+                result.close = abs;
+                result.separators = lvl.commas;
+                return false; // found it, nothing past it is of interest
+            }
+        }
+        else if (ch == QLatin1Char(',') && !stack.isEmpty())
+        {
+            stack.last().commas.append(abs);
+        }
+        return true;
+    });
 
     return result;
 }
 
-QString SqlLexer::reflowList(const QString &text, const SqlListBounds &bounds, const QString &unit)
+SqlListBounds SqlLexer::listBoundsInRange(const QString &text, int from, int to) const
 {
-    if (bounds.open < 0)
-        return QString(); // nothing found - callers are expected not to splice this in at all
+    SqlListBounds result;
+    if (from < 0 || to < from || to > text.length())
+        return result; // close stays -1: the sentinel, see the struct's docs
 
-    // The indentation already sitting on the line the '(' is on - the items
-    // go one further than that, the closing ')' stays right at it, so the
-    // result lines up with whatever the list belongs to (a `create function`
-    // header, a call, ...) rather than with the caret.
-    const int lineStart = text.lastIndexOf('\n', bounds.open) + 1;
-    int textStart = lineStart;
-    while (textStart < bounds.open && text.at(textStart).isSpace())
-        ++textStart;
-    const QString baseIndent = text.mid(lineStart, textStart - lineStart);
-    const QString itemIndent = baseIndent + unit;
+    // Depth relative to `from`, not to the document: a bracket opened before
+    // the range is none of the range's business (see the method's own docs -
+    // `a, b, c` selected out of `foo(a, b, c, d)` is its own three-item list
+    // regardless of foo(...) around it), so counting starts fresh at 0 right
+    // there. forEachCodeChar() still walks from the very top of `text`
+    // regardless - the lexer's *own* state (which quoting/comment mode it is
+    // in) only makes sense read continuously from there, same as listBounds().
+    int depth = 0;
+
+    forEachCodeChar(text, [&](int abs, QChar ch)
+    {
+        if (abs < from)
+            return true;
+        if (abs >= to)
+            return false; // past the range, nothing left to look at
+
+        if (ch == QLatin1Char('('))
+            ++depth;
+        else if (ch == QLatin1Char(')'))
+        {
+            if (depth > 0)
+                --depth;
+        }
+        else if (ch == QLatin1Char(',') && depth == 0)
+            result.separators.append(abs);
+        return true;
+    });
+
+    result.open = from - 1;
+    result.close = to;
+    return result;
+}
+
+SqlListReflow SqlLexer::reflowList(const QString &text, const SqlListBounds &bounds, const QString &unit)
+{
+    SqlListReflow result;
+    if (bounds.close < 0)
+        return result; // nothing found - start/end stay -1, see the struct's docs
+
+    // The selection's effective end: trailing whitespace of any kind right
+    // before bounds.close - including a line break - is not part of the
+    // list's own content. Whether a selection happened to sweep up the
+    // newline at the end of its last line, or stopped one character short of
+    // it, should not change the result, so that is normalized away up front
+    // rather than left to survive as part of the last item's raw text and
+    // then be silently swallowed by that item's own trimmed() below, taking
+    // the line break it represented with it - which is what used to turn a
+    // blank line right after the selection into no blank line at all.
+    int effectiveClose = bounds.close;
+    while (effectiveClose > 0 && text.at(effectiveClose - 1).isSpace())
+        --effectiveClose;
 
     // Item boundaries: open+1..separators[0], between separators, and
-    // separators.last()+1..close - each trimmed of its own whitespace so a
-    // list already spread over several lines (a previous run of this very
-    // command, or hand formatting) is normalized rather than accumulating
-    // blank lines or drifting indentation.
+    // separators.last()+1..effectiveClose.
     QVector<int> cuts = bounds.separators;
     cuts.prepend(bounds.open);
-    cuts.append(bounds.close);
+    cuts.append(effectiveClose);
 
     QStringList items;
     items.reserve(cuts.size() - 1);
@@ -557,7 +601,113 @@ QString SqlLexer::reflowList(const QString &text, const SqlListBounds &bounds, c
         items.append(text.mid(from, to - from).trimmed());
     }
 
-    return "\n" + itemIndent + items.join(",\n" + itemIndent) + "\n" + baseIndent;
+    // A selection ending (or starting) right on a comma rather than on real
+    // content - `a, b,` selected out of `a, b, c` - produces an empty edge
+    // item once trimmed, not a blank line worth keeping: it means the very
+    // same list carries on right where the selection's edge happens to sit,
+    // exactly the situation needsTrailingBreak already knows how to leave
+    // alone below once the edge lines up with that comma in the original
+    // text instead of with an item's worth of real content. So the empty
+    // edge is dropped along with the separator that produced it, folding it
+    // into that same handling rather than needing a second concept for it.
+    while (items.size() > 1 && items.constFirst().isEmpty())
+    {
+        items.removeFirst();
+        cuts.removeFirst();
+    }
+    while (items.size() > 1 && items.constLast().isEmpty())
+    {
+        items.removeLast();
+        cuts.removeLast();
+    }
+    const int effectiveOpen = cuts.constFirst();
+    effectiveClose = cuts.constLast();
+
+    // The indentation already sitting on the line effectiveOpen is on - used
+    // for the items themselves (see effectiveItemIndent below for when it
+    // actually applies) and for the line the closing side gets pushed onto.
+    // effectiveOpen == -1 is not "nothing found" here (see SqlListBounds' own
+    // docs on bounds.open) but literally "the text before it is empty" - so
+    // it is handled directly rather than handed to lastIndexOf(), whose own
+    // -1 means "search from the end". The scan itself is not bounded by
+    // effectiveOpen the way an earlier version of this bounded it by
+    // bounds.open: that bound is exactly what made it find nothing whenever
+    // the position was -1 to begin with (any position fails "< -1"), even
+    // though the line in question can very well have leading whitespace of
+    // its own to report - the loop simply runs until real content (or a line
+    // break) the same as it would for any other line.
+    const int homeLineStart = effectiveOpen < 0 ? 0 : text.lastIndexOf('\n', effectiveOpen) + 1;
+    int homeTextStart = homeLineStart;
+    while (homeTextStart < text.length() &&
+           (text.at(homeTextStart) == QLatin1Char(' ') || text.at(homeTextStart) == QLatin1Char('\t')))
+        ++homeTextStart;
+    const QString baseIndent = text.mid(homeLineStart, homeTextStart - homeLineStart);
+    const QString itemIndent = baseIndent + unit;
+
+    // Whether a line break belongs before the first item: not if one is
+    // already there, once horizontal whitespace (but not a genuine line
+    // break) is looked past - `foo(` still has real code right before the
+    // list, `a, b` sitting right after "select " does too (that lone space
+    // is what the backward scan below absorbs), but a selection starting at
+    // the very top of `text`, or right after an existing '\n', does not.
+    // Unlike the trailing side below, a comma right before the selection
+    // does *not* count as "already fine": `b, c` selected out of `a, b, c`
+    // still pushes "b" onto its own fresh line rather than leaving it glued
+    // after "a," - "a," is untouched, foreign content as far as this
+    // selection is concerned, same as "select " would be, not something to
+    // treat as already being in the right shape.
+    int leadStart = effectiveOpen + 1;
+    while (leadStart > 0 && (text.at(leadStart - 1) == QLatin1Char(' ') || text.at(leadStart - 1) == QLatin1Char('\t')))
+        --leadStart;
+    const bool leadAlreadyFine = leadStart == 0 || text.at(leadStart - 1) == QLatin1Char('\n');
+    const bool needsLeadingBreak = !leadAlreadyFine;
+
+    // Same question, the trailing side; horizontalSpaceRun() does the
+    // forward scan directly, since that one is also useful to callers on its
+    // own (absorbing what a bracket-search result's close, sitting on ')'
+    // itself, never has any of to begin with). A comma *does* count as
+    // "already fine" here, unlike above: `,c` picking up immediately where a
+    // selection of `a, b` out of `a, b, c` left off is the rest of the very
+    // same list continuing just past the selection, not foreign content to
+    // wall off behind a break of its own.
+    const int trailEnd = effectiveClose + horizontalSpaceRun(text, effectiveClose);
+    const bool trailAlreadyFine = trailEnd == text.length() || text.at(trailEnd) == QLatin1Char('\n')
+                                   || text.at(trailEnd) == QLatin1Char(',');
+    const bool needsTrailingBreak = !trailAlreadyFine;
+
+    // If the first item is not getting pushed onto a fresh line, there is no
+    // *new* indentation level to put the rest of the list at either - it
+    // stays at whatever the line it is glued to already sits at (baseIndent),
+    // the same as a person continuing a statement on the same line rather
+    // than opening a nested block for it. Only a genuine fresh line - the
+    // first item actually getting pushed onto one - earns the extra step:
+    // `create function foo(` or a precisely-selected `a, b, c` both do; a
+    // whole line selected `select` and all does not, and `select a, b`
+    // becomes `select a,\nb`, not `select a,\n\tb` with the second item
+    // oddly indented relative to a first one that stayed exactly where it
+    // was.
+    const QString effectiveItemIndent = needsLeadingBreak ? itemIndent : baseIndent;
+
+    QString replacement;
+    if (needsLeadingBreak)
+        replacement += QLatin1Char('\n');
+    replacement += effectiveItemIndent + items.join(",\n" + effectiveItemIndent);
+    if (needsTrailingBreak)
+        replacement += QLatin1Char('\n') + baseIndent;
+
+    result.start = leadStart;
+    result.end = trailEnd;
+    result.replacement = replacement;
+    return result;
+}
+
+
+int SqlLexer::horizontalSpaceRun(const QString &text, int pos)
+{
+    int end = qMax(pos, 0);
+    while (end < text.length() && (text.at(end) == QLatin1Char(' ') || text.at(end) == QLatin1Char('\t')))
+        ++end;
+    return end - pos;
 }
 
 QString SqlLexer::foldKeywords(const QString &script) const
@@ -594,45 +744,3 @@ QString SqlLexer::foldKeywords(const QString &script) const
     return res;
 }
 
-// key = dbms_scripting_id
-static QHash<QString, std::shared_ptr<const SqlLexer>> lexerCache;
-
-std::shared_ptr<const SqlLexer> SqlLexer::sharedFor(DbConnection *con)
-{
-    if (!con)
-        return nullptr;
-
-    const auto it = lexerCache.find(con->dbmsScriptingID());
-    if (it != lexerCache.end())
-        return it.value();
-
-    QJsonDocument settings;
-    try
-    {
-        // Through the locator, not by the relative path alone: dbmsScriptPath()
-        // returns a path relative to a *resource root*, so handing it straight
-        // to QFile resolved it against the process' working directory - which is
-        // a root only when the application happens to be started from its own
-        // folder. Everywhere else the file was simply not found and the catch
-        // below silently turned that into "no dictionaries", disabling the
-        // statement split and the keyword folding.
-        const QString file = Scripting::dbmsFile(con, "hl.conf");
-        if (file.isEmpty())
-            return nullptr;
-        settings = readJsonFile(file);
-    }
-    catch (const QString &)
-    {
-        // no highlighting settings - no dictionaries to rely on
-        return nullptr;
-    }
-
-    auto lexer = std::make_shared<const SqlLexer>(settings);
-    lexerCache.insert(con->dbmsScriptingID(), lexer);
-    return lexer;
-}
-
-void SqlLexer::clearCache()
-{
-    lexerCache.clear();
-}

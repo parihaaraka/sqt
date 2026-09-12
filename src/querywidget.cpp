@@ -501,7 +501,16 @@ SqlListBounds QueryWidget::currentListBounds()
     auto lexer = SqlLexer::sharedFor(_connection.get());
     if (!lexer)
         return {};
-    return lexer->listBounds(toPlainText(), textCursor().position());
+
+    // A selection stands in for "which list" directly - the person already
+    // pointed at it, so there is nothing to search a bracket for, and this is
+    // the only way to reach a bare, unparenthesized list (a plain
+    // `select a, b, c` field list, say): listBounds() does not attempt those
+    // on its own, see its own docs for why.
+    const QTextCursor c = textCursor();
+    if (c.hasSelection())
+        return lexer->listBoundsInRange(toPlainText(), c.selectionStart(), c.selectionEnd());
+    return lexer->listBounds(toPlainText(), c.position());
 }
 
 QTextDocument* QueryWidget::document() const
@@ -1285,23 +1294,24 @@ void QueryWidget::onSelectStatementRequest()
 void QueryWidget::onSplitListRequest()
 {
     const SqlListBounds bounds = currentListBounds();
-    if (bounds.open < 0 || bounds.separators.isEmpty())
+    if (bounds.close < 0 || bounds.separators.isEmpty())
     {
         // Same "say nothing rather than guess" stance as
-        // onSelectStatementRequest(): a bare, unparenthesized list (a select's
-        // field list, say) is not something SqlLexer::listBounds() attempts to
-        // find the bounds of, and neither is a single-item list worth
-        // "splitting".
+        // onSelectStatementRequest(): with no selection to go by, a bare,
+        // unparenthesized list (a select's field list, say) is not something
+        // SqlLexer::listBounds() attempts to find the bounds of, and neither
+        // is a single-item list worth "splitting" either way.
         status(tr("no list to split at the caret"));
         return;
     }
 
-    const QString replacement = SqlLexer::reflowList(toPlainText(), bounds, indentUnit());
+    const QString text = toPlainText();
+    const SqlListReflow reflow = SqlLexer::reflowList(text, bounds, indentUnit());
 
     QTextCursor c = textCursor();
-    c.setPosition(bounds.open + 1);
-    c.setPosition(bounds.close, QTextCursor::KeepAnchor);
-    c.insertText(replacement);
+    c.setPosition(reflow.start);
+    c.setPosition(reflow.end, QTextCursor::KeepAnchor);
+    c.insertText(reflow.replacement);
     setTextCursor(c);
 }
 
@@ -1340,22 +1350,23 @@ void QueryWidget::onEditorContextMenu(QMenu *menu)
     select->setEnabled(lexer && lexer->canSplitStatements());
     connect(select, &QAction::triggered, this, &QueryWidget::onSelectStatementRequest);
 
-    // Splitting a long parenthesized list - call arguments, an IN (...) or
-    // VALUES (...), a column list - one item per line. Left out entirely
+    // Splitting a list - call arguments, an IN (...) or VALUES (...), a
+    // column list, or (with something selected) any comma-separated stretch
+    // at all, parenthesized or not - one item per line. Left out entirely
     // (rather than shown disabled) in a read-only widget: it edits the text,
     // unlike everything else on this menu, so there is nothing to grey out in
     // the preview pane - it simply cannot apply there at all.
     if (!isReadOnly())
     {
         QAction *split = menu->addAction(tr("Split list into lines"));
-        // No caret to aim the lexer at without a connection, no list without
-        // one already found at the caret, and nothing worth "splitting" with
-        // a single item and no comma. Same "disabled, not hidden" choice as
-        // "Select statement" above, for the same reason (a menu that changes
-        // shape from one caret position to the next is no way to learn the
-        // command exists).
+        // No caret/selection to aim the lexer at without a connection, no
+        // list found either way, and nothing worth "splitting" with a single
+        // item and no comma. Same "disabled, not hidden" choice as "Select
+        // statement" above, for the same reason (a menu that changes shape
+        // from one caret position to the next is no way to learn the command
+        // exists).
         const SqlListBounds bounds = (lexer ? currentListBounds() : SqlListBounds{});
-        split->setEnabled(bounds.open >= 0 && !bounds.separators.isEmpty());
+        split->setEnabled(bounds.close >= 0 && !bounds.separators.isEmpty());
         connect(split, &QAction::triggered, this, &QueryWidget::onSplitListRequest);
     }
 
