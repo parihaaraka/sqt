@@ -21,6 +21,12 @@ QString DbConnection::dbmsScriptingID() const noexcept
     return _dbmsScriptingID;
 }
 
+void DbConnection::setDbmsIdentity(const QString &scriptingId, const QString &dbmsName) noexcept
+{
+    _dbmsScriptingID = scriptingId;
+    _scriptCatalog = Scripting::ScriptCatalog(scriptingId, dbmsName, isOdbcConnection());
+}
+
 QString DbConnection::transactionStatus() const noexcept
 {
     return "";
@@ -54,6 +60,7 @@ void DbConnection::setConnectionString(const QString &connectionString)
     // script bundle. This is the only thing that can invalidate the id, which
     // is why close() itself keeps it (see PgConnection::closeLocked()).
     _dbmsScriptingID.clear();
+    _scriptCatalog = Scripting::ScriptCatalog();
     _connection_string = connectionString;
 }
 

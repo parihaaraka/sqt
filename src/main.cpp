@@ -7,7 +7,6 @@
 #include "settings.h"
 #include <cstdio>
 #include <cstring>
-#include "dbconnectionfactory.h"
 
 int main(int argc, char *argv[])
 {
@@ -72,6 +71,5 @@ int main(int argc, char *argv[])
 
     //return a.exec();
     int rc = a.exec();
-    DbConnectionFactory::clearConnections();
     return rc;
 }

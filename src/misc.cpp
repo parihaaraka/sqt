@@ -57,21 +57,6 @@ int effectiveShortcutKey(int key, quint32 nativeScanCode, quint32 nativeVirtualK
         (key >= Qt::Key_Exclam && key <= Qt::Key_AsciiTilde))
         return key;
 
-    // Every one of Qt's *named* keys - arrows, Home/End, F1..F35, Escape, the
-    // lot - lives at or above Qt::Key_Escape (0x01000000); every character a
-    // layout can actually produce, Latin or not, is a Unicode code point below
-    // it. AppEventHandler calls this for *every* key press application-wide,
-    // not just Ctrl+<letter> ones, so without this guard a native code that
-    // happens to coincide with an entry below - purely by numeric accident,
-    // nothing here has ever looked at which key was pressed - silently
-    // relabels Up, Left, F-keys and the rest as whatever letter or
-    // punctuation mark that entry names. That is exactly how Ctrl+Up once
-    // ended up opening the json viewer (Ctrl+J) instead of moving the caret:
-    // arrow keys are not letters and were never meant to reach the tables
-    // below at all.
-    if (key >= Qt::Key_Escape)
-        return key;
-
     // Below we deliberately do not branch on the build platform.
     // Instead every native value is matched by shape. This works because the
     // ranges genuinely do not overlap:
@@ -83,12 +68,6 @@ int effectiveShortcutKey(int key, quint32 nativeScanCode, quint32 nativeVirtualK
     //  - Windows OEM virtual-key codes live in 0xBA-0xDE.
     //  - Windows virtual-key codes for letters are plain ASCII 'A'-'Z'.
     //  - macOS Cocoa hardware key codes fall in 0-50, clear of both.
-    //
-    // No Q_OS_WIN/Q_OS_MACOS guard around any of this, on purpose: this file
-    // is compiled once, on Linux, for tests/tst_keyboardshortcuts.cpp, which
-    // is the only thing that exercises the Windows and macOS branches at all
-    // - a #ifdef here would silently compile them out there and no CI would
-    // ever run them for real.
 
     if (nativeScanCode)
     {
@@ -133,6 +112,7 @@ int effectiveShortcutKey(int key, quint32 nativeScanCode, quint32 nativeVirtualK
 
     if (nativeVirtualKey)
     {
+#ifdef Q_OS_WIN
         // Windows virtual-key codes for the OEM punctuation keys are layout
         // independent. In particular, on a Russian layout VK_OEM_COMMA still
         // identifies the physical US comma key which Qt translates as Cyrillic Б.
@@ -152,10 +132,10 @@ int effectiveShortcutKey(int key, quint32 nativeScanCode, quint32 nativeVirtualK
         default:
             break;
         }
-
+#endif
         if (nativeVirtualKey >= 'A' && nativeVirtualKey <= 'Z')
             return Qt::Key_A + (static_cast<int>(nativeVirtualKey) - 'A');
-
+#if defined(Q_OS_MACOS)
         // macOS nativeVirtualKey is the Cocoa hardware key code. These are
         // the physical positions used by Apple's US ANSI keyboard.
         switch (nativeVirtualKey)
@@ -198,7 +178,7 @@ int effectiveShortcutKey(int key, quint32 nativeScanCode, quint32 nativeVirtualK
         default:
             break;
         }
+#endif
     }
-
     return key;
 }

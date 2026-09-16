@@ -7,7 +7,6 @@
 #include <QSortFilterProxyModel>
 #include "dbconnection.h"
 #include "dbobject.h"
-#include "dbconnectionfactory.h"
 #include "styling.h"
 
 DbTreeItemDelegate::DbTreeItemDelegate(QObject *parent) :
@@ -71,7 +70,7 @@ void DbTreeItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
         QString type = obj->data(DbObject::TypeRole).toString();
         if (type == "connection" || type == "database")
         {
-            auto con = DbConnectionFactory::connection(obj->connectionKey());
+            auto con = obj->ownConnection();
             if (con)
             {
                 QColor color = (con->isOpened() ? Qt::green : QColor::fromRgba(0xE0FF4040)); // NOLINT

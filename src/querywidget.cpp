@@ -5,7 +5,6 @@
 #include "misc.h"
 #include "settings.h"
 #include "sqlsyntaxhighlighter.h"
-#include "dbconnectionfactory.h"
 #include "dbconnection.h"
 #include <QTableView>
 #include <QHeaderView>
@@ -321,7 +320,7 @@ void QueryWidget::setDbConnection(DbConnection *connection)
     }
 
     if (dbConnectionChanged)
-        highlight(_connection);
+        highlight(_connection ? _connection->scriptCatalog() : Scripting::ScriptCatalog());
 }
 
 void QueryWidget::ShowFindPanel(FindAndReplacePanel *panel)
@@ -335,20 +334,20 @@ void QueryWidget::ShowFindPanel(FindAndReplacePanel *panel)
     panel->setFocus();
 }
 
-void QueryWidget::highlight(std::shared_ptr<DbConnection> con, bool force)
+void QueryWidget::highlight(const Scripting::ScriptCatalog &catalog, bool force)
 {
-    if (force || _connection != con || !_highlighter)
+    if (force || _scriptCatalog != catalog || !_highlighter)
     {
-        if (con)
-            _connection = con;
+        if (catalog.isValid())
+            _scriptCatalog = catalog;
 
         QJsonDocument settings;
-        if (_connection)
+        if (_scriptCatalog.isValid())
         {
             try
             {
                 // a bundle without a palette of its own is not an error
-                if (const QString hl = Scripting::dbmsFile(_connection.get(), "hl.conf"); !hl.isEmpty())
+                if (const QString hl = _scriptCatalog.file("hl.conf"); !hl.isEmpty())
                     settings = readJsonFile(hl);
             }
             catch (const QString &err)
@@ -486,9 +485,7 @@ QTextCursor QueryWidget::textCursor() const
 
 QPair<int, int> QueryWidget::currentStatementBounds()
 {
-    if (!_connection)
-        return {-1, -1};
-    auto lexer = SqlLexer::sharedFor(_connection.get());
+    auto lexer = SqlLexer::sharedFor(_scriptCatalog);
     if (!lexer)
         return {-1, -1};
     return lexer->statementBounds(toPlainText(), textCursor().position());
@@ -496,9 +493,7 @@ QPair<int, int> QueryWidget::currentStatementBounds()
 
 SqlListBounds QueryWidget::currentListBounds()
 {
-    if (!_connection)
-        return {};
-    auto lexer = SqlLexer::sharedFor(_connection.get());
+    auto lexer = SqlLexer::sharedFor(_scriptCatalog);
     if (!lexer)
         return {};
 
@@ -1334,7 +1329,7 @@ void QueryWidget::onEditorContextMenu(QMenu *menu)
     // F4 is left out for the same reason: a right click does not move the
     // caret, so an item scripting "the object under the caret" would act on the
     // caret while the user is pointing at another word.
-    auto lexer = (_connection ? SqlLexer::sharedFor(_connection.get()) : nullptr);
+    auto lexer = SqlLexer::sharedFor(_scriptCatalog);
 
     menu->addSeparator();
     QAction *select = menu->addAction(tr("Select statement at the caret"));
@@ -1549,6 +1544,10 @@ void QueryWidget::onScriptObjectRequest()
 
             if (!c)
                 continue;
+            // Same DDL, built by the very same content scripts as a tree
+            // click would run - so it is split the same way, whichever route
+            // brought the routine into an editor.
+            Scripting::autoSplitRoutineSignature(type, c.get(), cn);
 #if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
             for (const QString &s: qAsConst(c->scripts))
 #else
@@ -1580,8 +1579,7 @@ void QueryWidget::onScriptObjectRequest()
         return;
     }
 
-    MainWindow *mainWindow = qobject_cast<MainWindow*>(window());
-    if (mainWindow)
+    if (auto mainWindow = qobject_cast<MainWindow*>(window()))
         mainWindow->openScriptTab(script, name, _connection->clone());
 }
 

@@ -11,6 +11,7 @@
 
 class QJsonDocument;
 class DbConnection;
+namespace Scripting { class ScriptCatalog; }
 
 /// A comma-separated list: a function/procedure argument list, an IN (...) or
 /// VALUES (...) list, a column list and so on - or, via listBoundsInRange(),
@@ -290,7 +291,9 @@ public:
      */
     static int horizontalSpaceRun(const QString &text, int pos);
 
-    /// lexer built with the connection's hl.conf (nullptr if unavailable)
+    /// lexer built from the catalog's hl.conf (nullptr if unavailable/invalid)
+    static std::shared_ptr<const SqlLexer> sharedFor(const Scripting::ScriptCatalog &catalog);
+    /// convenience overload: con->scriptCatalog(), or nullptr if con is null
     static std::shared_ptr<const SqlLexer> sharedFor(DbConnection *con);
     /// to be called on scripts cache invalidation
     static void clearCache();

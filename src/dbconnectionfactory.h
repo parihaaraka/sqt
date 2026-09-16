@@ -1,22 +1,16 @@
 #ifndef DBCONNECTIONFACTORY_H
 #define DBCONNECTIONFACTORY_H
 
-#include <QHash>
 #include <QString>
 #include <memory>
 
 class DbConnection;
 
-class DbConnectionFactory
-{
-public:
-    DbConnectionFactory() = delete;
-    static std::shared_ptr<DbConnection> connection(QString name);
-    static std::shared_ptr<DbConnection> createConnection(QString name, QString connectionString = QString(), QString database = QString());
-    static void removeConnection(QString name);
-    static void clearConnections();
-private:
-    static QHash<QString, std::shared_ptr<DbConnection>> _connections;
-};
+/// Picks OdbcConnection or PgConnection for a connection string and wires up
+/// the connection string and database. No registry here on purpose - the
+/// resulting object is owned by whoever calls this, normally a DbObject tree
+/// node (see DbObject::setConnection()) or a clone() of one already in the
+/// tree; nothing else needs to look a connection up by name any more.
+std::unique_ptr<DbConnection> createDbConnection(const QString &connectionString, const QString &database = QString());
 
 #endif // DBCONNECTIONFACTORY_H

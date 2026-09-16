@@ -62,11 +62,13 @@ DbConnection *PgConnection::clone()
     res->_database = _database;
     // The clone talks to the same server, so it names the same script bundle -
     // and it has to know that before it is opened, exactly as a connection whose
-    // socket has died still knows it (see closeLocked()). Otherwise
-    // Scripting::dbmsScriptPath() opens a link just to ask the server who it is,
-    // and with the server unreachable it throws instead: no scripts, no
-    // highlighting dictionary, an editor tab left with the emergency colouring.
+    // socket has died still knows it (see closeLocked()). Otherwise the catalog
+    // lookup would have to open a link just to ask the server who it is, and
+    // with the server unreachable it would come back invalid instead: no
+    // scripts, no highlighting dictionary, an editor tab left with the
+    // emergency colouring.
     res->_dbmsScriptingID = _dbmsScriptingID;
+    res->_scriptCatalog = _scriptCatalog;
     return res;
 }
 
@@ -96,7 +98,7 @@ bool PgConnection::open()
         return false;
     }
 
-    _dbmsScriptingID = dbmsName() + dbmsVersionLocked();
+    setDbmsIdentity(dbmsName() + dbmsVersionLocked(), dbmsName());
 
     // _database is initially empty within 'connection' node
     // (used to display current context (no need to set it in async method)
@@ -187,12 +189,14 @@ void PgConnection::closeLocked() noexcept
 {
     // the caller must hold _connectionGuard
 
-    // _dbmsScriptingID is *not* cleared here. It names the script bundle of the
-    // server (its name and version), which a closed socket does not change, and
-    // an empty one means "unknown" to Scripting: dbmsScriptPath() would open the
-    // link again just to ask the server who it is. That is how a database node
-    // left collapsed used to get its connection back - the preview pane keeps a
-    // shared_ptr to it and asks for hl.conf on every repaint of the content.
+    // _dbmsScriptingID/_scriptCatalog are *not* cleared here. They name the
+    // script bundle of the server (its name and version), which a closed
+    // socket does not change, and an empty id means "unknown" to Scripting:
+    // dbmsScriptPath() would open the link again just to ask the server who
+    // it is. That is how a database node left collapsed used to lose its
+    // highlighting - the preview pane only ever gets a copy of the catalog
+    // (see QueryWidget::highlight()), and a copy taken before the link closed
+    // stays good regardless of what happens to the connection afterwards.
     // Only setConnectionString() invalidates the id.
 
     // The resultsets are *not* dropped here. They belong to whoever asked for
@@ -217,7 +221,7 @@ bool PgConnection::isOpened() const noexcept
 {
     // Whether the link is alive: libpq keeps the handle after it has died, so
     // the pointer alone says nothing (the tree indicator and the connections
-    // menu tell "alive" from "registered but broken" by this very function).
+    // menu tell "alive" from "connected but broken" by this very function).
     //
     // Deliberately lock-free: this is called from the tree's paint routine, and
     // also from context()/dbmsInfo() below, which already hold the guard. So it

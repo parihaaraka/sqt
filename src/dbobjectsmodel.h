@@ -46,7 +46,7 @@ public:
     /// without collapsing the tree or reopening a single connection.
     void reloadIcons(const QModelIndex &parent = QModelIndex());
 
-    std::shared_ptr<DbConnection> dbConnection(const QModelIndex &index);
+    DbConnection *dbConnection(const QModelIndex &index);
     QVariant parentNodeProperty(const QModelIndex &index, QString type);
     bool addServer(QString name, QString connectionString);
     bool removeConnection(QModelIndex &index);

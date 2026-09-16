@@ -68,21 +68,7 @@ private slots:
     void on_actionSave_as_triggered();
     void scriptSelectedObjects();
     void showContent(QModelIndex &index, const Scripting::CppConductor *content);
-    void showTextualContent(const QVariant &value, const QVariant &type, std::shared_ptr<DbConnection> con);
-    /// Breaks a freshly generated function/procedure DDL's parameter list
-    /// across several lines when it has more than a few of them -
-    /// `pg_get_functiondef()` (and whatever the odbc content scripts use)
-    /// hands back a single long line, however many arguments it declares.
-    ///
-    /// The tree has no notion of "this kind of node is a routine" beyond the
-    /// type name a `scripts/<dbms>/tree` script happens to be registered
-    /// under - a user's own tree may register arbitrary type names for
-    /// arbitrary objects, and the program has no way to know what any of them
-    /// mean. So this is hardcoded to the two type names the bundled postgres
-    /// and odbc scripts themselves use, rather than attempting to infer
-    /// "routine-ness" some other way; a script registered under any other
-    /// name is simply left alone.
-    void autoSplitRoutineSignature(const QString &type, Scripting::CppConductor *content, DbConnection *con);
+    void showTextualContent(const QVariant &value, const QVariant &type, const Scripting::ScriptCatalog &catalog);
     void objectsViewAdjustColumnWidth(const QModelIndex &);
     void on_actionFind_triggered();
     void on_tabWidget_currentChanged(int index);
@@ -144,8 +130,8 @@ private:
     /// scripts run on it - but nothing after that does, so the link is given
     /// back instead of being left behind for the rest of the session. A live
     /// link belongs to an expanded branch only. The connection object itself
-    /// stays registered, so the node keeps its place, its indicator merely
-    /// turns red, and the next click opens the link again.
+    /// stays put - only close()d, not released - so the node keeps its place,
+    /// its indicator merely turns red, and the next click opens the link again.
     /// \a srcIndex belongs to the source model; the owner of the link is its
     /// nearest "database" ancestor (or itself), exactly as dbConnection() sees
     /// it. A top level "connection" node is left alone: those are opened and
@@ -190,16 +176,15 @@ private:
     ///
     /// Owned rather than borrowed, and for a reason: a weak_ptr here expired
     /// behind the user's back on every ordinary turn of events - collapsing or
-    /// refreshing a database node destroys its DbObject, whose destructor
-    /// unregisters the connection, and closing the tab the link came from
-    /// deletes that tab's clone. The search then lost its dbms, hence its
-    /// highlighting dictionary, hence the ability to open a found file as
-    /// anything but plain text. A clone keeps the connection string, the
-    /// database and (see PgConnection::clone()) the dbms identity, so all of
-    /// that survives even a server that has gone away. It is never opened just
-    /// to colour a file - naming the script bundle needs no link - so holding it
-    /// costs no backend.
-    std::shared_ptr<DbConnection> _searchConnection;
+    /// refreshing a database node destroys its DbObject, which releases the
+    /// connection with it, and closing the tab the link came from deletes that
+    /// tab's clone. The search then lost its dbms, hence its highlighting
+    /// dictionary, hence the ability to open a found file as anything but plain
+    /// text. A clone keeps the connection string, the database and (see
+    /// PgConnection::clone()) the dbms identity, so all of that survives even a
+    /// server that has gone away. It is never opened just to colour a file -
+    /// naming the script bundle needs no link - so holding it costs no backend.
+    std::unique_ptr<DbConnection> _searchConnection;
     /// The place the content pane is showing, while it shows a file rather than
     /// the script of a tree node. Coming back to the tree rebuilds the pane only
     /// then: scriptSelectedObjects() reruns the node's content script and
@@ -212,8 +197,7 @@ private:
     /// connection string with the password removed - stable across restarts,
     /// while a password (or a database switched inside the session) leaves it
     /// alone, and nothing secret reaches the settings file.
-    static QString searchProfileKey(const std::shared_ptr<DbConnection> &con,
-                                    QString *label = nullptr);
+    static QString searchProfileKey(DbConnection *con, QString *label = nullptr);
     /// Positions \a w on \a line / \a column (1-based) and centers the view.
     /// \a matchColor marks the range as a search hit (see
     /// CodeEditor::setMatchHighlight): the text cursor's own selection is not

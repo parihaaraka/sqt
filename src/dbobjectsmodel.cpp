@@ -236,11 +236,11 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
     int childObjectsCount = 0;
     try
     {
-        std::shared_ptr<DbConnection> con = dbConnection(parent);
-        // dbConnection() returns null when the node has no registry entry: a
-        // failed open() and "disconnect" both remove it while the node itself
-        // stays in the tree, so expanding that node again arrives here with
-        // nothing.
+        DbConnection *con = dbConnection(parent);
+        // dbConnection() returns null when the node has no connection: a
+        // failed "Connect" and an explicit "Disconnect" both drop it while the
+        // node itself stays in the tree, so expanding that node again arrives
+        // here with nothing.
         if (!con)
             throw QObject::tr("the node has no connection; use \"connect\" first");
         if (!con->open())
@@ -296,7 +296,7 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
 
             // children detection
             newItem->setData(Scripting::getScript(
-                                 dbConnection(parent).get(),
+                                 dbConnection(parent),
                                  Scripting::Context::Tree,
                                  r[typeInd].toString()).has_value(), DbObject::ParentRole);
 
@@ -322,23 +322,29 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
                     // initialize database-specific connection
                     if (parent)
                     {
-                        // The donor's own entry may be gone (a failed open or a
-                        // "disconnect" removes it while the node lives on), so
-                        // the lookup is checked rather than dereferenced.
-                        auto donor = DbConnectionFactory::connection(parent->connectionKey());
+                        // The donor's own connection may be gone (a failed
+                        // open or a "disconnect" drops it while the node
+                        // lives on), so the lookup is checked rather than
+                        // dereferenced.
+                        auto donor = parent->ownConnection();
                         if (!donor)
                             throw QObject::tr("the connection of %1 is not available anymore")
                                     .arg(parent->data(Qt::DisplayRole).toString());
-                        QString cs = donor->connectionString();
-                        QString id = newItem->connectionKey();
                         //DbObject::NameRole contains quotes the identifier must be quoted, so Qt::DisplayRole is used
-                        auto db = DbConnectionFactory::createConnection(id, cs, newItem->data(Qt::DisplayRole).toString());
+                        auto db = createDbConnection(donor->connectionString(), newItem->data(Qt::DisplayRole).toString());
                         connect(db.get(), &DbConnection::error, this, &DbObjectsModel::error);
                         connect(db.get(), &DbConnection::message, this, &DbObjectsModel::message);
                         // the node keeps its place and its children when the
                         // link dies - only the state indicator has to be redrawn
                         connect(db.get(), &DbConnection::connectionLost,
                                 this, &DbObjectsModel::connectionStateChanged);
+                        // The donor is already connected, so it already knows
+                        // the server's script/highlight identity - no reason
+                        // to make this session connect on its own just to
+                        // learn the very same thing again.
+                        if (donor->scriptCatalog().isValid())
+                            db->adoptScriptCatalog(donor->scriptCatalog());
+                        newItem->setConnection(std::move(db));
                     }
                 }
             }
@@ -376,22 +382,13 @@ void DbObjectsModel::reloadIcons(const QModelIndex &parent)
         reloadIcons(index(i, 0, parent));
 }
 
-std::shared_ptr<DbConnection> DbObjectsModel::dbConnection(const QModelIndex &index)
+DbConnection *DbObjectsModel::dbConnection(const QModelIndex &index)
 {
-    std::shared_ptr<DbConnection> con;
     DbObject *item = static_cast<DbObject*>(index.internalPointer());
-    while (!con && item)
-    {
-        QString type = item->data(DbObject::TypeRole).toString();
-        if (type == "connection" || type == "database")
-        {
-            con = DbConnectionFactory::connection(item->connectionKey());
-            break; // con may be nullptr
-        }
-        else
-            item = item->parent();
-    }
-    return con;
+    // DbObject::connection() already walks up to the nearest owning ancestor
+    // - the type-based walk this used to do by hand found exactly the same
+    // node, since only a "connection"/"database" node ever owns one.
+    return item ? item->connection() : nullptr;
 }
 
 QVariant DbObjectsModel::parentNodeProperty(const QModelIndex &index, QString type)
@@ -461,11 +458,11 @@ bool DbObjectsModel::removeConnection(QModelIndex &index)
         return false;
 
     // The server sessions go first, deliberately and before the nodes are gone.
-    // Dropping the rows alone would leave it to ~DbObject to unregister the keys
-    // and to the refcount to reach zero, which happens to work - and makes
-    // releasing a backend a side effect of memory management instead of an
-    // action. A database node below carries a session of its own, so the whole
-    // subtree is walked, and the "disconnect" path does exactly this explicitly.
+    // Dropping the rows alone would still release every connection - ~DbObject
+    // does that regardless - but silently, as a side effect of memory
+    // management, rather than a proper close()/disconnect(). A database node
+    // below carries a session of its own, so the whole subtree is walked, and
+    // the "disconnect" path does exactly this explicitly.
     closeSubtreeConnections(item);
 
     removeRows(index.row(), 1);
@@ -480,10 +477,10 @@ void DbObjectsModel::closeSubtreeConnections(DbObject *item) noexcept
     for (int i = 0; i < item->childCount(); ++i)
         closeSubtreeConnections(item->child(i));
 
-    if (auto con = DbConnectionFactory::connection(item->connectionKey()))
+    if (auto con = item->ownConnection())
     {
-        // close() only ends the link; the entry is dropped by ~DbObject, which
-        // the caller is about to trigger.
+        // close() only ends the link; the object itself is released by
+        // ~DbObject, which the caller is about to trigger.
         con->close();
         con->disconnect();
     }

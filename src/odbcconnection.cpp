@@ -92,10 +92,11 @@ DbConnection *OdbcConnection::clone()
     res->_database = _database;
     // Same data source, same script bundle - and known before the clone is
     // opened, just as a connection whose link has died keeps it (see
-    // closeLocked()). Without it Scripting has to connect merely to ask the
-    // driver for the dbms name, and an unreachable server then costs the clone
-    // its scripts and its highlighting dictionary.
+    // closeLocked()). Without it the catalog lookup would have to connect
+    // merely to ask the driver for the dbms name, and an unreachable server
+    // then costs the clone its scripts and its highlighting dictionary.
     res->_dbmsScriptingID = _dbmsScriptingID;
+    res->_scriptCatalog = _scriptCatalog;
     return res;
 }
 
@@ -779,7 +780,7 @@ bool OdbcConnection::open()
         _opened = true;
         // dbmsNameLocked()/dbmsVersionLocked(), not the public getters: we
         // already hold _connectionGuard here.
-        _dbmsScriptingID = dbmsNameLocked() + dbmsVersionLocked() + "_odbc";
+        setDbmsIdentity(dbmsNameLocked() + dbmsVersionLocked() + "_odbc", dbmsNameLocked());
         return true;
     }
     _opened = false;

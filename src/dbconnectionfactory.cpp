@@ -3,41 +3,16 @@
 #include "pgconnection.h"
 #include <QRegularExpression>
 
-QHash<QString, std::shared_ptr<DbConnection>> DbConnectionFactory::_connections;
-
-std::shared_ptr<DbConnection> DbConnectionFactory::connection(QString name)
+std::unique_ptr<DbConnection> createDbConnection(const QString &connectionString, const QString &database)
 {
-    if (_connections.contains(name))
-        return _connections[name];
-    return nullptr;
-}
-
-std::shared_ptr<DbConnection> DbConnectionFactory::createConnection(QString name, QString connectionString, QString database)
-{
-    std::shared_ptr<DbConnection> res;
-    static QRegularExpression re("\\b(dsn|driver)\\s*=", QRegularExpression::CaseInsensitiveOption);
+    std::unique_ptr<DbConnection> res;
+    static const QRegularExpression re("\\b(dsn|driver)\\s*=", QRegularExpression::CaseInsensitiveOption);
     if (re.match(connectionString).hasMatch())
-        res = std::shared_ptr<DbConnection>(new OdbcConnection());
+        res.reset(new OdbcConnection());
     else
-        res = std::shared_ptr<DbConnection>(new PgConnection());
-
-    if (!name.isEmpty())
-        _connections[name] = res;
+        res.reset(new PgConnection());
 
     res->setConnectionString(connectionString);
     res->setDatabase(database);
     return res;
 }
-
-void DbConnectionFactory::removeConnection(QString name)
-{
-    if (!_connections.contains(name))
-        return;
-    _connections.remove(name);
-}
-
-void DbConnectionFactory::clearConnections()
-{
-    _connections.clear();
-}
-

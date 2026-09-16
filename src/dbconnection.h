@@ -10,6 +10,7 @@
 #include <QVector>
 #include <memory>
 #include "datatable.h"
+#include "scriptcatalog.h"
 
 #define FETCH_COUNT_NOTIFY 1000
 
@@ -55,6 +56,22 @@ public:
     virtual QString dbmsName() const noexcept = 0;
     virtual QString dbmsVersion() const noexcept = 0;
     virtual QString dbmsScriptingID() const noexcept;
+    /// True for an ODBC-driven connection - determines which scripts subtree
+    /// (scripts/odbc/...) a subclass's identity belongs under. Overridden by
+    /// OdbcConnection; used by setDbmsIdentity() so script/highlight lookup
+    /// never has to qobject_cast to tell odbc and native connections apart.
+    virtual bool isOdbcConnection() const noexcept { return false; }
+    /// Cheap, non-blocking: whatever is already known about this connection's
+    /// script/highlight bundle, or an invalid catalog if this connection (and
+    /// whatever it may have been seeded from - see adoptScriptCatalog()) has
+    /// never actually opened. Never touches the network - safe to call from
+    /// anywhere, at any time, including from asynchronous code.
+    const Scripting::ScriptCatalog& scriptCatalog() const noexcept { return _scriptCatalog; }
+    /// Lets a not-yet-opened sibling connection (a per-database session under
+    /// the same server, say) start out already knowing what open() would
+    /// tell it anyway, so nothing has to connect to a live server just to
+    /// pick a highlighter.
+    void adoptScriptCatalog(const Scripting::ScriptCatalog &catalog) noexcept { _scriptCatalog = catalog; }
     virtual QString transactionStatus() const noexcept;
     virtual int dbmsComparableVersion() = 0;
     /*!
@@ -127,8 +144,8 @@ signals:
     void message(const QString &msg) const;
     void error(const QString &msg) const;
     /// The link is gone (it will be restored by the next query). The connection
-    /// object itself stays alive and registered, so this is not a disconnect -
-    /// it only means that whatever displays the connection's state is stale now.
+    /// object itself stays alive, so this is not a disconnect - it only means
+    /// that whatever displays the connection's state is stale now.
     void connectionLost();
     /// The run ended without an answer, and whether the server executed the
     /// query is unknowable: it had been delivered in full when the link died.
@@ -151,6 +168,13 @@ protected:
     mutable QMutex _resultsetsGuard;
     mutable QMutex _connectionGuard;
     QString _dbmsScriptingID;
+    Scripting::ScriptCatalog _scriptCatalog;
+    /// Subclasses call this from open() instead of assigning _dbmsScriptingID
+    /// by hand - it also (re)builds _scriptCatalog while dbmsName()/
+    /// isOdbcConnection() are still cheap to call (the link has just come up,
+    /// nothing else is using it yet, so there is no lock contention risk in
+    /// calling them here specifically).
+    void setDbmsIdentity(const QString &scriptingId, const QString &dbmsName) noexcept;
     void setQueryState(QueryState queryState);
 
 private:

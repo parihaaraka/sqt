@@ -8,6 +8,7 @@
 #include <QPair>
 #include <memory>
 #include <QJsonObject>
+#include "scriptcatalog.h"
 
 class DbConnection;
 class TableModel;
@@ -54,16 +55,24 @@ public:
     /// empty for an absolute one.
     void setShownFile(const QString &fileName, const QString &root = QString());
     DbConnection* dbConnection() { return _connection.get(); }
-    /// The same link, shareable - the file search borrows it to highlight the
-    /// scripts it finds and to clone a connection for the tabs it opens.
-    const std::shared_ptr<DbConnection>& sharedDbConnection() const { return _connection; }
+    /// What hl.conf/the lexer are picked from for this widget - the
+    /// connection's own catalog for an editable tab (kept in sync by
+    /// setDbConnection()), or whatever was last handed to highlight() for a
+    /// widget with no connection of its own (the content/script preview pane).
+    const Scripting::ScriptCatalog& scriptCatalog() const { return _scriptCatalog; }
     void setDbConnection(DbConnection *connection);
     void ShowFindPanel(FindAndReplacePanel *panel);
-    /// Attaches a highlighter built for the connection's dbms. Pass force=true
-    /// to rebuild it even when the connection has not changed - the dictionary
-    /// is read from hl.conf at construction, so that is what picks up an edited
+    /// Attaches a highlighter built from \a catalog. An invalid (default)
+    /// catalog keeps whatever this widget already has - which is how the
+    /// content/script preview pane is meant to be used: it owns no
+    /// DbConnection of its own (see MainWindow::_objectScript), so whoever is
+    /// about to show something in it resolves the catalog from wherever the
+    /// content came from and hands over a copy, rather than the widget
+    /// reaching for a live connection itself. Pass force=true to rebuild the
+    /// highlighter even when the catalog has not changed - the dictionary is
+    /// read from hl.conf at construction, so that is what picks up an edited
     /// (or newly shadowed) one.
-    void highlight(std::shared_ptr<DbConnection> con = nullptr, bool force = false);
+    void highlight(const Scripting::ScriptCatalog &catalog = Scripting::ScriptCatalog(), bool force = false);
     void dehighlight();
     void rehighlight();
     bool is_sql_hl(QPlainTextEdit *ed);
@@ -188,7 +197,8 @@ private:
     QWidget *_editor;
     QPlainTextEdit *_messages;
     QSplitter *_resSplitter;
-    std::shared_ptr<DbConnection> _connection;
+    std::unique_ptr<DbConnection> _connection;
+    Scripting::ScriptCatalog _scriptCatalog;
     SqlSyntaxHighlighter *_highlighter;
     QVBoxLayout *_editorLayout;
     QMenu *_resultMenu;

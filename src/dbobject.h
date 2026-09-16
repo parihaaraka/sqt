@@ -4,6 +4,9 @@
 #include <QList>
 #include <QVariant>
 #include <QFont>
+#include <memory>
+
+class DbConnection;
 
 class DbObject
 {
@@ -42,21 +45,28 @@ public:
     bool insertChild(int beforeRow);
     bool removeChild(int pos);
 
-    /// This node's key in the connection registry, stable for its whole life and
-    /// never reused afterwards.
-    ///
-    /// A uuid rather than the node's address: the allocator hands a freed
-    /// address straight back to the next node, so an address key lets a registry
-    /// entry that outlived its node be inherited by an unrelated one. With a
-    /// uuid an orphaned entry simply stays orphaned.
-    const QString &connectionKey() const { return _connectionKey; }
+    /// This node's own connection if it has one, otherwise the nearest
+    /// ancestor's - normally a "connection" or "database" node's, found by
+    /// walking up rather than by type, so a caller holding any descendant
+    /// (table, column...) does not need to know which ancestor actually owns
+    /// it. Returns nullptr if no ancestor (including this node) has one, e.g.
+    /// a connection node that has never been connected.
+    DbConnection *connection() const;
+    /// This node's own connection, without walking up to an ancestor's -
+    /// nullptr for every node except the "connection"/"database" one that
+    /// actually owns a link.
+    DbConnection *ownConnection() const { return _connection.get(); }
+    /// Transfers ownership of \a connection to this node; the previous one,
+    /// if any, is destroyed. Pass nullptr to drop the connection without
+    /// replacing it (e.g. on an explicit "Disconnect").
+    void setConnection(std::unique_ptr<DbConnection> connection);
 
 private:
     QList<DbObject*> _children;
     QList<DbObject*> _conceived;
     QHash<int, QVariant> _itemData;
     DbObject *_parent;
-    QString _connectionKey;
+    std::unique_ptr<DbConnection> _connection;
 };
 
 #endif // DBOBJECT_H

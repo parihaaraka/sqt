@@ -6,7 +6,6 @@
 #include <QTextStream>
 #include <QRegularExpression>
 #include "dbconnection.h"
-#include "odbcconnection.h"
 #include "datatable.h"
 #include "settings.h"
 #include "sqllexer.h"
@@ -19,82 +18,21 @@
 namespace Scripting
 {
 
-// key = dbms_scripting_id, value = scripts path relative to a resource root
-static QHash<QString, QString> _dbms_paths;
 // key = dbms_scripting_id/context/, value = { type, script }
 static QHash<QString, QHash<QString, Script>> _scripts;
 
-QString context2str(Context context)
-{
-    switch (context) {
-    case Context::Tree:
-        return "tree";
-    case Context::Content:
-        return "content";
-    case Context::Preview:
-        return "preview";
-    case Context::Autocomplete:
-        return "autocomplete";
-    default: // root
-        return "";
-    }
-}
-
 QString dbmsScriptPath(DbConnection *con, Context context)
 {
-    if (!con || (con->dbmsScriptingID().isEmpty() && !con->open()))
+    if (!con || (!con->scriptCatalog().isValid() && !con->open()))
         throw QObject::tr("db connection unavailable");
-    OdbcConnection *odbcConnection = qobject_cast<OdbcConnection*>(con);
 
     QString contextFolder = context2str(context);
     if (!contextFolder.isEmpty())
         contextFolder += '/';
-
-    const auto it = _dbms_paths.find(con->dbmsScriptingID());
-    if (it != _dbms_paths.end())
-        return it.value() + contextFolder;
-
-    // Paths are kept relative to a resource root: the same bundle may be laid
-    // out next to the binary, under the user's home and in the system-wide
-    // folder at once, and the choice between them belongs to the locator.
-    QString startPath = QString("scripts/") + (odbcConnection ? "odbc/" : "");
-    const QStringList dirs = appResources().dirs(startPath);
-    if (dirs.isEmpty())
-        throw QObject::tr("directory %1 is not found in %2").
-                arg(startPath, appResources().roots().join(", "));
-
-    QString dbmsName = con->dbmsName();
-    if (dbmsName.isEmpty())
-        throw QObject::tr("unable to get dbms name");
-
-    // search for the folder with a name containing dbms name;
-    // it may live in any of the roots, so all of them are asked in turn
-    QString endPath;
-    for (const QString &dir: dirs)
-    {
-        const QStringList subdirs = QDir(dir).entryList(QStringList(), QDir::AllDirs | QDir::NoDotAndDotDot);
-        for (const QString &d: subdirs)
-        {
-            if (dbmsName.contains(d, Qt::CaseInsensitive))
-            {
-                endPath = d + "/";
-                break;
-            }
-        }
-        if (!endPath.isEmpty())
-            break;
-    }
-
-    // if specific folder was not found for odbc driver
-    if (endPath.isEmpty() && odbcConnection)
-        startPath += "default/";
-    else
-        startPath += endPath;
-
-    if (appResources().dirs(startPath + contextFolder).isEmpty())
-        throw QObject::tr("directory %1 is not available").arg(startPath + contextFolder);
-    _dbms_paths.insert(con->dbmsScriptingID(), startPath);
-    return startPath + contextFolder;
+    // Shared with ScriptCatalog::file()/scriptDirs() - same cache, same
+    // resource-root walk, so a connection and a bare catalog copied from it
+    // always agree on where the bundle lives.
+    return resolveScriptRoot(con->dbmsScriptingID(), con->dbmsName(), con->isOdbcConnection()) + contextFolder;
 }
 
 QStringList dbmsScriptDirs(DbConnection *con, Context context)
@@ -118,7 +56,7 @@ void refresh(DbConnection *connection, Context context)
     // (the version comes from the root level version.sql/qs script) - which
     // re-enters this very function, hence the -1 for that script itself.
     const int version =
-            (context == Context::Root && qobject_cast<OdbcConnection*>(connection) ?
+            (context == Context::Root && connection->isOdbcConnection() ?
                  -1 : connection->dbmsComparableVersion());
     // The bunch is built aside and published in one step at the end. A
     // reference into _scripts must not be held across anything that may touch
@@ -173,8 +111,60 @@ void clearCache()
 {
     // The dbms folder is searched again as well: the winning root may have
     // changed, and with it the very bundle the scripts come from.
-    _dbms_paths.clear();
+    clearScriptCatalogCache();
     _scripts.clear();
+}
+
+void autoSplitRoutineSignature(const QString &type, CppConductor *content, DbConnection *con)
+{
+    // A parameter list worth breaking up starts at four items - three or
+    // fewer usually still reads fine on one line, and pulling those apart too
+    // would just add noise to the overwhelming majority of routines that
+    // take few arguments. listBounds() reports commas, not item count, hence
+    // the -1.
+    constexpr int kMinCommasToSplit = 3;
+    // ...except when the line itself is unreasonably long regardless of item
+    // count: a long schema-qualified name can by itself push even a
+    // two-or-three-parameter signature off the visible part of the pane, at
+    // which point splitting is worth it however few parameters there are -
+    // just not down to a single one (bounds.separators.isEmpty() below bails
+    // out before this is even reached: there is nothing to *list* one
+    // parameter across several lines).
+    constexpr int kLineLengthToSplit = 100;
+
+    if (!content || content->scripts.isEmpty() || !con ||
+        (type != "function" && type != "procedure"))
+        return;
+
+    auto lexer = SqlLexer::sharedFor(con);
+    if (!lexer)
+        return;
+
+    // pg_get_functiondef() (and whatever the odbc content scripts use) hands
+    // back the whole `CREATE [OR REPLACE] FUNCTION|PROCEDURE name(...)  ...`
+    // text as one piece; a negative position asks listBounds() for the first
+    // top-level bracket in it, which - see listBounds()'s own docs - is
+    // exactly this parameter list, comments (the commented-out `DROP
+    // FUNCTION` some content scripts prepend included) and everything else
+    // notwithstanding.
+    QString &script = content->scripts.last();
+    const SqlListBounds bounds = lexer->listBounds(script, -1);
+    if (bounds.close < 0 || bounds.separators.isEmpty())
+        return;
+
+    if (bounds.separators.size() < kMinCommasToSplit)
+    {
+        // Length of the line the parameter list's own '(' sits on.
+        const int lineStart = script.lastIndexOf('\n', bounds.open) + 1;
+        const int lineEnd = script.indexOf('\n', lineStart);
+        const int lineLength = (lineEnd < 0 ? script.length() : lineEnd) - lineStart;
+
+        if (lineLength <= kLineLengthToSplit)
+            return;
+    }
+
+    const SqlListReflow reflow = SqlLexer::reflowList(script, bounds, indentUnit());
+    script.replace(reflow.start, reflow.end - reflow.start, reflow.replacement);
 }
 
 std::optional<Script> getScript(DbConnection *connection, Context context, const QString &objectType)
@@ -334,25 +324,11 @@ std::unique_ptr<CppConductor> execute(
         const QString &objectType,
         std::function<QVariant (QString)> envCallback)
 {
-    std::unique_ptr<CppConductor> env { new CppConductor(nullptr, envCallback) };
+    std::unique_ptr<CppConductor> env { new CppConductor(connection ? connection->scriptCatalog() : Scripting::ScriptCatalog(), envCallback) };
     auto s = Scripting::getScript(connection, context, objectType);
     if (!s)
         return nullptr;
     execute(env.get(), connection, &s.value());
-    return env;
-}
-
-std::unique_ptr<CppConductor> execute(
-        std::shared_ptr<DbConnection> connection,
-        Context context,
-        const QString &objectType,
-        std::function<QVariant(QString)> envCallback)
-{
-    std::unique_ptr<CppConductor> env { new CppConductor(connection, envCallback) };
-    auto s = Scripting::getScript(connection.get(), context, objectType);
-    if (!s)
-        return nullptr;
-    execute(env.get(), connection.get(), &s.value());
     return env;
 }
 

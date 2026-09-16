@@ -106,7 +106,7 @@ MainWindow::MainWindow(QWidget *parent) :
         // close db connection on database node collapse
         if (obj && obj->data(DbObject::TypeRole).toString() == "database")
         {
-            auto con = DbConnectionFactory::connection(obj->connectionKey());
+            auto con = obj->ownConnection();
             if (con)
                 con->close();
         }
@@ -391,7 +391,7 @@ MainWindow::MainWindow(QWidget *parent) :
         for (int cr = 0; cr < m->rowCount(); ++cr) // iterate connections
         {
             QModelIndex srcIndex = static_cast<QSortFilterProxyModel*>(m)->mapToSource(m->index(cr, 0));
-            DbConnection *connection = _objectsModel->dbConnection(srcIndex).get();
+            DbConnection *connection = _objectsModel->dbConnection(srcIndex);
             // A connection object exists from the first successful connect until
             // an explicit Disconnect, and that is exactly the lifetime of these
             // menu items. Its link may well be broken at the moment - the tree
@@ -409,7 +409,8 @@ MainWindow::MainWindow(QWidget *parent) :
                         continue;
                     QModelIndex srcIndex2 = static_cast<QSortFilterProxyModel*>(m)->mapToSource(ind);
                     // a database node keeps its own connection, created when the
-                    // node appears; nothing guarantees it is still registered
+                    // node appears; nothing guarantees it still has one (a failed
+                    // open leaves the node connectionless)
                     if (auto dbCon = _objectsModel->dbConnection(srcIndex2))
                         databases.append(dbCon->database());
                 }
@@ -706,8 +707,7 @@ void MainWindow::on_objectsView_activated(const QModelIndex &index)
                     replace("%pass%", dlg->password(), Qt::CaseInsensitive);
         }
 
-        QString connectionID = obj->connectionKey();
-        std::shared_ptr<DbConnection> con = DbConnectionFactory::createConnection(connectionID, cs);
+        std::unique_ptr<DbConnection> con = createDbConnection(cs);
         connect(con.get(), &DbConnection::error, this, &MainWindow::onError);
         connect(con.get(), &DbConnection::message, this, &MainWindow::onMessage);
         // the state indicator is drawn from the connection itself, so a link
@@ -718,7 +718,6 @@ void MainWindow::on_objectsView_activated(const QModelIndex &index)
         if (!con->open())
         {
             con->disconnect();
-            DbConnectionFactory::removeConnection(connectionID);
             return;
         }
         else
@@ -729,6 +728,7 @@ void MainWindow::on_objectsView_activated(const QModelIndex &index)
                 _objectsModel->saveConnectionSettings();
             }
             //con->disconnect(errConnection);
+            obj->setConnection(std::move(con));
             scriptSelectedObjects();
             _objectsModel->setData(sourceIndex(index), true, DbObject::ParentRole);
         }
@@ -745,12 +745,12 @@ void MainWindow::on_objectsView_customContextMenuRequested(const QPoint &pos)
     QAction *actionModify = nullptr;
     QAction *actionDelete = nullptr;
     QAction *actionConnect = nullptr;
-    std::shared_ptr<DbConnection> con;
+    DbConnection *con = nullptr;
     if (_objectsModel->data(srcIndex, DbObject::TypeRole) == "connection")
     {
         con = _objectsModel->dbConnection(srcIndex);
         // "Disconnect" is what clears the tree and the connections menu, so it
-        // must stay available for a registered connection whose link has died
+        // must stay available for a connected node whose link has died
         actionConnect = myMenu.addAction(con ? tr("Disconnect") : tr("Connect"));
         myMenu.addSeparator();
         actionModify = myMenu.addAction(tr("Modify"));
@@ -788,10 +788,10 @@ void MainWindow::on_objectsView_customContextMenuRequested(const QPoint &pos)
     }
     else if (selectedItem == actionConnect)
     {
-        bool wasRegistered = false;
+        bool wasConnected = false;
         if (con) // "disconnect" in any case (clear tree)
         {
-            wasRegistered = true;
+            wasConnected = true;
             // there are problems with expanding desolated node without the following line
             ui->objectsView->collapse(index);
 
@@ -799,13 +799,13 @@ void MainWindow::on_objectsView_customContextMenuRequested(const QPoint &pos)
             _objectsModel->removeRows(0, item->childCount(), srcIndex);
             con->close();
             con->disconnect(); // disconnect all slots from all signals
-            DbConnectionFactory::removeConnection(item->connectionKey());
+            item->setConnection(nullptr);
             _objectsModel->setData(srcIndex, false, DbObject::ParentRole);
             _objectsModel->setData(srcIndex, QVariant(), DbObject::ContentRole);
             _objectsModel->setData(srcIndex, QVariant(), DbObject::ChildObjectsCountRole);
             showContent(srcIndex, nullptr);
         }
-        if (!wasRegistered)
+        if (!wasConnected)
             on_objectsView_activated(index);
     }
 }
@@ -822,7 +822,7 @@ void MainWindow::on_actionRefresh_triggered()
     // invalidate scripts cache to avoid reopening sqt on scripts change
     try
     {
-        DbConnection *cn = _objectsModel->dbConnection(nodeToRefresh).get();
+        DbConnection *cn = _objectsModel->dbConnection(nodeToRefresh);
         Scripting::refresh(cn, Scripting::Context::Root);
         Scripting::refresh(cn, Scripting::Context::Content);
         Scripting::refresh(cn, Scripting::Context::Preview);
@@ -1128,9 +1128,9 @@ void MainWindow::on_actionNew_triggered()
 {
     QModelIndex srcIndex = static_cast<QSortFilterProxyModel*>(ui->objectsView->model())->
             mapToSource(ui->objectsView->currentIndex());
-    std::shared_ptr<DbConnection> con = _objectsModel->dbConnection(srcIndex);
+    DbConnection *con = _objectsModel->dbConnection(srcIndex);
     // A server that has never been connected has no connection object, and
-    // opening one here would bypass the login dialog; a registered one is
+    // opening one here would bypass the login dialog; an existing one is
     // reopened by open() itself, broken link or not.
     if (!con || !con->open())
     {
@@ -1249,7 +1249,7 @@ void MainWindow::releaseIdleDatabaseConnection(const QModelIndex &srcIndex)
     if (!owner)
         return;
 
-    auto con = DbConnectionFactory::connection(owner->connectionKey());
+    auto con = owner->ownConnection();
     if (!con || !con->isOpened())
         return;
 
@@ -1276,10 +1276,9 @@ void MainWindow::releaseIdleDatabaseConnection(const QModelIndex &srcIndex)
         return;
 
     // An editor tab holds a clone of its own, so no tab is affected by this.
-    // The preview pane is lent the tree's connection to build its highlighter
-    // dictionary from, and keeps a shared_ptr to it - which is harmless: the
-    // dictionary is already built, the pane never runs a query, and the object
-    // stays registered anyway, only its link is gone.
+    // The preview pane does not hold the connection either - only a copy of
+    // its script catalog (see QueryWidget::highlight()), and that copy stays
+    // good regardless of what happens to the link it was read from.
     con->close();
 
     // the indicator is painted from the connection itself, so the row has to
@@ -1607,7 +1606,7 @@ void MainWindow::scriptSelectedObjects()
     QItemSelectionModel *selectionModel = qobject_cast<QItemSelectionModel*>(ui->objectsView->selectionModel());
     const QModelIndexList si = selectionModel->selectedIndexes();
 
-    std::shared_ptr<DbConnection> con = _objectsModel->dbConnection(srcIndex);
+    DbConnection *con = _objectsModel->dbConnection(srcIndex);
     // same as in on_actionNew_triggered(): no object means never connected,
     // while a broken link is restored by open() without bothering the user
     if (!con || !con->open())
@@ -1633,7 +1632,7 @@ void MainWindow::scriptSelectedObjects()
             parent = srcIndex.parent();
             for (QModelIndex i = parent; i.isValid(); i = i.parent())
             {
-                if (Scripting::getScript(con.get(), Scripting::Context::Content,
+                if (Scripting::getScript(con, Scripting::Context::Content,
                                          i.data(DbObject::TypeRole).toString()))
                 {
                     parent = i;
@@ -1687,10 +1686,10 @@ void MainWindow::scriptSelectedObjects()
                 if (!c && type == "connection")
                 {
                     QString dbmsInfo = con->dbmsInfo();
-                    c = std::unique_ptr<Scripting::CppConductor>(new Scripting::CppConductor(con, env));
+                    c = std::unique_ptr<Scripting::CppConductor>(new Scripting::CppConductor(con->scriptCatalog(), env));
                     c->texts.append(dbmsInfo);
                 }
-                autoSplitRoutineSignature(type, c.get(), con.get());
+                Scripting::autoSplitRoutineSignature(type, c.get(), con);
                 showContent(srcIndex, c.get());
             }
             else
@@ -1793,12 +1792,14 @@ void MainWindow::showContent(QModelIndex &index, const Scripting::CppConductor *
         _objectScript->show();
         // Cached content comes with no conductor, but the pane still has to be
         // told which node it is showing: highlight() keeps its previous
-        // connection when handed a nullptr, and would then dictionary itself
+        // catalog when handed an invalid one, and would then colour itself
         // from a node the user has long left (in the worst case reopening its
         // link). The node's own connection is the right answer in both cases.
         showTextualContent(value, type,
-                           content ? content->connection() :
-                                     (index.isValid() ? _objectsModel->dbConnection(index) : nullptr));
+                           content ? content->scriptCatalog() :
+                                     (index.isValid() && _objectsModel->dbConnection(index) ?
+                                          _objectsModel->dbConnection(index)->scriptCatalog() :
+                                          Scripting::ScriptCatalog()));
         return;
     }
     _objectScript->hide();
@@ -1819,7 +1820,7 @@ void MainWindow::showContent(QModelIndex &index, const Scripting::CppConductor *
         _objectsModel->setData(index, "table", DbObject::ContentTypeRole);
 }
 
-void MainWindow::showTextualContent(const QVariant &value, const QVariant &type, std::shared_ptr<DbConnection> con)
+void MainWindow::showTextualContent(const QVariant &value, const QVariant &type, const Scripting::ScriptCatalog &catalog)
 {
     if (!value.isValid())
         return;
@@ -1845,7 +1846,7 @@ void MainWindow::showTextualContent(const QVariant &value, const QVariant &type,
     {
         adjust_visualizeWhitespace(true);
         _objectScript->setPlainText(value.toString());
-        _objectScript->highlight(con);
+        _objectScript->highlight(catalog);
     }
     else if (type.toString() == "html")
     {
@@ -1859,58 +1860,6 @@ void MainWindow::showTextualContent(const QVariant &value, const QVariant &type,
         _objectScript->dehighlight();
         _objectScript->setPlainText(value.toString());
     }
-}
-
-void MainWindow::autoSplitRoutineSignature(const QString &type, Scripting::CppConductor *content, DbConnection *con)
-{
-    // A parameter list worth breaking up starts at four items - three or
-    // fewer usually still reads fine on one line, and pulling those apart too
-    // would just add noise to the overwhelming majority of routines that
-    // take few arguments. listBounds() reports commas, not item count, hence
-    // the -1.
-    constexpr int kMinCommasToSplit = 3;
-    // ...except when the line itself is unreasonably long regardless of item
-    // count: a long schema-qualified name can by itself push even a
-    // two-or-three-parameter signature off the visible part of the pane, at
-    // which point splitting is worth it however few parameters there are -
-    // just not down to a single one (bounds.separators.isEmpty() below bails
-    // out before this is even reached: there is nothing to *list* one
-    // parameter across several lines).
-    constexpr int kLineLengthToSplit = 100;
-
-    if (!content || content->scripts.isEmpty() || !con ||
-        (type != "function" && type != "procedure"))
-        return;
-
-    auto lexer = SqlLexer::sharedFor(con);
-    if (!lexer)
-        return;
-
-    // pg_get_functiondef() (and whatever the odbc content scripts use) hands
-    // back the whole `CREATE [OR REPLACE] FUNCTION|PROCEDURE name(...)  ...`
-    // text as one piece; a negative position asks listBounds() for the first
-    // top-level bracket in it, which - see listBounds()'s own docs - is
-    // exactly this parameter list, comments (the commented-out `DROP
-    // FUNCTION` some content scripts prepend included) and everything else
-    // notwithstanding.
-    QString &script = content->scripts.last();
-    const SqlListBounds bounds = lexer->listBounds(script, -1);
-    if (bounds.close < 0 || bounds.separators.isEmpty())
-        return;
-
-    if (bounds.separators.size() < kMinCommasToSplit)
-    {
-        // Length of the line the parameter list's own '(' sits on.
-        const int lineStart = script.lastIndexOf('\n', bounds.open) + 1;
-        const int lineEnd = script.indexOf('\n', lineStart);
-        const int lineLength = (lineEnd < 0 ? script.length() : lineEnd) - lineStart;
-
-        if (lineLength <= kLineLengthToSplit)
-            return;
-    }
-
-    const SqlListReflow reflow = SqlLexer::reflowList(script, bounds, indentUnit());
-    script.replace(reflow.start, reflow.end - reflow.start, reflow.replacement);
 }
 
 void MainWindow::refreshContextInfo()
@@ -1931,7 +1880,7 @@ void MainWindow::refreshContextInfo()
                 static_cast<QSortFilterProxyModel*>(ui->objectsView->model())->
                 mapToSource(ui->objectsView->currentIndex());
         if (srcIndex.isValid())
-            con = _objectsModel->dbConnection(srcIndex).get();
+            con = _objectsModel->dbConnection(srcIndex);
     }
 
     _contextLabel.setText(con ? con->context() : "");
@@ -2120,13 +2069,13 @@ void MainWindow::reloadAssets()
     for (int i = 0; i < ui->tabWidget->count(); ++i)
     {
         if (auto w = qobject_cast<QueryWidget*>(ui->tabWidget->widget(i)))
-            w->highlight(nullptr, true);
+            w->highlight({}, true);
     }
-    if (_objectScript && _objectScript->dbConnection())
-        _objectScript->highlight(nullptr, true);
+    if (_objectScript && _objectScript->scriptCatalog().isValid())
+        _objectScript->highlight({}, true);
 }
 
-QString MainWindow::searchProfileKey(const std::shared_ptr<DbConnection> &con, QString *label)
+QString MainWindow::searchProfileKey(DbConnection *con, QString *label)
 {
     if (label)
         label->clear();
@@ -2174,11 +2123,11 @@ void MainWindow::on_actionFind_in_files_triggered()
     // The connection of the context the shortcut came from. A script on disk is
     // written against a particular database, and the tab (or the tree node) the
     // user was looking at names it better than anything else we could guess.
-    std::shared_ptr<DbConnection> con;
+    DbConnection *con = nullptr;
     if (QueryWidget *w = qobject_cast<QueryWidget*>(ui->tabWidget->currentWidget());
         w && !ui->tabWidget->isHidden())
     {
-        con = w->sharedDbConnection();
+        con = w->dbConnection();
     }
     if (!con)
     {
@@ -2199,7 +2148,7 @@ void MainWindow::on_actionFind_in_files_triggered()
         // no messages pane of its own and none of this is a query's result.
         connect(_searchConnection.get(), &DbConnection::error, this, &MainWindow::onError);
         connect(_searchConnection.get(), &DbConnection::message, this, &MainWindow::onMessage);
-        con = _searchConnection;
+        con = _searchConnection.get();
         // Each connection has its own root folder, and switching to this one
         // brings its folder back. Done before the panel is shown, so that the
         // path field is already right when it appears.
@@ -2214,7 +2163,7 @@ void MainWindow::on_actionFind_in_files_triggered()
         try
         {
             QJsonDocument hlSettings;
-            if (const QString hl = Scripting::dbmsFile(con.get(), "hl.conf"); !hl.isEmpty())
+            if (const QString hl = Scripting::dbmsFile(con, "hl.conf"); !hl.isEmpty())
                 hlSettings = readJsonFile(hl);
             _searchPanel->setHighlightSettings(hlSettings);
         }
@@ -2375,7 +2324,7 @@ void MainWindow::previewFileHit(const FileSearchHit &hit, bool focusPane)
     // that was current when the search was invoked.
     _tableModel->clear();
     ui->tableView->hide();
-    showTextualContent(text, "script", _searchConnection);
+    showTextualContent(text, "script", _searchConnection ? _searchConnection->scriptCatalog() : Scripting::ScriptCatalog());
     // What the pane is showing, so that Ctrl+Shift+C in it can name the place
     // being read. Relative to the folder that was searched: these results are
     // read as one project, and that root is where an agent would be pointed.
