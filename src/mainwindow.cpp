@@ -35,7 +35,6 @@
 #include "filesearchpanel.h"
 #include "misc.h"
 #include "textcodec.h"
-#include <QCryptographicHash>
 #include <QDir>
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
@@ -708,6 +707,8 @@ void MainWindow::on_objectsView_activated(const QModelIndex &index)
         }
 
         std::unique_ptr<DbConnection> con = createDbConnection(cs);
+        con->setServerIdentity(obj->data(DbObject::ServerIdRole).toULongLong(),
+                                obj->data(Qt::EditRole).toString());
         connect(con.get(), &DbConnection::error, this, &MainWindow::onError);
         connect(con.get(), &DbConnection::message, this, &MainWindow::onMessage);
         // the state indicator is drawn from the connection itself, so a link
@@ -1689,7 +1690,7 @@ void MainWindow::scriptSelectedObjects()
                     c = std::unique_ptr<Scripting::CppConductor>(new Scripting::CppConductor(con->scriptCatalog(), env));
                     c->texts.append(dbmsInfo);
                 }
-                Scripting::autoSplitRoutineSignature(type, c.get(), con);
+                Scripting::autoSplitRoutineSignature(type, c.get(), con->scriptCatalog());
                 showContent(srcIndex, c.get());
             }
             else
@@ -2075,40 +2076,6 @@ void MainWindow::reloadAssets()
         _objectScript->highlight({}, true);
 }
 
-QString MainWindow::searchProfileKey(DbConnection *con, QString *label)
-{
-    if (label)
-        label->clear();
-    if (!con)
-        return QString();
-
-    // The connection string names the server; the database within it may be
-    // switched at any time and the scripts still belong to the same repository,
-    // so it is deliberately not part of the identity.
-    QString cs = con->connectionString();
-    if (cs.isEmpty())
-        return QString();
-
-    // The password never goes into the key material: the settings file is plain
-    // text, and a digest of a secret is still something one should not store.
-    static const QRegularExpression pwd(
-                R"((^|\s)(password)\s*=\s*('(?:[^'\\]|\\.)*'|\S*))",
-                QRegularExpression::CaseInsensitiveOption);
-    cs.replace(pwd, "\\1");
-
-    if (label)
-    {
-        // Readable, and enough to recognize the entry by: the live context when
-        // there is one ("user@host:port/db"), the sanitized string otherwise.
-        const QString ctx = con->context();
-        *label = (ctx.isEmpty() ? cs.simplified() : ctx);
-    }
-
-    return QString::fromLatin1(
-                QCryptographicHash::hash(cs.simplified().toUtf8(),
-                                         QCryptographicHash::Sha1).toHex().left(16));
-}
-
 void MainWindow::on_actionObject_tree_triggered()
 {
     // Ctrl+Shift+O is the way back from the search results to the tree. The
@@ -2151,10 +2118,13 @@ void MainWindow::on_actionFind_in_files_triggered()
         con = _searchConnection.get();
         // Each connection has its own root folder, and switching to this one
         // brings its folder back. Done before the panel is shown, so that the
-        // path field is already right when it appears.
-        QString label;
-        const QString key = searchProfileKey(con, &label);
-        _searchPanel->setConnectionProfile(key, label);
+        // path field is already right when it appears. The server's own
+        // persistent id and name (see DbConnection::serverId()/serverLabel()) -
+        // not anything derived from the connection string, which editing
+        // changes but the server it names does not.
+        _searchPanel->setConnectionProfile(
+                    con->serverId() ? QString::number(con->serverId()) : QString(),
+                    con->serverLabel());
 
         // The results are colored with the very dictionary the editor uses for
         // this dbms, so a match in the tree and the same text in the preview
@@ -2192,83 +2162,6 @@ void MainWindow::on_actionFind_in_files_triggered()
     ui->objectsTab->setCurrentWidget(ui->searchPage);
     _searchPanel->setSearchText(seed);
     _searchPanel->activateSearchField();
-}
-
-void MainWindow::gotoFilePosition(QueryWidget *w, int line, int column, int length,
-                                  const QColor &matchColor)
-{
-    QPlainTextEdit *ed = qobject_cast<QPlainTextEdit*>(w->editor());
-    if (!ed)
-        return;
-
-    QTextBlock block = ed->document()->findBlockByNumber(line - 1);
-    if (!block.isValid())
-    {
-        // A stale line number: whatever the pane marked before is not the place
-        // asked for, and leaving the old mark behind would be a lie.
-        w->clearMatchHighlight();
-        return;
-    }
-
-    QTextCursor c(block);
-    // Column and length come from the same normalized text the search read, so
-    // they are safe to use directly - but a file changed since is not, hence
-    // the clamping to the block.
-    const int col = qBound(0, column - 1, block.length() - 1);
-    c.setPosition(block.position() + col);
-    if (length > 0)
-    {
-        const int end = qMin(block.position() + col + length,
-                             ed->document()->characterCount() - 1);
-        c.setPosition(end, QTextCursor::KeepAnchor);
-    }
-
-    // Horizontal position is worked out for this match alone and set once.
-    //
-    // Qt scrolls the least it can get away with, so simply letting it place the
-    // cursor dragged the leftover scroll of the previous hit along: a match at
-    // column 200 scrolled the view to 110..210, and the next one at column 50
-    // only pulled it back to 50..150 - enough to see that match, with the whole
-    // beginning of the line still off screen, though everything would have fitted
-    // from column 0.
-    //
-    // The match's place in the document is measured in absolute pixels
-    // (the scrollbar's own value plus the viewport-relative cursorRect), so the
-    // answer does not depend on where the view happened to be - the same hit
-    // always looks the same however one arrived at it. Setting the value once,
-    // rather than resetting to the left edge first, also keeps the scrollbar from
-    // passing through zero on its way to a hit further right.
-    w->setTextCursor(c);
-    // centerCursor() rather than ensureCursorVisible(): the point of the jump is
-    // to see the match in its surroundings, not pinned to the last line. It
-    // centers vertically only - the horizontal part below is ours.
-    ed->centerCursor();
-
-    QScrollBar *hbar = ed->horizontalScrollBar();
-    QTextCursor startCursor(c);
-    startCursor.setPosition(c.selectionStart());
-    QTextCursor endCursor(c);
-    endCursor.setPosition(c.selectionEnd());
-    const int left = hbar->value() + ed->cursorRect(startCursor).left();
-    const int right = hbar->value() + ed->cursorRect(endCursor).right();
-    const int width = ed->viewport()->width();
-    // Everything up to the match fits: show the line from its beginning, which is
-    // how one expects to read code. Otherwise centre the match - Qt's minimal
-    // scroll would leave it hard against an edge with no context on that side.
-    hbar->setValue(right <= width ?
-                       hbar->minimum() :
-                       qBound(hbar->minimum(), (left + right) / 2 - width / 2, hbar->maximum()));
-
-    // The mark is the preview pane's business only, and \a matchColor is what
-    // says so - the pane passes the results tree's colour, an editor tab passes
-    // nothing. In a tab it would be wrong twice over: the tab takes the focus, so
-    // the text cursor's own selection is already painted in the Active colours,
-    // and an extra selection does not follow the caret - so the found word stayed
-    // highlighted while the caret walked away, until the first edit dropped it.
-    if (c.hasSelection() && matchColor.isValid())
-        w->setMatchHighlight(c, matchColor);
-    else
-        w->clearMatchHighlight();
 }
 
 void MainWindow::previewFileHit(const FileSearchHit &hit, bool focusPane)
@@ -2359,7 +2252,7 @@ void MainWindow::previewFileHit(const FileSearchHit &hit, bool focusPane)
 
     // The tree's own match colour, so that the highlighted fragment in the
     // results and the marked place in the pane are visibly the same thing.
-    gotoFilePosition(_objectScript, hit.line, hit.column, hit.length,
+    _objectScript->gotoPosition(hit.line, hit.column, hit.length,
                      _searchPanel ? _searchPanel->matchColor() : QColor());
     if (focusPane)
         _objectScript->setFocus();
@@ -2423,8 +2316,8 @@ void MainWindow::openFileHitInEditor(const FileSearchHit &hit)
             ui->tabWidget->setCurrentIndex(i);
             // No match colour: in a tab the caret's own selection is visible
             // (the tab takes the focus below), and a mark that does not follow
-            // the caret would stay stuck on the found word. See gotoFilePosition.
-            gotoFilePosition(w, hit.line, hit.column, hit.length);
+            // the caret would stay stuck on the found word. See QueryWidget::gotoPosition.
+            w->gotoPosition(hit.line, hit.column, hit.length);
             w->setFocus();
             return;
         }
@@ -2496,7 +2389,7 @@ void MainWindow::openFileHitInEditor(const FileSearchHit &hit)
 
     if (ui->contentSplitter->isVisible())
         ui->actionQuery_editor->activate(QAction::Trigger);
-    gotoFilePosition(w, hit.line, hit.column, hit.length);
+    w->gotoPosition(hit.line, hit.column, hit.length);
     w->setFocus();
 }
 

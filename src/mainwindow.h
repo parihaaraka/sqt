@@ -192,19 +192,6 @@ private:
     /// mere tab switch. Ctrl+E in the pane needs the same knowledge - which file
     /// is on screen - and would otherwise open the tree's object instead.
     std::optional<FileSearchHit> _paneHit;
-    /// Identity of \a con for the search panel's per-connection settings, plus
-    /// the readable \a label to store next to them. The key is a digest of the
-    /// connection string with the password removed - stable across restarts,
-    /// while a password (or a database switched inside the session) leaves it
-    /// alone, and nothing secret reaches the settings file.
-    static QString searchProfileKey(DbConnection *con, QString *label = nullptr);
-    /// Positions \a w on \a line / \a column (1-based) and centers the view.
-    /// \a matchColor marks the range as a search hit (see
-    /// CodeEditor::setMatchHighlight): the text cursor's own selection is not
-    /// enough, since it is painted with the palette's Inactive group while the
-    /// focus stays in the results tree.
-    static void gotoFilePosition(QueryWidget *w, int line, int column, int length,
-                                 const QColor &matchColor = QColor());
     QTimer *_hideTimer;
     QTimer *_durationRefreshTimer;
     void log(const QString &msg);

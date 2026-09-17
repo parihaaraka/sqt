@@ -115,7 +115,7 @@ void clearCache()
     _scripts.clear();
 }
 
-void autoSplitRoutineSignature(const QString &type, CppConductor *content, DbConnection *con)
+void autoSplitRoutineSignature(const QString &type, CppConductor *content, const ScriptCatalog &catalog)
 {
     // A parameter list worth breaking up starts at four items - three or
     // fewer usually still reads fine on one line, and pulling those apart too
@@ -132,11 +132,11 @@ void autoSplitRoutineSignature(const QString &type, CppConductor *content, DbCon
     // parameter across several lines).
     constexpr int kLineLengthToSplit = 100;
 
-    if (!content || content->scripts.isEmpty() || !con ||
+    if (!content || content->scripts.isEmpty() ||
         (type != "function" && type != "procedure"))
         return;
 
-    auto lexer = SqlLexer::sharedFor(con);
+    auto lexer = SqlLexer::sharedFor(catalog);
     if (!lexer)
         return;
 

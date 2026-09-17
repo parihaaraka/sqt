@@ -208,6 +208,42 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
     {
         QSettings settings;
         int size = settings.beginReadArray("servers");
+
+        // Assigned once, when a server entry first appears (see DbObject::
+        // ObjectRole::ServerIdRole), and copied into its DbConnection from then
+        // on (see DbConnection::setServerIdentity()/clone()) - unlike the
+        // connection string, it is never touched again by editing the entry, so
+        // per-connection settings keyed by it (the file search's remembered
+        // root - see FileSearchPanel) survive edits that a key derived from the
+        // connection string itself would not.
+        //
+        // A plain incrementing counter, not a uuid: entries all come from one
+        // local settings file, so nothing else can mint a colliding id, and
+        // there is no need for a value that stays unique without coordination
+        // across machines. "one more than the highest one already used" - read
+        // in this same pass, an entry at a time - is what the loop below spends
+        // on it; a persisted "next id" counter would need to be kept in perfect
+        // sync with the array by every piece of code that touches "servers"
+        // instead.
+        QList<quint64> ids(size, 0);
+        quint64 nextId = 1;
+        bool idsAssigned = false;
+        for (int i = 0; i < size; ++i)
+        {
+            settings.setArrayIndex(i);
+            const quint64 id = settings.value("id").toULongLong();
+            ids[i] = id;
+            if (id >= nextId)
+                nextId = id + 1;
+        }
+        for (int i = 0; i < size; ++i)
+        {
+            if (ids[i] != 0)
+                continue;
+            ids[i] = nextId++;
+            idsAssigned = true;
+        }
+
         for (int i = 0; i < size; ++i) {
             settings.setArrayIndex(i);
             beginInsertRows(parent, i, i);
@@ -220,12 +256,18 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
             // data() returns adjusted DisplayRole (with number of children)
             newItem->setData(settings.value("user").toString(), DbObject::NameRole);
             newItem->setData("connection", DbObject::TypeRole);
-            //newItem->setData(QString::number(std::intptr_t(newItem)), DbObject::IdRole); // id to use within connections storage
+            newItem->setData(ids[i], DbObject::ServerIdRole);
             newItem->setData(false, DbObject::ParentRole);
             newItem->setData(QIcon(":img/server.png"), Qt::DecorationRole);
             endInsertRows();
         }
         settings.endArray();
+        // Written back right away rather than left for the next explicit save
+        // (renaming a server, say): otherwise a session that never touches the
+        // list would keep generating - and keep failing to persist - the same
+        // ids every launch.
+        if (idsAssigned)
+            saveConnectionSettings();
         return true;
     }
 
@@ -344,6 +386,9 @@ bool DbObjectsModel::fillChildren(const QModelIndex &parent)
                         // learn the very same thing again.
                         if (donor->scriptCatalog().isValid())
                             db->adoptScriptCatalog(donor->scriptCatalog());
+                        // Same server, so the same identity - see
+                        // DbConnection::setServerIdentity().
+                        db->setServerIdentity(donor->serverId(), donor->serverLabel());
                         newItem->setConnection(std::move(db));
                     }
                 }
@@ -503,6 +548,7 @@ bool DbObjectsModel::alterConnection(QModelIndex &index, QString name, QString c
 void DbObjectsModel::saveConnectionSettings()
 {
     QSettings settings;
+    settings.remove("servers");
     int count = _rootItem->childCount();
     settings.beginWriteArray("servers", count);
     for (int i = 0; i < count; ++i)
@@ -511,6 +557,7 @@ void DbObjectsModel::saveConnectionSettings()
         settings.setValue("connection_string", _rootItem->child(i)->data(DbObject::DataRole).toString());
         settings.setValue("name", _rootItem->child(i)->data(Qt::EditRole).toString());
         settings.setValue("user", _rootItem->child(i)->data(DbObject::NameRole).toString());
+        settings.setValue("id", _rootItem->child(i)->data(DbObject::ServerIdRole).toULongLong());
     }
     settings.endArray();
 }

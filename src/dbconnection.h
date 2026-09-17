@@ -72,6 +72,29 @@ public:
     /// tell it anyway, so nothing has to connect to a live server just to
     /// pick a highlighter.
     void adoptScriptCatalog(const Scripting::ScriptCatalog &catalog) noexcept { _scriptCatalog = catalog; }
+
+    /// The persistent id of the server entry this connection was created
+    /// from (see DbObject::ObjectRole::ServerIdRole), 0 if none was ever set
+    /// - a connection built some other way than through the tree (see
+    /// PgConnection::clone()'s own callers outside the tree, if any come up)
+    /// simply has no server to be identified with. Never derived from the
+    /// connection string, so editing it does not change the id, and stable
+    /// across the connection's own reconnects and clones (see
+    /// setServerIdentity()/clone()) - the one thing outliving both is exactly
+    /// what a persistent per-server setting (see FileSearchPanel) needs to
+    /// key on instead of hashing the connection string, which editing does
+    /// change.
+    quint64 serverId() const noexcept { return _serverId; }
+    /// What to call this server where a person, not a settings file, is
+    /// reading it - the tree's own name for it (see DbObjectsModel::
+    /// fillChildren()), not anything reconstructed from the connection
+    /// string.
+    const QString& serverLabel() const noexcept { return _serverLabel; }
+    /// Called once, when the tree creates this connection (top-level node) or
+    /// a sibling inherits it (a per-database session - see
+    /// DbObjectsModel::fillChildren()'s "database" branch, mirroring
+    /// adoptScriptCatalog() there for the very same reason).
+    void setServerIdentity(quint64 id, const QString &label) { _serverId = id; _serverLabel = label; }
     virtual QString transactionStatus() const noexcept;
     virtual int dbmsComparableVersion() = 0;
     /*!
@@ -169,6 +192,8 @@ protected:
     mutable QMutex _connectionGuard;
     QString _dbmsScriptingID;
     Scripting::ScriptCatalog _scriptCatalog;
+    quint64 _serverId = 0;
+    QString _serverLabel;
     /// Subclasses call this from open() instead of assigning _dbmsScriptingID
     /// by hand - it also (re)builds _scriptCatalog while dbmsName()/
     /// isOdbcConnection() are still cheap to call (the link has just come up,

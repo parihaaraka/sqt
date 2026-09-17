@@ -461,6 +461,82 @@ void QueryWidget::clearMatchHighlight()
         ed->clearMatchHighlight();
 }
 
+void QueryWidget::gotoPosition(int line, int column, int length, const QColor &matchColor)
+{
+    QPlainTextEdit *ed = qobject_cast<QPlainTextEdit*>(editor());
+    if (!ed)
+        return;
+
+    QTextBlock block = ed->document()->findBlockByNumber(line - 1);
+    if (!block.isValid())
+    {
+        // A stale line number: whatever the pane marked before is not the place
+        // asked for, and leaving the old mark behind would be a lie.
+        clearMatchHighlight();
+        return;
+    }
+
+    QTextCursor c(block);
+    // Column and length come from the same normalized text the search read, so
+    // they are safe to use directly - but a file changed since is not, hence
+    // the clamping to the block.
+    const int col = qBound(0, column - 1, block.length() - 1);
+    c.setPosition(block.position() + col);
+    if (length > 0)
+    {
+        const int end = qMin(block.position() + col + length,
+                             ed->document()->characterCount() - 1);
+        c.setPosition(end, QTextCursor::KeepAnchor);
+    }
+
+    // Horizontal position is worked out for this match alone and set once.
+    //
+    // Qt scrolls the least it can get away with, so simply letting it place the
+    // cursor dragged the leftover scroll of the previous hit along: a match at
+    // column 200 scrolled the view to 110..210, and the next one at column 50
+    // only pulled it back to 50..150 - enough to see that match, with the whole
+    // beginning of the line still off screen, though everything would have fitted
+    // from column 0.
+    //
+    // The match's place in the document is measured in absolute pixels
+    // (the scrollbar's own value plus the viewport-relative cursorRect), so the
+    // answer does not depend on where the view happened to be - the same hit
+    // always looks the same however one arrived at it. Setting the value once,
+    // rather than resetting to the left edge first, also keeps the scrollbar from
+    // passing through zero on its way to a hit further right.
+    setTextCursor(c);
+    // centerCursor() rather than ensureCursorVisible(): the point of the jump is
+    // to see the match in its surroundings, not pinned to the last line. It
+    // centers vertically only - the horizontal part below is ours.
+    ed->centerCursor();
+
+    QScrollBar *hbar = ed->horizontalScrollBar();
+    QTextCursor startCursor(c);
+    startCursor.setPosition(c.selectionStart());
+    QTextCursor endCursor(c);
+    endCursor.setPosition(c.selectionEnd());
+    const int left = hbar->value() + ed->cursorRect(startCursor).left();
+    const int right = hbar->value() + ed->cursorRect(endCursor).right();
+    const int width = ed->viewport()->width();
+    // Everything up to the match fits: show the line from its beginning, which is
+    // how one expects to read code. Otherwise centre the match - Qt's minimal
+    // scroll would leave it hard against an edge with no context on that side.
+    hbar->setValue(right <= width ?
+                       hbar->minimum() :
+                       qBound(hbar->minimum(), (left + right) / 2 - width / 2, hbar->maximum()));
+
+    // The mark is the preview pane's business only, and \a matchColor is what
+    // says so - the pane passes the results tree's colour, an editor tab passes
+    // nothing. In a tab it would be wrong twice over: the tab takes the focus, so
+    // the text cursor's own selection is already painted in the Active colours,
+    // and an extra selection does not follow the caret - so the found word stayed
+    // highlighted while the caret walked away, until the first edit dropped it.
+    if (c.hasSelection() && matchColor.isValid())
+        setMatchHighlight(c, matchColor);
+    else
+        clearMatchHighlight();
+}
+
 QString QueryWidget::toPlainText()
 {
     if (!_editor)
@@ -1547,7 +1623,7 @@ void QueryWidget::onScriptObjectRequest()
             // Same DDL, built by the very same content scripts as a tree
             // click would run - so it is split the same way, whichever route
             // brought the routine into an editor.
-            Scripting::autoSplitRoutineSignature(type, c.get(), cn);
+            Scripting::autoSplitRoutineSignature(type, c.get(), cn->scriptCatalog());
 #if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
             for (const QString &s: qAsConst(c->scripts))
 #else

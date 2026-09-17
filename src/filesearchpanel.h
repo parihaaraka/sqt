@@ -53,8 +53,9 @@ public:
     /// keeps its own root folder: the scripts of a database live in their own
     /// repository, and having to re-point the search after every switch is
     /// exactly the tedium this panel exists to remove. \a key identifies the
-    /// connection (an opaque digest - see MainWindow::searchProfileKey), \a
-    /// label is what a human reads in the settings file and in the tooltip.
+    /// server (its persistent id - see DbConnection::serverId()), \a label is
+    /// what a human reads in the settings file and in the tooltip (the tree's
+    /// own name for it - see DbConnection::serverLabel()).
     void setConnectionProfile(const QString &key, const QString &label);
 
     /// The hl.conf of the connection the search was invoked from, so that the

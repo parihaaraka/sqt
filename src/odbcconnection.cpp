@@ -97,6 +97,8 @@ DbConnection *OdbcConnection::clone()
     // then costs the clone its scripts and its highlighting dictionary.
     res->_dbmsScriptingID = _dbmsScriptingID;
     res->_scriptCatalog = _scriptCatalog;
+    res->_serverId = _serverId;
+    res->_serverLabel = _serverLabel;
     return res;
 }
 

@@ -69,6 +69,8 @@ DbConnection *PgConnection::clone()
     // emergency colouring.
     res->_dbmsScriptingID = _dbmsScriptingID;
     res->_scriptCatalog = _scriptCatalog;
+    res->_serverId = _serverId;
+    res->_serverLabel = _serverLabel;
     return res;
 }
 

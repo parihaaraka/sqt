@@ -31,7 +31,14 @@ public:
         TagRole,                    ///< any valuable data accessible by $<node type>.tag$ macro
         Sort1Role,
         Sort2Role,
-        IconRole                    ///< icon file name as the tree script named it
+        IconRole,                   ///< icon file name as the tree script named it
+        /// A server entry's persistent id (see DbObjectsModel::fillChildren(),
+        /// the "root" branch) - assigned once and never derived from anything
+        /// editable, unlike the connection string. Set only on a top-level
+        /// "connection" node; travels into its DbConnection at creation time
+        /// (see DbConnection::setServerIdentity()) for code that only has the
+        /// connection, not the tree, to work with (see FileSearchPanel).
+        ServerIdRole
     };
 
     void setData(const QVariant &value, int role = Qt::DisplayRole);

@@ -88,6 +88,11 @@ void clearCache();
 /// in place; a no-op if that is not actually a routine (see \a type) or is
 /// short enough to leave alone.
 ///
+/// Takes the lexer's own catalog rather than a DbConnection: the lexer is all
+/// this ever needed a connection for, so callers that already have a catalog
+/// (or are happy to ask their connection for one) do not need to keep a live
+/// connection around, or a fake one, just to call this.
+///
 /// The tree has no notion of "this kind of node is a routine" beyond the type
 /// name a scripts/<dbms>/tree script happens to be registered under - a
 /// user's own tree may register arbitrary type names for arbitrary objects,
@@ -95,7 +100,7 @@ void clearCache();
 /// the two type names the bundled postgres and odbc scripts themselves use,
 /// rather than attempting to infer "routine-ness" some other way; a script
 /// registered under any other name is simply left alone.
-void autoSplitRoutineSignature(const QString &type, CppConductor *content, DbConnection *con);
+void autoSplitRoutineSignature(const QString &type, CppConductor *content, const ScriptCatalog &catalog);
 
 /// Returns a copy: a pointer into the storage would be invalidated by the very
 /// next refresh() of the same context.

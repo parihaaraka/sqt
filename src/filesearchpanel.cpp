@@ -309,7 +309,8 @@ void FileSearchPanel::savePathForConnection()
         return;
     SqtSettings::setValue(key, _path->currentText());
     // The label travels with the path so that the settings file stays readable:
-    // the key itself is a digest and says nothing about which database it is.
+    // the key itself is just a persistent id and says nothing about which
+    // server it is.
     SqtSettings::setValue(key + "/label", _profileLabel);
 }
 

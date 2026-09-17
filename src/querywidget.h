@@ -88,6 +88,17 @@ public:
     /// the point is a mark that stays visible while the focus is in the results tree.
     void setMatchHighlight(const QTextCursor &range, const QColor &color = QColor());
     void clearMatchHighlight();
+    /// Positions the caret on \a line / \a column (1-based) and centers the
+    /// view on it - horizontally as well, which plain Qt scrolling does not
+    /// do on its own (see the implementation for why that matters here). A
+    /// stale \a line (the file has changed since) clears any previous match
+    /// mark rather than leaving a lie on screen. \a matchColor, if valid,
+    /// marks [column, column + length) as a search hit via setMatchHighlight()
+    /// - the caller passes it for the preview pane, where the mark has to
+    /// stay visible while the focus is in the results tree, and leaves it out
+    /// for an editor tab, where the text cursor's own selection already shows
+    /// the place and takes the focus besides.
+    void gotoPosition(int line, int column, int length = 0, const QColor &matchColor = QColor());
     QString toPlainText();
     QTextCursor textCursor() const;
     /// [start, end) of the SQL statement at the caret, ignoring any current
