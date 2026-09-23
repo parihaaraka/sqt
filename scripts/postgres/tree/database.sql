@@ -1,8 +1,9 @@
 with s as (
-	select (regexp_match(nspname, '([^_]+)'))[1] prefix, array_agg(oid) oids, count(*) cnt
+	-- 9.6 lacks regexp_match
+	select (regexp_matches(nspname, '([^_]+)'))[1] prefix, array_agg(oid) "oids", count(*) cnt
 	from pg_catalog.pg_namespace
 	where nspname !~ ('pg_toast.*|pg_temp.*') and nspname ~ '^[^_]+_'
-	group by (regexp_match(nspname, '([^_]+)'))[1]
+	group by (regexp_matches(nspname, '([^_]+)'))[1]
 	having count(*) > 5
 )
 select

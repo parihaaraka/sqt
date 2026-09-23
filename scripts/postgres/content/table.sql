@@ -106,8 +106,12 @@ begin
 				where c.conrelid = _obj_id and c.contype != 'n'
 				union all
 				select a.attnum, 'd', null::text,
+/* if version 120000 */
 					format(case when a.attgenerated = 0::"char" then 'DEFAULT %s' else '(%s)' end, pg_get_expr(d.adbin, d.adrelid)) ||
 					case a.attgenerated when 's'::"char" then ' STORED' when 'v'::"char" then ' VIRTUAL' else '' end
+/* else version */
+					'DEFAULT ' || pg_get_expr(d.adbin, d.adrelid)
+/* endif version */
 				from pg_catalog.pg_attribute a
 					join pg_catalog.pg_attrdef d on a.attrelid = d.adrelid and a.attnum = d.adnum
 					left join (
@@ -169,13 +173,17 @@ begin
 							case
 								when 	a.attnotnull
 										and ('p'::"char" != all(c.ctypes) or c.ctypes is null)
+/* if version 100000 */
 										and a.attidentity = 0::"char"
+/* endif version */
 										and not (s.oid is not null and a.atttypid in ('smallint'::regtype::oid, 'int'::regtype::oid, 'bigint'::regtype::oid))
 								then ' NOT NULL'
 								else ''
 							end ||
+/* if version 120000 */
 							case when a.attgenerated = 's'::"char" then ' GENERATED ALWAYS AS'
 							else '' end ||
+/* endif version */
 							coalesce(' ' || c.clist, '') definition
 				from pg_catalog.pg_attribute a
 					left join c on a.attnum = c.attnum
@@ -183,6 +191,7 @@ begin
 					left join (
 						pg_depend dep
 							join pg_class s on s.oid = dep.objid and s.relkind = 'S'
+/* if version 100000 */
 							left join lateral (
 								select rtrim(
 									case when seqincrement != 1
@@ -205,6 +214,7 @@ begin
 										) as v
 								where seqrelid = s.oid
 							) ss on true
+/* endif version */
 						) on a.attnum = dep.refobjsubid and a.attrelid = dep.refobjid
 				where
 					a.attnum > 0 and not a.attisdropped and

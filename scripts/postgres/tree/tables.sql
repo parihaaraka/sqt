@@ -1,6 +1,9 @@
 with c as
 (
-	select c.*
+	select c.oid, c.relname, c.relpersistence, c.relkind
+/* if version 100000 */
+		, c.relispartition
+/* endif version */
 	from pg_class c
 	where c.relnamespace = $schema.id$ and
 		(c.relkind = any (array['r'::"char", 'f'::"char", 'p'::"char"])) and
@@ -10,7 +13,7 @@ with c as
 			has_table_privilege(c.oid, 'select, insert, update, delete, truncate, references, trigger'::text) or
 			has_any_column_privilege(c.oid, 'select, insert, update, references'::text)
 		)
-/* if version 110000 */
+/* if version 100000 */
 		and
 		(
 			(
@@ -31,10 +34,10 @@ with c as
 ),
 tmp as
 (
-	select (regexp_match(relname, '([^_]+)'))[1] prefix, array_agg(oid) oids, count(*) cnt
+	select (regexp_matches(relname, '([^_]+)'))[1] prefix, array_agg(oid) "oids", count(*) cnt
 	from c
 	where relname ~ '^[^_]+_'
-	group by (regexp_match(relname, '([^_]+)'))[1]
+	group by (regexp_matches(relname, '([^_]+)'))[1]
 	having count(*) > 5
 ),
 tg as -- table groups

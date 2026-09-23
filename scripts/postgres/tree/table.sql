@@ -1,14 +1,14 @@
 with col as
 (
 	select
-		'columns' node_type,
-		'<i>Columns</i>' as ui_name,
+		'columns'::text node_type,
+		'<i>Columns</i>'::text as ui_name,
 		null::int id,
 		null::text "name",
 		true allow_multiselect,
-		'table-select-column.png' icon,
+		'table-select-column.png'::text icon,
 		0::int sort1,
-		'0' sort2
+		'0'::text sort2
 	from pg_catalog.pg_class c
 	where c.oid = $table.id$ and
 		-- relnatts counts dropped columns as well, so the folder appears (or

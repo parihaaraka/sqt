@@ -7,7 +7,7 @@ with tmp as
 tmp2 as
 (
 	select k,v
-	from jsonb_each_text(to_jsonb((select tmp from tmp)) - '{tablename,schemaname,attname}'::text[]) as x(k,v)
+	from jsonb_each_text(to_jsonb((select tmp from tmp)) - 'tablename' - 'schemaname' - 'attname') as x(k,v)
 )
 select
     coalesce(format(E'COMMENT ON COLUMN %I.%I.%I IS\n', '$schema.name$','$table.name$','$column.name$') || quote_literal(col_description($table.id$, $column.id$)) || E';\n\n', '') ||
