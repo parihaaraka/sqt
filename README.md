@@ -133,11 +133,6 @@ Ready-made builds are attached to every [release](https://github.com/parihaaraka
 | `sqt-<version>-x86_64.AppImage` | any x86_64 linux with glibc 2.35+ | `chmod +x` and run; Qt is inside, no root needed |
 | `sqt-<version>-windows-x64.zip` | Windows 10 1809+ | unpack anywhere and run `sqt.exe` |
 
-A release is made by pushing a tag - `git tag v1.2.3 && git push origin v1.2.3` -
-which is also where the version shown in the about box comes from. Builds of a
-branch are not published anywhere: `.github/workflows/ci.yml` only compiles and
-runs the tests.
-
 ## Build instruction
 
 The project is built with CMake (3.16+, C++17). You may open `CMakeLists.txt` in QtCreator, or execute the following from the project's root directory:

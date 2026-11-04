@@ -17,6 +17,7 @@ declare
 	_partitioned_by text;
 	_partition_of text;
 	_partition_for text;
+	_using text;
 	_indexes text;
 	_rels oid[];
 begin
@@ -43,7 +44,9 @@ begin
 /* elif version 90600 */
 				c.relhasoids, false as relispartition
 /* endif version */
+				,am.amname as access_method
 			from pg_class c
+				left join pg_am am on c.relam = am.oid
 				left join pg_foreign_table ft on c.oid = ft.ftrelid
 				left join pg_foreign_server fs on ft.ftserver = fs.oid
 			into _t
@@ -79,6 +82,9 @@ begin
 
 			if _relkind = 'p' then
 				_partitioned_by := E'\nPARTITION BY ' || pg_get_partkeydef(_obj_id);
+			end if;
+			if _t.access_method != current_setting('default_table_access_method') then
+				_using := E'\nUSING ' || _t.access_method;
 			end if;
 
 			with tmp as -- union of constraints data
@@ -232,14 +238,14 @@ begin
 					case
 						when length(definition) + length(description) > 110 then
 							-- comment above column definition
-							--coalesce(E'\t\t--\u2193 ' || replace(description, E'\n', E'\n\t\t-- ') || E'\n', '') ||
+							--coalesce(E'\t\t--↓ ' || replace(description, E'\n', E'\n\t\t-- ') || E'\n', '') ||
 							-- column
 							E'\t' ||	definition ||
 								case
 									when attnum = (select max(attnum) from to_show where attislocal) then ''
 									else ','
 								end ||
-							coalesce(E'\n' || E'\t\t--\u2191 ' || replace(description, E'\n', E'\n\t\t-- '), '')
+							coalesce(E'\n' || E'\t\t--↑ ' || replace(description, E'\n', E'\n\t\t-- '), '')
 						else
 							-- column
 							E'\t' ||	definition ||
@@ -263,6 +269,7 @@ begin
 			_create_object := _create_object || _tmp || E'\n)' ||
 				coalesce(_inherits, _partition_for, '') ||
 				coalesce(_partitioned_by, '') ||
+				coalesce(_using, '') ||
 				case
 					when _t.relkind = 'f'::"char" then E'\nSERVER ' || _t.srvname ||
 						coalesce(E'\nOPTIONS (' ||
